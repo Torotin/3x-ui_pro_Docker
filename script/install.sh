@@ -301,7 +301,7 @@ ensure_docker_dir() {
 
 # === Menu display ===
 show_menu() {
-  echo "Select steps to execute (e.g., 1 3 5 7 or 1-6):"
+  echo "Select steps to execute (1,3 5 7 or 1-6):"
 
   local sorted_keys
   IFS=$'\n' sorted_keys=($(printf "%s\n" "${!INSTALL_STEPS[@]}" | sort -V))  # поддержка и чисел, и 'x'
@@ -321,7 +321,6 @@ parse_step_selection() {
   IFS=' ' read -r -a tokens <<< "$raw_input"
 
   for token in "${tokens[@]}"; do
-    echo "TOKEN: $token" >&2
     if [[ "$token" =~ ^[0-9]+-[0-9]+$ ]]; then
       local start="${token%-*}"
       local end="${token#*-}"
@@ -337,13 +336,10 @@ parse_step_selection() {
     fi
   done
 
-  log "DEBUG" "[parse_step_selection] expanded: ${expanded[*]}"
   for item in "${expanded[@]}"; do
     echo "$item"
   done
 }
-
-
 
 auto_full() {
   log "INFO" "Running all steps (auto mode)..."
@@ -402,7 +398,10 @@ main() {
     show_menu
     read -r input
 
-    mapfile -t selected < <(parse_step_selection "$input")
+    selected=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && selected+=("$line")
+    done < <(parse_step_selection "$input")
 
     for key in "${selected[@]}"; do
       key="$(echo "$key" | xargs)"  # очистка пробелов
