@@ -1,0 +1,36 @@
+# dynamic/traefik-dashboard.yml
+
+http:
+  middlewares:
+    traefik-strip:
+      stripPrefix:
+        prefixes:
+          - "${URI_TRAEFIK_DASHBOARD}"
+    stats-auth:
+      basicAuth:
+        users:
+          - "admin:$$apr1$$Akda9cOa$$sYFul/6lj1uMc6p8uiyB70"
+
+  routers:
+    traefik-ui:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TRAEFIK_DASHBOARD}`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - traefik-strip
+        - stats-auth
+        - secured
+      tls:
+        certResolver: le
+      service: api@internal
+
+    traefik-api:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - stats-auth
+        - secured
+      tls:
+        certResolver: le
+      service: api@internal

@@ -1,0 +1,38 @@
+# traefik logs
+---
+name: traefik-logs
+source: file
+filenames:
+  - "/var/logs/traefik/*.log"
+labels:
+  type: traefik
+
+# caddy logs
+---
+name: caddy-logs
+source: file
+filenames:
+  - "/var/logs/caddy/*.log"
+labels:
+  type: caddy
+
+# ssh logs
+---
+name: ssh-logs
+source: file
+filenames:
+  # Debian/Ubuntu
+  - "/var/log/auth.log"
+  # RHEL/CentOS
+  - "/var/log/secure"
+labels:
+  type: ssh
+
+# AppSec
+---
+name: AppSecComponent
+listen_addr: 0.0.0.0:7422
+appsec_config: crowdsecurity/virtual-patching
+source: appsec
+labels:
+  type: appsec

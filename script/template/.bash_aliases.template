@@ -1,0 +1,105 @@
+
+############################################################
+#                  НАВИГАЦИЯ / NAVIGATION                 #
+############################################################
+alias ..='cd ..'                            # На уровень вверх / Up one level
+alias ...='cd ../..'                        # На два уровня вверх / Up two levels
+alias ....='cd ../../..'                    # На три уровня вверх / Up three levels
+alias ~='cd ~'                              # Домашняя директория / Home directory
+alias home='cd ~'                           # То же, что и ~ / Same as ~
+alias cls='clear'                           # Очистка экрана / Clear screen
+alias mkdir='mkdir -pv'                     # Создать каталог с родителями / Make dir with parents
+
+############################################################
+#                ПРОСМОТР ФАЙЛОВ / FILE LISTING            #
+############################################################
+alias l='ls -CF'                            # Базовый список файлов / Basic file list
+alias la='ls -A'                            # Скрытые файлы (кроме . и ..) / Hidden files except . and ..
+alias ll='ls -alF'                          # Подробный список / Long format with flags
+alias lS='ls -lSh'                          # Сортировка по размеру / Sort by size
+alias lt='ls -lt'                           # Сортировка по времени (новые сверху) / Sort by time (new first)
+alias ltr='ls -ltr'                         # Сортировка по времени (старые сверху) / Sort by time (old first)
+alias lsize='ls -lhS'                       # Читаемый формат, по размеру / Human size, sort by size
+
+############################################################
+#                  ПЕРЕХОДЫ / QUICK CD                    #
+############################################################
+alias opt='cd /opt'                         # В /opt
+alias etc='cd /etc'                         # В /etc
+alias var='cd /var'                         # В /var
+alias logs='cd /var/log'                    # В логи /var/log
+alias root='cd /root'                       # В /root (если есть доступ)
+
+############################################################
+#                  СИСТЕМА / SYSTEM                       #
+############################################################
+alias reboot='sudo reboot now'              # Перезагрузка / Reboot
+alias shutdown='sudo shutdown now'          # Выключение / Shutdown
+alias ports='ss -tuln'                      # Слушающие порты / Listening ports
+alias cpu='lscpu'                           # Инфо о CPU / CPU info
+alias mem='free -h'                         # Память / Memory
+alias disk='df -h'                          # Диск / Disk usage
+alias journal='journalctl -xe'              # Журнал systemd / Systemd journal
+alias sre='sudo systemctl restart'          # Рестарт сервиса / Restart service
+alias sst='sudo systemctl status'           # Статус сервиса / Service status
+alias sen='sudo systemctl enable'           # В автозагрузку / Enable service
+alias sdis='sudo systemctl disable'         # Убрать из автозагрузки / Disable service
+
+############################################################
+#                  DOCKER                                 #
+############################################################
+alias dps='docker ps'                       # Запущенные контейнеры / Running containers
+alias dpa='docker ps -a'                    # Все контейнеры / All containers
+alias dstart='docker start'                 # Запуск контейнера / Start container
+alias dstop='docker stop'                   # Остановка контейнера / Stop container
+alias drm='docker rm'                       # Удаление контейнера / Remove container
+alias dimages='docker images'               # Список образов / Images list
+alias dexec='docker exec -it'               # Войти в контейнер / Exec into container
+alias dbuild='docker build .'               # Сборка образа / Build image
+alias dlogs='docker logs'                   # Логи контейнера / Container logs
+alias dcu='docker compose up -d'            # Запуск docker-compose / Compose up
+alias dcd='docker compose down'             # Остановка compose / Compose down
+alias dcl='docker compose logs -f'          # Логи compose / Compose logs follow
+alias dcb='docker compose build'            # Сборка compose / Compose build
+
+############################################################
+#                  APT                                    #
+############################################################
+alias update='sudo apt update'                                      # Обновить пакеты / Update packages
+alias upgrade='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y'  # Обновить и очистить / Upgrade and autoremove
+alias install='sudo apt install -y'                                 # Установить пакет / Install package
+alias remove='sudo apt remove -y'                                   # Удалить пакет / Remove package
+alias autoremove='sudo apt autoremove -y'                           # Удалить неиспользуемые / Autoremove
+alias search='apt search'                                           # Поиск пакета / Search package
+alias clean-apt='sudo apt clean && sudo apt autoclean'              # Очистка кэша / Clean apt cache
+
+############################################################
+#                  ПОИСК И УТИЛИТЫ / SEARCH & UTILS        #
+############################################################
+alias grep='grep --color=auto'              # Подсветка grep / Grep with color
+alias findl='find . -type l -ls'            # Найти симлинки / Find symlinks
+alias f='find . -name'                      # Найти файл по имени / Find by name
+alias which='type -a'                       # Путь до команды / Command path
+alias now='date "+%Y-%m-%d %H:%M:%S"'       # Текущая дата и время / Current date/time
+alias top='htop'                            # htop вместо top / htop instead of top
+alias fcat='find . -type f -exec sh -c '\''echo "=== $1 ==="; cat "$1"; echo'\'' _ {} \;' # Показывает содержимое всех файлов в текущем каталоге с заголовками вида "=== путь/до/файла ==="
+
+############################################################
+#                  СЕТЬ / NETWORK                         #
+############################################################
+alias myip='curl -s ifconfig.me'            # Внешний IP / External IP
+alias pingg='ping 8.8.8.8 -c 4'             # Пинг Google / Ping Google
+alias net='netstat -tulpen'                 # Сетевые соединения / Netstat
+alias tracert='traceroute'                  # Трассировка маршрута / Traceroute
+alias dns='resolvectl status'               # DNS инфо / DNS info
+alias ports='echo "Netid State  Recv-Q Send-Q   Local_Address:Port     Peer:Port    Process,PID,FileDescriptor"; \
+sudo ss -tulpn | tail -n +2 | sort -t: -k2,2n | sed -E "s/users:\(\((.*)\)\)/\1/" | sed -E "s/[\"()]//g"'
+
+
+############################################################
+#                  ПРОЧЕЕ / MISC                          #
+############################################################
+alias reload='source ~/.bashrc'             # Перезагрузить bashrc / Reload bashrc
+alias path='echo $PATH'                     # Текущий PATH / Show PATH
+alias extract='tar -xvf'                    # Распаковать tar / Extract tar
+alias aliases='cat ~/.bash_aliases'         # Показать алиасы / Show aliases

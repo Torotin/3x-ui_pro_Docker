@@ -1,0 +1,166 @@
+# (logs_l4) {
+#   log l4_file {
+# 		output file /var/log/caddy/l4-events.log {
+# 			roll_size 10mb
+# 			roll_keep 7
+# 			roll_keep_for 48h
+# 		}
+# 		format json
+# 		include layer4 layer4.handlers
+# 		level DEBUG
+# 	}
+# }
+(logs_l4) {
+  log l4_file {
+		output stdout
+		format console
+		include layer4 layer4.handlers
+		level DEBUG
+	}
+}
+
+(l4_config_crowdsec) {
+  layer4 {
+        # 1) TCP на 443 → CrowdSec → два возможных upstream
+        tcp/:443 {
+            # сначала проверяем через CrowdSec
+            @crowdsec crowdsec
+
+            route @crowdsec {
+                subroute {
+                    # а) если HTTP-запрос по XHTTP_PATH — направляем в 3x-UI
+                    @xhttp http {
+                        path {$URI_XHTTP_PATH}*
+                    }
+                    route @xhttp {
+                        proxy tcp/3x-ui:{$PORT_LOCAL_XHTTP} {
+                            proxy_protocol v2
+                        }
+                    }
+
+                    # б) по умолчанию — балансируем между 3x-UI XTLS и Traefik TCP
+                    route {
+                        proxy {
+                            health_interval             20s
+                            health_timeout              1s
+                            fail_duration               2s
+                            max_fails                   3
+                            unhealthy_connection_count  2
+                            lb_policy                   first
+                            proxy_protocol              v2
+                            upstream tcp/3x-ui:{$PORT_LOCAL_VISION}
+                            upstream tcp/traefik:{$PORT_LOCAL_TRAEFIK}
+                        }
+                    }
+                }
+            }
+        }
+        
+        # 2) UDP (QUIC) на 443 → CrowdSec → 3x-UI HTTP-порт
+        udp/:443 {
+            @quic {
+                crowdsec
+                quic
+            }
+            route @quic {
+                proxy 3x-ui:{$PORT_LOCAL_XHTTP}
+            }
+        }
+
+    }
+  import logs_l4
+}
+
+
+(l4_config) {
+  layer4 {
+
+        # 1) UDP (QUIC) на 443 → CrowdSec → 3x-UI HTTP-порт
+        udp/:443 {
+            @quic {
+                quic
+            }
+            route @quic {
+                proxy 3x-ui:{$PORT_LOCAL_XHTTP}
+            }
+        }
+
+        # 2) TCP на 443 → CrowdSec → два возможных upstream
+        tcp/:443 {
+            # сначала проверяем через CrowdSec
+            route {
+                subroute {
+                    # а) если HTTP-запрос по XHTTP_PATH — направляем в 3x-UI
+                    @xhttp http {
+                        path {$URI_XHTTP_PATH}*
+                    }
+                    route @xhttp {
+                        proxy tcp/3x-ui:{$PORT_LOCAL_XHTTP} {
+                            proxy_protocol v2
+                        }
+                    }
+
+                    # б) по умолчанию — балансируем между 3x-UI XTLS и Traefik TCP
+                    route {
+                        proxy {
+                            health_interval             20s
+                            health_timeout              1s
+                            fail_duration               2s
+                            max_fails                   3
+                            unhealthy_connection_count  2
+                            lb_policy                   first
+                            proxy_protocol              v2
+                            upstream tcp/3x-ui:{$PORT_LOCAL_VISION}
+                            upstream tcp/traefik:{$PORT_LOCAL_TRAEFIK}
+                        }
+                    }
+                }
+            }
+        }
+    }
+  import logs_l4
+}
+(l4_config_new) {
+  layer4 {
+
+        # UDP (QUIC) → 3x-ui:PORT_LOCAL_XHTTP
+        udp/:443 {
+            route {
+                proxy 3x-ui:{$PORT_LOCAL_XHTTP}
+            }
+        }
+
+        # TCP → обработка по пути или балансировка
+        tcp/:443 {
+            route {
+                subroute {
+                    @xhttp http {
+                        path {$URI_XHTTP_PATH}*
+                    }
+
+                    route @xhttp {
+                        proxy tcp/3x-ui:{$PORT_LOCAL_XHTTP} {
+                            proxy_protocol v2
+                        }
+                    }
+
+                    route {
+                        proxy {
+                            health_interval             20s
+                            health_timeout              1s
+                            fail_duration               2s
+                            max_fails                   3
+                            unhealthy_connection_count  2
+                            lb_policy                   first
+                            proxy_protocol              v2
+                            upstream tcp/3x-ui:{$PORT_LOCAL_VISION}
+                            upstream tcp/traefik:{$PORT_LOCAL_TRAEFIK}
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+  import logs_l4
+}

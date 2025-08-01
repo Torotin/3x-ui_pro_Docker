@@ -1,0 +1,108 @@
+# === Global SSH configuration ===
+
+# Disable printing the message of the day (motd) / Отключает отображение сообщения дня при входе
+PrintMotd no
+
+# Enable delayed compression (after authentication) / Включает сжатие трафика после успешной аутентификации
+Compression delayed
+
+# Use AUTH facility for syslog logging / Журналирование через системный лог AUTH
+SyslogFacility AUTH
+
+# Enforce strict file permissions for user SSH files / Строгая проверка прав доступа
+StrictModes yes
+
+# Limit authentication attempts / Ограничение попыток входа
+MaxAuthTries 3
+
+# Disable root login / Запрет входа под root
+PermitRootLogin no
+
+# Forbid logins with empty passwords / Запрет входа с пустыми паролями
+PermitEmptyPasswords no
+
+# Max keepalive count before disconnecting idle client / Кол-во keep-alive перед отключением
+ClientAliveCountMax 10
+
+# Keep-alive packet interval / Период keep-alive (сек)
+ClientAliveInterval 60
+
+# Use SSH protocol version 2 only / Только SSHv2
+Protocol 2
+
+# Allow only specific user to log in / Разрешённый пользователь
+AllowUsers $USER_SSH
+
+# Set SFTP subsystem path / Подсистема SFTP
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+# Include additional config files / Подключение доп. конфигураций
+Include /etc/ssh/sshd_config.d/*.conf
+
+# Ignore rhosts files / Игнорировать rhosts
+IgnoreRhosts yes
+
+# Disable X11 forwarding / Запрет графического интерфейса
+X11Forwarding no
+
+# Limit data or time before rekeying session / Перегенерация ключей
+RekeyLimit 100M 1h
+
+# Disable host-based authentication / Запрет хостовой аутентификации
+HostbasedAuthentication no
+
+# Disable interactive keyboard authentication / Отключить клавиатурную аутентификацию
+KbdInteractiveAuthentication no
+
+# Enable/disable public key authentication / Публичный ключ
+PubkeyAuthentication $pubkey_auth
+
+# Disable TCP port forwarding globally / Запрет TCP перенаправления
+AllowTcpForwarding no
+
+# Set login grace time before disconnect / Время ожидания аутентификации
+LoginGraceTime 20
+
+# SSH listening port / Порт SSH
+Port $PORT_REMOTE_SSH
+
+# Disable creation of tunnels / Запрет туннелей
+PermitTunnel no
+
+# Enable PAM for authentication/session / Поддержка PAM
+UsePAM yes
+
+# Disallow gateway ports / Запрет удалённого bind
+GatewayPorts no
+
+# Limit simultaneous connections / Ограничение подключений
+MaxStartups 5:40:15
+
+# Key exchange algorithms / Алгоритмы обмена ключами
+KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
+
+# Disable agent forwarding globally / Запрет ssh-agent
+AllowAgentForwarding no
+
+# Message Authentication Code algorithms / MAC
+MACs hmac-sha2-256,hmac-sha2-512
+
+# Accepted encryption ciphers / Шифры
+Ciphers aes256-ctr,aes192-ctr,aes128-ctr
+
+# Log level for SSH server / Уровень логов
+LogLevel VERBOSE
+
+# Accept environment variables / Переменные окружения
+AcceptEnv LANG LC_*
+
+# Enable/disable password authentication / Разрешение пароля
+PasswordAuthentication $PASS_SSH_auth
+
+
+# === Per-user overrides ===
+
+# Allow TCP forwarding only for $USER_SSH / Разрешить TCP перенаправление только $USER_SSH
+Match User $USER_SSH
+    AllowTcpForwarding yes
+    AllowAgentForwarding yes

@@ -1,0 +1,186 @@
+services:
+  watchtower:
+    container_name: watchtower
+    hostname: ${WEBDOMAIN}
+    image: containrrr/watchtower:latest
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=${TZ}
+      - WATCHTOWER_TRACE=false
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_NO_PULL=false
+      - WATCHTOWER_NO_START=false
+      - WATCHTOWER_POLL_INTERVAL=600
+      - WATCHTOWER_MONITOR_ONLY=false
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_ROLLING_RESTART=true
+      - WATCHTOWER_NOTIFICATION_REPORT=true
+      - WATCHTOWER_HEALTHCHECK_GRACE_PERIOD=300
+    security_opt:
+      - no-new-privileges=true
+    networks:
+      - traefik-proxy
+
+  crowdsec:
+    image: crowdsecurity/crowdsec
+    container_name: crowdsec
+    restart: unless-stopped
+    networks:
+      - traefik-proxy
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:7422:7422"
+    environment:
+      TZ: ${TZ}
+      GID: ${GID-1000}
+      COLLECTIONS: >
+        crowdsecurity/sshd
+        crowdsecurity/caddy
+        crowdsecurity/http-cve
+        crowdsecurity/traefik
+        crowdsecurity/linux
+        crowdsecurity/whitelist-good-actors
+        crowdsecurity/appsec-virtual-patching
+        crowdsecurity/appsec-generic-rules
+        crowdsecurity/base-http-scenarios
+        crowdsecurity/appsec-crs
+
+      BOUNCER_KEY_CADDY: ${CROWDSEC_API_KEY_CADDY}
+      BOUNCER_KEY_TRAEFIK: ${CROWDSEC_API_KEY_TRAEFIK}
+      BOUNCER_KEY_FIREWALL: ${CROWDSEC_API_KEY_FIREWALL}
+    volumes:
+      - /opt/docker-proxy/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml
+      - crowdsec_data:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
+      - /var/log:/var/log:ro
+      - /opt/docker-proxy/_logs:/var/logs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges=true
+
+  crowdsec-firewall-bouncer:
+    image: ghcr.io/shgew/cs-firewall-bouncer-docker:latest
+    container_name: crowdsec_firewall_bouncer
+    network_mode: host
+    depends_on:
+      - crowdsec
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      API_KEY: ${CROWDSEC_API_KEY_FIREWALL}
+      CROWDSEC_API: 127.0.0.1:8080
+    volumes:
+      - /opt/docker-proxy/_logs/crowdsec/firewall-bouncer.log:/var/log/crowdsec-firewall-bouncer.log
+      - /opt/docker-proxy/crowdsec/crowdsec-firewall-bouncer.yaml:/config/crowdsec-firewall-bouncer.yaml:ro
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+
+  caddy:
+    image: torotin/caddy-l4:latest
+    container_name: caddy
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.5"
+    hostname: ${WEBDOMAIN}
+    ports:
+      - "443:443/udp"
+      - "443:443/tcp"
+    networks:
+      - traefik-proxy
+    volumes:
+      - /opt/docker-proxy/_logs/caddy:/var/log/caddy
+      - /opt/docker-proxy/caddy/config:/etc/caddy
+      - /opt/docker-proxy/caddy/site:/srv
+    env_file:
+      - /opt/docker-proxy/.env
+    security_opt:
+      - no-new-privileges=true
+    labels:
+      - traefik.enable=true
+      
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+    depends_on:
+      - crowdsec
+    env_file:
+      - /opt/docker-proxy/.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/docker-proxy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /opt/docker-proxy/traefik/entrypoint.sh:/entrypoint.sh:ro
+      - /opt/docker-proxy/traefik/acme.json:/acme.json
+      - /opt/docker-proxy/traefik/dynamic:/templates:ro
+      - /opt/docker-proxy/_logs/traefik:/logs
+    ports:
+      - "80:80"
+      - "${PORT_LOCAL_TRAEFIK}:${PORT_LOCAL_TRAEFIK}"
+
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        exec /entrypoint.sh "$@"
+    networks:
+      - traefik-proxy
+      
+  3x-ui:
+    image: torotin/3x-ui:latest
+    container_name: 3x-ui
+    hostname: ${WEBDOMAIN}
+    restart: always
+    depends_on:
+      - traefik
+      - warp-plus
+    tty: true
+    security_opt:
+      - no-new-privileges=true
+    networks:
+      - traefik-proxy
+    volumes:
+      - /opt/docker-proxy/3x-ui/scripts/xray_update.sh:/mnt/sh/beforestart/01-xray_update.sh
+      - /opt/docker-proxy/3x-ui/scripts/download-db.sh:/mnt/sh/beforestart/02-download-db.sh
+      - /opt/docker-proxy/3x-ui/scripts/x-ui-upd.sh:/mnt/sh/afterstart/03-x-ui-upd.sh
+      - /opt/docker-proxy/3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
+      - /opt/docker-proxy/3x-ui/configs/config.json:/app/bin/config.json:rw
+      - /opt/docker-proxy/_logs/xray/access.log:/app/access.log
+      - /opt/docker-proxy/_logs/xray/error.log:/app/error.log
+      - /opt/docker-proxy/_logs:/var/log:rw
+    env_file:
+      - /opt/docker-proxy/.env
+      - /opt/docker-proxy/3x-ui/3x-ui.env
+    environment:
+      - XUI_LOG_LEVEL=debug
+      - XUI_LOG_FOLDER=/var/log/3x-ui
+
+  warp-plus:
+    image: torotin/warp-plus:latest
+    container_name: warp-plus
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - traefik-proxy
+    environment:
+      - DNS=9.9.9.9
+      - RTT=50ms
+      - VERBOSE=true
+      - GOOL=true
+
+networks:
+  traefik-proxy:
+    external: true
+
+volumes:
+  crowdsec_data:
+    driver: local
+  crowdsec_config:
+    driver: local

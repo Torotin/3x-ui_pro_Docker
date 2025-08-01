@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+	<head>
+	  <meta charset="UTF-8">
+	  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	  <meta http-equiv="refresh" content="30">
+	  <style>
+		body {
+		  background-color: #121212;
+		  color: #fff;
+		  display: flex;
+		  justify-content: center;
+		  align-items: center;
+		  height: 100vh;
+		  font-family: 'Courier New', monospace;
+		}
+
+		.clock {
+		  display: flex;
+		  gap: 15px;
+		}
+
+		.flip {
+		  position: relative;
+		  width: 80px;
+		  height: 100px;
+		  perspective: 1000px;
+		}
+
+		.flip-card {
+		  position: absolute;
+		  width: 100%;
+		  height: 100%;
+		  background: #1e1e1e;
+		  border-radius: 10px;
+		  box-shadow: 0 4px 10px rgba(0,0,0,0.6);
+		  text-align: center;
+		  line-height: 100px;
+		  font-size: 60px;
+		  color: #fff;
+		}
+
+		.flip-card.next {
+		  z-index: 2;
+		  transform-origin: top;
+		  transform: rotateX(90deg);
+		  animation: flipDown 0.7s forwards;
+		}
+
+		@keyframes flipDown {
+		  0% {
+			transform: rotateX(90deg);
+		  }
+		  100% {
+			transform: rotateX(0deg);
+		  }
+		}
+
+		.separator {
+		  font-size: 60px;
+		  line-height: 100px;
+		  padding: 0 5px;
+		}
+	  </style>
+	</head>
+	<body>
+	  <div class="clock">
+		<div class="flip" id="h1"></div>
+		<div class="flip" id="h2"></div>
+		<div class="separator">:</div>
+		<div class="flip" id="m1"></div>
+		<div class="flip" id="m2"></div>
+		<div class="separator">:</div>
+		<div class="flip" id="s1"></div>
+		<div class="flip" id="s2"></div>
+	  </div>
+
+	  <script>
+		const ids = ['h1','h2','m1','m2','s1','s2'];
+
+		function updateFlip(id, newVal) {
+            const container = document.getElementById(id);
+            const current = container.querySelector('.flip-card');
+            if (current && current.textContent === newVal) return;
+
+            const next = document.createElement('div');
+            next.className = 'flip-card next';
+            next.textContent = newVal;
+
+            container.innerHTML = ''; // Clear previous
+            if (current) container.appendChild(current); // Keep old during flip
+            container.appendChild(next);
+
+            setTimeout(() => {
+                next.classList.remove('next');
+                next.classList.add('flip-card');
+                container.innerHTML = '';
+                container.appendChild(next);
+            }, 700);
+        }
+
+		function tick() {
+            const now = new Date();
+            const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '');
+            timeStr.split('').forEach((char, i) => updateFlip(ids[i], char));
+		}
+
+		tick();
+		setInterval(tick, 1000);
+	  </script>
+	</body>
+</html>

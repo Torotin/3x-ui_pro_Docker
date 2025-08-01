@@ -1,0 +1,17 @@
+# (если не хочется версионировать config.json в 3x-ui/clear и /configs)
+docker-proxy/3x-ui/clear/
+
+# ==== SWAP / TEMP ====
+*~
+*.swp
+*.tmp
+
+# ==== ОС / IDE ====
+# macOS Thumbs.db/.DS_Store, Windows
+.DS_Store
+Thumbs.db
+
+# VSCode, JetBrains, etc.
+.vscode/
+.idea/
+*.iml

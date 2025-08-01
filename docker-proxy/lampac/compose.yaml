@@ -1,0 +1,74 @@
+services:
+      
+  tor-socks-proxy:
+    image: peterdavehello/tor-socks-proxy:latest
+    container_name: tor-socks-proxy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 9150
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    environment:
+      - TZ=Europe/Moscow
+    networks:
+      - traefik-proxy
+    security_opt:
+      - no-new-privileges=true
+
+  lampac:
+    image: immisterio/lampac:latest
+    container_name: lampac
+    restart: always
+    depends_on:
+      - tor-socks-proxy
+    environment:
+      - PUID=0
+      - PGID=0
+    mem_reservation: 1g
+    mem_limit: 2g
+    cpus: "1.0"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fs
+        - http://127.0.0.1:9118
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    env_file:
+      - /opt/docker-proxy/.env
+    volumes:
+      - Lampac_cache:/home/cache
+      #####################################################################################
+      - ./home/init.conf:/home/init.conf:rw
+      - ./home/users.json:/home/users.json:rw
+      - ./home/passwd:/home/passwd:ro
+      # #####################################################################################
+      - ./module/manifest.json:/home/module/manifest.json
+      - ./module/TorrServer.conf:/home/module/TorrServer.conf
+      - ./torrserver/settings.json:/home/torrserver/settings.json
+      #####################################################################################
+      - ./plugins/lampainit.js:/home/plugins/lampainit.my.js:ro
+      - ./plugins/lampainit-invc.js:/home/plugins/lampainit-invc.my.js:ro
+      #####################################################################################
+      # - ./wwwroot/tmbd_mod.js:/home/wwwroot/tmbd_mod.js:ro
+      # #####################################################################################
+      - ./wwwroot/profileIcons:/home/wwwroot/profileIcons
+      - ./wwwroot/js:/home/wwwroot/js
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - traefik-proxy
+      
+networks:
+  traefik-proxy:
+    external: true
+
+volumes:
+  Lampac_cache:
+    driver: local

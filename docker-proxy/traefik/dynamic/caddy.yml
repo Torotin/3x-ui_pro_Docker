@@ -1,0 +1,29 @@
+# dynamic/caddy.yml
+
+http:
+  services:
+    caddy-error:
+      loadBalancer:
+        servers:
+          - url: "http://caddy:${PORT_LOCAL_CADDYWEB}"
+
+  middlewares:
+    error-pages:
+      errors:
+        status:
+          - "400-599"
+        service: caddy-error
+        query: "/index.html"
+
+  routers:
+    catchall:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      priority: -100
+      middlewares:
+        - secured
+        - error-pages
+      service: caddy-error

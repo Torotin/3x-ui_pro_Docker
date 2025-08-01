@@ -1,0 +1,70 @@
+[
+  {
+    "id": "test",
+    "ids": [],
+    "IsPasswd": false,
+    "expires": "2035-07-10T00:00:00",
+    "group": 2,
+    "ban": false,
+    "ban_msg": "",
+    "comment": "test",
+    "params": {
+      "profiles": [
+        {
+          "id": "",
+          "title": "Он",
+          "icon": "/profileIcons/id1.png",
+          "params": {
+            "surs": true
+          }
+        },
+        {
+          "id": "_id2",
+          "title": "Она",
+          "icon": "/profileIcons/id2.png",
+          "params": {
+            "surs": true
+          }
+        },
+        {
+          "id": "_id3",
+          "title": "Ребенок",
+          "icon": "/profileIcons/id3.png",
+          "params": {
+            "surs": true,
+            "forKids": true
+          }
+        },
+        {
+          "id": "_id4",
+          "title": "Ребенок",
+          "icon": "/profileIcons/id4.png",
+          "params": {
+            "surs": true,
+            "forKids": true
+          }
+        },
+        {
+          "id": "_id5",
+          "title": "Родственники",
+          "icon": "/profileIcons/id5.png",
+          "params": {
+            "surs": true,
+            "onlyRus": true
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "svyatdemidov@gmail.com",
+    "ids": [],
+    "IsPasswd": false,
+    "expires": "3025-07-31T00:00:00",
+    "group": 1,
+    "ban": false,
+    "ban_msg": "",
+    "comment": "admin",
+    "params": null
+  }
+]

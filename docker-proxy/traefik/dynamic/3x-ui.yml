@@ -1,0 +1,55 @@
+# /dynamic/3x-ui.yml
+
+http:
+  services:
+    xui-panel-svc:
+      loadBalancer:
+        servers:
+          - url: "http://3x-ui:${PORT_LOCAL_VLESS_PANEL}"
+    xui-sub-svc:
+      loadBalancer:
+        servers:
+          - url: "http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}"
+    xhttp3xui-svc:
+      loadBalancer:
+        servers:
+          - url: "http://3x-ui:${PORT_LOCAL_XHTTP}"
+
+  middlewares:
+    xui-sub-hostheader:
+      headers:
+        customRequestHeaders:
+          Host: "${WEBDOMAIN}"
+
+  routers:
+    # Панель 3x-ui (SPA-путь)
+    xui-panel:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - secured
+      tls:
+        certResolver: le
+      service: xui-panel-svc
+
+    # Подписки (SUB + JSON)
+    xui-sub:
+      rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
+      entryPoints:
+        - websecure
+      middlewares:
+        - secured
+        - xui-sub-hostheader
+      tls:
+        certResolver: le
+      service: xui-sub-svc
+
+    # XHTTP (plain HTTP)
+    xhttp3xui:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)"
+      entryPoints:
+        - web
+      middlewares:
+        - secured
+      service: xhttp3xui-svc

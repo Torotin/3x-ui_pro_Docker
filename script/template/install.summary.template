@@ -1,0 +1,32 @@
+===== INSTALLATION SUMMARY =====
+
+{{#if IPV6_ENABLED}}
+Public IPv4  : {{PUBLIC_IPV4}}
+Public IPv6  : {{PUBLIC_IPV6}}
+
+{{else}}
+Public IP    : {{PUBLIC_IPV4}}
+
+{{/if}}
+
+{{#if SSH_ENABLED}}
+SSH Access:
+  Port       : {{PORT_REMOTE_SSH}}
+  User       : {{USER_SSH}}
+  Auth       : {{msg_pubkey_auth}}
+
+{{/if}}
+
+Available Services (via Caddy reverse proxy):
+
+- Main site            : https://{{WEBDOMAIN}}
+- 3X-UI Web Panel      : https://{{WEBDOMAIN}}/{{URI_PANEL_PATH}}/
+- Dozzle Logs Viewer   : https://{{WEBDOMAIN}}/{{URI_DOZZLE}}/
+- AdGuard Home         : https://{{WEBDOMAIN}}/{{URI_ADGUARD_PANEL}}/
+- CORSA Proxy Service  : https://{{WEBDOMAIN}}/{{URI_CORSA}}/
+
+Installation script completed successfully.
+To start services: cd {{DOCKER_DIR}} && docker-compose up -d
+
+Summary saved to: {{summary_file}}
+

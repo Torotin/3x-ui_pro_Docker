@@ -1,0 +1,19 @@
+(logs_global) {
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}
+
+(logs_access) {
+    log access-log {
+        output file /var/log/caddy/access.log {
+        roll_size 10mb
+        roll_keep 7
+        roll_keep_for 48h
+      }
+        level INFO
+        format json
+    }
+}

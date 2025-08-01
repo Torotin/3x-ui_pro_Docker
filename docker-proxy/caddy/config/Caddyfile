@@ -1,0 +1,49 @@
+import *.caddy
+
+###############################################################################
+#                          ГЛОБАЛЬНЫЕ НАСТРОЙКИ                               #
+###############################################################################
+{
+	debug
+	order crowdsec before respond
+
+	auto_https off
+
+	# snippets
+	import crowdsec_config
+	import l4_config_crowdsec
+	# import l4_config_new
+	# import l4_config
+
+	import logs_global
+	import logs_access
+}
+
+# порту Caddy слушает все запросы от Traefik
+:{$PORT_LOCAL_CADDYWEB} {
+	header >Alt-Svc "h2=\":443\""
+	header * {
+		-Server
+		-X-Powered-By
+	}
+
+	route {
+		crowdsec
+		appsec
+
+		root * /srv
+		file_server
+		try_files {path} /index.html
+	}
+
+	handle_errors {
+		route {
+			crowdsec
+			appsec
+
+			root * /srv
+			file_server
+			try_files {path} /index.html
+		}
+	}
+}

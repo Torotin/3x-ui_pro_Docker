@@ -1,0 +1,26 @@
+# templates/crowdsec-bouncer.yml
+
+http:
+  middlewares:
+    crowdsec-bouncer:
+      plugin:
+        bouncer:
+          enabled: true
+          mode: live
+          logLevel: INFO
+          updateIntervalSeconds: 15
+          updateMaxFailure: 0
+          defaultDecisionSeconds: 15
+          httpTimeoutSeconds: 10
+          crowdsecMode: stream
+          crowdsecAppsecEnabled: true
+          crowdsecAppsecFailureBlock: true
+          crowdsecAppsecUnreachableBlock: true
+          crowdsecAppsecHost: crowdsec:7422
+          crowdsecLapiKey: ${CROWDSEC_API_KEY_TRAEFIK}
+          crowdsecLapiHost: crowdsec:8080
+          crowdsecLapiScheme: http
+          forwardedHeadersTrustedIPs:
+            - 172.16.0.0/12
+          clientTrustedIPs:
+            - 172.16.0.0/12
