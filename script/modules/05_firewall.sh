@@ -176,11 +176,13 @@ firewall_setup_iptables() {
     firewall_create_restore_unit
 }
 
-# === Парсинг переменных окружения вида port_remote_X ===
+# === Парсинг переменных окружения вида port_remote_X и PORT_REMOTE ===
 firewall_extract_ports() {
     local -n result=$1
     for var in $(compgen -v); do
-        if [[ $var == *port_remote* ]]; then
+        # приводим имя переменной к нижнему регистру для нечувствительного поиска
+        local var_lc="${var,,}"
+        if [[ $var_lc == *port_remote* ]]; then
             local value="${!var}"
             [[ -n $value ]] && result["$value"]="$var"
         fi
