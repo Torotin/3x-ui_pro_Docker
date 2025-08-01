@@ -55,8 +55,6 @@ services:
       #####################################################################################
       - ./plugins/lampainit.js:/home/plugins/lampainit.my.js:ro
       - ./plugins/lampainit-invc.js:/home/plugins/lampainit-invc.my.js:ro
-      #####################################################################################
-      # - ./wwwroot/tmbd_mod.js:/home/wwwroot/tmbd_mod.js:ro
       # #####################################################################################
       - ./wwwroot/profileIcons:/home/wwwroot/profileIcons
       - ./wwwroot/js:/home/wwwroot/js

@@ -39,6 +39,7 @@ declare -A required_commands=(
     ["idn"]="idn"
     ["envsubst"]="gettext"
     ["ss"]="iproute2"
+    ["htpasswd"]="apache2-utils"
 )
 
 trap 'log "ERROR" "Script aborted (exit code $?) at line $LINENO"' ERR

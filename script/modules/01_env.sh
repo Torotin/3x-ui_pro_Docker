@@ -150,6 +150,7 @@ populate_env_vars_from_template() {
                         export "$var"="$(generate_random_string 8 12)"
                         log "WARN" "$var not set, generated automatically: ${!var}"
                     }
+                    generate_htpasswd
                     ;;
                 PASS_*)
                     read_required_var "$var" "Enter password ($var)" || {
@@ -177,6 +178,24 @@ populate_env_vars_from_template() {
 
         update_profile_custom_env "$var"
     done
+}
+
+generate_htpasswd() {
+  if [[ -n "$USER_WEB" ]]; then
+    if [[ -z "$PASS_WEB" ]]; then
+      log "ERROR" "USER_WEB is set but PASS_WEB is missing or empty."
+      return
+    fi
+
+    log "INFO" "Generating htpasswd for user $USER_WEB..."
+    local raw_htpasswd
+    raw_htpasswd=$(htpasswd -nb "$USER_WEB" "$PASS_WEB")
+    HT_PASS_ENCODED=$(echo "$raw_htpasswd" | sed -e 's/\$/\$\$/g')
+
+    log "OK" "htpasswd successfully generated."
+  else
+    log "DEBUG" "USER_WEB is not set — skipping htpasswd generation."
+  fi
 }
 
 # --- MAIN SCRIPT FUNCTION ---

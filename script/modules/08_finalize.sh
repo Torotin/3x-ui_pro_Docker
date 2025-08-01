@@ -2,8 +2,6 @@
 # ./lib/08_finalize.sh — Финальный вывод настроек и сохранение в файл
 
 msg_final() {
-    if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
-
     local summary_file="$PROJECT_ROOT/install.summary"
     local template_file="$PROJECT_ROOT/template/install.summary.template"
     : > "$summary_file"

@@ -9,7 +9,7 @@ http:
     stats-auth:
       basicAuth:
         users:
-          - "admin:$$apr1$$Akda9cOa$$sYFul/6lj1uMc6p8uiyB70"
+          - "${HT_PASS_ENCODED}"
 
   routers:
     traefik-ui:
