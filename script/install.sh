@@ -16,12 +16,8 @@ DOCKER_DIR="/opt/docker-proxy"
 DOCKER_COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
 DOCKER_ENV_FILE="$DOCKER_DIR/.env"
 DOCKER_ENV_TEMPLATE="$TEMPLATE_DIR/docker.env.template"
-GITHUB_REPO_OWNER="${$REPO_OWNER:-Torotin}"
-GITHUB_REPO_NAME="${$REPO_OWNER:-3x-ui_pro_Docker}"
-GITHUB_REPO_RAW="https://raw.githubusercontent.com/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/main/script/modules"
-GITHUB_MODULES_API="https://api.github.com/repos/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/contents/script/modules"
-GITHUB_TEMPLATES_API="https://api.github.com/repos/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/contents/script/template"
-GITHUB_TEMPLATES_RAW="https://raw.githubusercontent.com/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/main/script/template"
+GITHUB_REPO_OWNER="${REPO_OWNER:-Torotin}"
+GITHUB_REPO_NAME="${REPO_OWNER:-3x-ui_pro_Docker}"
 LOADED_MODULES=()
 
 declare -A required_commands=(
@@ -157,115 +153,125 @@ initialize_script() {
   type check_required_commands &>/dev/null || exit_error "Missing function: check_required_commands (module not loaded?)"
 }
 
+download_repo_dir() {
+  local repo_path="${1:?Не задан путь в репозитории (например: docker-proxy)}"
+  local target="${2:?Не задан локальный путь назначения}"
+  local repo_owner="${GITHUB_REPO_OWNER:?Не задан GITHUB_REPO_OWNER}"
+  local repo_name="${GITHUB_REPO_NAME:?Не задан GITHUB_REPO_NAME}"
+  local branch="${GITHUB_BRANCH:-main}"
+  local auth_token="${GITHUB_TOKEN:-}"
+  local repo_url
+
+  # Сборка URL
+  if [[ -n "$auth_token" ]]; then
+    repo_url="https://${auth_token}@github.com/${repo_owner}/${repo_name}.git"
+  else
+    repo_url="https://github.com/${repo_owner}/${repo_name}.git"
+  fi
+
+  log "INFO" "Клонирую папку '$repo_path' из '$repo_owner/$repo_name' через git sparse-checkout → '$target'"
+
+  # Проверка наличия git
+  if ! command -v git &>/dev/null; then
+    log "ERROR" "git не установлен, невозможно скачать через git"
+    return 1
+  fi
+
+  # Временная папка
+  local tmp
+  tmp=$(mktemp -d) || { log "ERROR" "Не удалось создать временную папку"; return 1; }
+
+  # sparse-checkout
+  pushd "$tmp" >/dev/null || { log "ERROR" "Не удалось перейти в $tmp"; rm -rf "$tmp"; return 1; }
+  git init -q
+  git remote add origin "$repo_url"
+  git config core.sparseCheckout true
+  echo "$repo_path/" > .git/info/sparse-checkout
+  if ! git pull --depth=1 origin "$branch" -q; then
+    log "ERROR" "git pull не удался"
+    popd >/dev/null
+    rm -rf "$tmp"
+    return 1
+  fi
+  popd >/dev/null
+
+  # Копирование
+  mkdir -p "$target" \
+    || { log "ERROR" "Не удалось создать каталог назначения: $target"; rm -rf "$tmp"; return 1; }
+  cp -a "$tmp/$repo_path/." "$target/" \
+    || log "WARN" "Не удалось скопировать все файлы из $repo_path"
+
+  rm -rf "$tmp"
+
+  # +x для .sh файлов
+  log "INFO" "Назначаю +x всем .sh-файлам в '$target'"
+  find "$target" -type f -name '*.sh' -exec chmod +x -v {} \;
+  log "OK" "Папка '$target' успешно загружена через git"
+  return 0
+}
+
 # ================================================================================
 # Функция: ensure_templates
 # При первом запуске создаёт $TEMPLATE_DIR и загружает из GitHub все файлы шаблонов
 # ================================================================================
 ensure_templates() {
-  # если каталога нет — создаём
   if [[ ! -d "$TEMPLATE_DIR" ]]; then
     mkdir -p "$TEMPLATE_DIR" \
-      && log "OK"  "Created template dir: $TEMPLATE_DIR" \
+      && log "OK" "Created template dir: $TEMPLATE_DIR" \
       || exit_error "Cannot create template dir: $TEMPLATE_DIR"
 
-    # вытягиваем список файлов через GitHub API
-    log "INFO" "Fetching template list from GitHub API: $GITHUB_TEMPLATES_API"
-    local api_resp files
-    if ! api_resp=$(curl -fsSL "$GITHUB_TEMPLATES_API"); then
-      exit_error "Failed to fetch templates list from GitHub"
-    fi
-    mapfile -t files < <(echo "$api_resp" | jq -r '.[].name')
+    download_repo_dir "script/template" "$TEMPLATE_DIR" \
+      || exit_error "Cannot fetch templates"
 
-    # скачиваем каждый файл
-    for f in "${files[@]}"; do
-      log "INFO" "Downloading template: $f"
-      if curl -fsSL "$GITHUB_TEMPLATES_RAW/$f" -o "$TEMPLATE_DIR/$f"; then
-        log "OK" "Template loaded: $f"
-      else
-        exit_error "Failed to download template: $f"
-      fi
-    done
-
+    log "OK" "Templates loaded into $TEMPLATE_DIR"
   else
     log "DEBUG" "$TEMPLATE_DIR already exists, skipping templates download"
   fi
 }
 
-# === Load Modules ===
-# Utility functions to load shell script modules from local or remote sources.
-
-# Ensure a library module is loaded, fetching from remote if not present locally.
+# === ensure_lib_loaded ===
+# Просто подключает модуль из $LIB_DIR и логирует
 ensure_lib_loaded() {
   local file="$1"
   local local_path="$LIB_DIR/$file"
-  local remote_url="${GITHUB_REPO_RAW}/${file}"
 
-  # guard: уже загружено?
-  for m in "${LOADED_MODULES[@]}"; do
-    [[ "$m" == "$file" ]] && return 0
-  done
-
-  if [[ -f "$local_path" ]]; then
-    source "$local_path" \
-      && log "OK" "Module loaded locally: $file" \
-      || exit_error "Failed to source: $file"
-
-  elif [[ -n "$GITHUB_REPO_RAW" ]]; then
-    mkdir -p "$LIB_DIR"
-    curl -fsSL "$remote_url" -o "$local_path" \
-      && source "$local_path" \
-      && log "OK" "Module loaded from GitHub: $file" \
-      || exit_error "Failed to fetch or source: $file"
-
-  else
-    exit_error "Module $file not found locally and no GITHUB_REPO_RAW set."
+  if [[ ! -f "$local_path" ]]; then
+    exit_error "Module not found: $file in $LIB_DIR"
   fi
+
+  source "$local_path" \
+    && log "OK" "Module loaded: $file" \
+    || exit_error "Failed to source module: $file"
 
   LOADED_MODULES+=("$file")
 }
 
-# Load all modules: сначала пробуем локальные, а при их отсутствии — список из GitHub API
+# === load_all_modules ===
+# Если в $LIB_DIR нет NN_*.sh, то клонируем через git sparse-checkout только папку script/modules,
+# копируем её содержимое в $LIB_DIR и удаляем временный клон. После этого source каждого файла.
 load_all_modules() {
-  # Убедиться, что директория модулей существует
   mkdir -p "$LIB_DIR"
 
-  # Отладочный вывод URL API для GitHub
-  log "DEBUG" "GITHUB_MODULES_API='$GITHUB_MODULES_API'"
-
-  local api_resp
-  local module_list=()
-
-  # 1) Попытка найти локальные модули по шаблону NN_*.sh
-  shopt -s nullglob
-  for path in "$LIB_DIR"/[0-9][0-9]_*.sh; do
-    module_list+=( "$(basename "$path")" )
-  done
-  shopt -u nullglob
-
-  # 2) Если локальных модулей нет — запрашиваем список из GitHub API
-  if (( ${#module_list[@]} == 0 )); then
-    log "INFO" "Локальные модули не найдены, запрашиваю список с GitHub API: $GITHUB_MODULES_API"
-    if ! api_resp=$(curl -fsSL "$GITHUB_MODULES_API"); then
-      log "ERROR" "Не удалось получить список модулей с GitHub (curl вернул ошибку)"
-      return
-    fi
-    # Парсим JSON и вытаскиваем имена файлов
-    mapfile -t module_list < <(echo "$api_resp" | jq -r '.[].name')
+  # проверяем, есть ли уже локальные модули вида NN_*.sh
+  if ! compgen -G "$LIB_DIR"/[0-9][0-9]_*.sh > /dev/null; then
+    log "INFO" "Fetching modules via git sparse-checkout"
+    download_repo_dir "script/modules" "$LIB_DIR" \
+      || exit_error "Failed to fetch modules"
+  else
+    log "DEBUG" "Local modules already exist, skipping git fetch"
   fi
 
-  # 3) Для каждого файла вызываем ensure_lib_loaded — подхватит локально или скачает из raw.githubusercontent
-  for file in "${module_list[@]}"; do
-    ensure_lib_loaded "$file"
+  # теперь source всех модулей
+  LOADED_MODULES=()
+  for path in "$LIB_DIR"/[0-9][0-9]_*.sh; do
+    [[ -f "$path" ]] || continue
+    ensure_lib_loaded "$(basename "$path")"
   done
 
-  # 4) Логирование результата загрузки
   if (( ${#LOADED_MODULES[@]} > 0 )); then
-    log "INFO" "Modules loaded:"
-    for m in "${LOADED_MODULES[@]}"; do
-      log "OK" " - $m"
-    done
+    log "INFO" "Modules loaded: ${LOADED_MODULES[*]}"
   else
-    log "WARN" "Не удалось загрузить ни одного модуля"
+    log "WARN" "No modules found in $LIB_DIR"
   fi
 }
 
@@ -274,7 +280,7 @@ declare -A INSTALL_STEPS=(
   ["0"]="auto_full:Automatic full install"
   ["1"]="update_and_upgrade_packages:System update"
   ["2"]="docker_install;docker_create_network traefik-proxy external:Docker. Install"
-  ["3"]="ensure_docker_dir;generate_env_docker:Docker. Generate .env file"
+  ["3"]="ensure_docker_dir;download_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}":Docker. Generate docker dir"
   ["4"]="user_create:Create user"
   ["5"]="firewall_config:Configure firewall"
   ["6"]="sshd_config:Configure SSH"
