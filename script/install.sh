@@ -16,8 +16,14 @@ DOCKER_DIR="/opt/docker-proxy"
 DOCKER_COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
 DOCKER_ENV_FILE="$DOCKER_DIR/.env"
 DOCKER_ENV_TEMPLATE="$TEMPLATE_DIR/docker.env.template"
+GITHUB_REPO_OWNER="${$REPO_OWNER:-Torotin}"
+GITHUB_REPO_NAME="${$REPO_OWNER:-3x-ui_pro_Docker}"
+GITHUB_REPO_RAW="https://raw.githubusercontent.com/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/main/script/modules"
+GITHUB_MODULES_API="https://api.github.com/repos/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/contents/script/modules"
+GITHUB_TEMPLATES_API="https://api.github.com/repos/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/contents/script/template"
+GITHUB_TEMPLATES_RAW="https://raw.githubusercontent.com/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/main/script/template"
 LOADED_MODULES=()
-GITHUB_REPO_RAW="${GITHUB_REPO_RAW:-}"
+
 declare -A required_commands=(
     ["mc"]="mc"
     ["perl"]="perl"
@@ -138,14 +144,51 @@ check_LOG_FILE() {
 initialize_script() {
   [[ -f "$LOG_FILE" ]] && rm -f "$LOG_FILE"
   check_root
+  ensure_templates
+  load_all_modules
   check_LOG_FILE
   ensure_directory_exists "$LOGS_DIR"
   ensure_file_exists "$LOG_FILE"
   check_system_resources
   check_required_commands
   install_packages
+  envfile_script
   yq_install
   type check_required_commands &>/dev/null || exit_error "Missing function: check_required_commands (module not loaded?)"
+}
+
+# ================================================================================
+# Функция: ensure_templates
+# При первом запуске создаёт $TEMPLATE_DIR и загружает из GitHub все файлы шаблонов
+# ================================================================================
+ensure_templates() {
+  # если каталога нет — создаём
+  if [[ ! -d "$TEMPLATE_DIR" ]]; then
+    mkdir -p "$TEMPLATE_DIR" \
+      && log "OK"  "Created template dir: $TEMPLATE_DIR" \
+      || exit_error "Cannot create template dir: $TEMPLATE_DIR"
+
+    # вытягиваем список файлов через GitHub API
+    log "INFO" "Fetching template list from GitHub API: $GITHUB_TEMPLATES_API"
+    local api_resp files
+    if ! api_resp=$(curl -fsSL "$GITHUB_TEMPLATES_API"); then
+      exit_error "Failed to fetch templates list from GitHub"
+    fi
+    mapfile -t files < <(echo "$api_resp" | jq -r '.[].name')
+
+    # скачиваем каждый файл
+    for f in "${files[@]}"; do
+      log "INFO" "Downloading template: $f"
+      if curl -fsSL "$GITHUB_TEMPLATES_RAW/$f" -o "$TEMPLATE_DIR/$f"; then
+        log "OK" "Template loaded: $f"
+      else
+        exit_error "Failed to download template: $f"
+      fi
+    done
+
+  else
+    log "DEBUG" "$TEMPLATE_DIR already exists, skipping templates download"
+  fi
 }
 
 # === Load Modules ===
@@ -155,97 +198,76 @@ initialize_script() {
 ensure_lib_loaded() {
   local file="$1"
   local local_path="$LIB_DIR/$file"
-  local remote_url="${GITHUB_REPO_RAW}/modules/$file"
+  local remote_url="${GITHUB_REPO_RAW}/${file}"
 
-  # Try to source locally first
+  # guard: уже загружено?
+  for m in "${LOADED_MODULES[@]}"; do
+    [[ "$m" == "$file" ]] && return 0
+  done
+
   if [[ -f "$local_path" ]]; then
-    if source "$local_path"; then
-      log "OK" "Module loaded locally: $file"
-    else
-      exit_error "Failed to source: $file"
-    fi
+    source "$local_path" \
+      && log "OK" "Module loaded locally: $file" \
+      || exit_error "Failed to source: $file"
 
-  # If not found locally, try to fetch from remote
   elif [[ -n "$GITHUB_REPO_RAW" ]]; then
     mkdir -p "$LIB_DIR"
-    if curl -fsSL "$remote_url" -o "$local_path"; then
-      if source "$local_path"; then
-        log "OK" "Module loaded from GitHub: $file"
-      else
-        exit_error "Failed to source downloaded: $file"
-      fi
-    else
-      exit_error "Failed to fetch: $file"
-    fi
+    curl -fsSL "$remote_url" -o "$local_path" \
+      && source "$local_path" \
+      && log "OK" "Module loaded from GitHub: $file" \
+      || exit_error "Failed to fetch or source: $file"
 
-  # If neither, fail
   else
-    exit_error "Module $file not found and no remote repo defined."
+    exit_error "Module $file not found locally and no GITHUB_REPO_RAW set."
   fi
 
-  # Track loaded modules
   LOADED_MODULES+=("$file")
 }
 
-# Load all modules matching the pattern 00_*.sh to 10_*.sh in $LIB_DIR
+# Load all modules: сначала пробуем локальные, а при их отсутствии — список из GitHub API
 load_all_modules() {
+  # Убедиться, что директория модулей существует
+  mkdir -p "$LIB_DIR"
+
+  # Отладочный вывод URL API для GitHub
+  log "DEBUG" "GITHUB_MODULES_API='$GITHUB_MODULES_API'"
+
+  local api_resp
+  local module_list=()
+
+  # 1) Попытка найти локальные модули по шаблону NN_*.sh
   shopt -s nullglob
-  local found_modules=0
-  for module in "$LIB_DIR"/{00..10}_*.sh; do
-    ensure_lib_loaded "$(basename "$module")"
-    ((found_modules++))
+  for path in "$LIB_DIR"/[0-9][0-9]_*.sh; do
+    module_list+=( "$(basename "$path")" )
   done
   shopt -u nullglob
 
-  if (( found_modules > 0 )); then
+  # 2) Если локальных модулей нет — запрашиваем список из GitHub API
+  if (( ${#module_list[@]} == 0 )); then
+    log "INFO" "Локальные модули не найдены, запрашиваю список с GitHub API: $GITHUB_MODULES_API"
+    if ! api_resp=$(curl -fsSL "$GITHUB_MODULES_API"); then
+      log "ERROR" "Не удалось получить список модулей с GitHub (curl вернул ошибку)"
+      return
+    fi
+    # Парсим JSON и вытаскиваем имена файлов
+    mapfile -t module_list < <(echo "$api_resp" | jq -r '.[].name')
+  fi
+
+  # 3) Для каждого файла вызываем ensure_lib_loaded — подхватит локально или скачает из raw.githubusercontent
+  for file in "${module_list[@]}"; do
+    ensure_lib_loaded "$file"
+  done
+
+  # 4) Логирование результата загрузки
+  if (( ${#LOADED_MODULES[@]} > 0 )); then
     log "INFO" "Modules loaded:"
-    for mod in "${LOADED_MODULES[@]}"; do
-      log "OK" " - $mod"
+    for m in "${LOADED_MODULES[@]}"; do
+      log "OK" " - $m"
     done
   else
-    log "WARN" "No modules found in $LIB_DIR"
+    log "WARN" "Не удалось загрузить ни одного модуля"
   fi
 }
-
-# main() {
-#     if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
-#     log "INFO" "Starting installation script..."
-#     check_root
-#     # === LOAD ALL MODULES ===
-#     load_all_modules
-#     # === INITIALIZATION ===
-#     initialize_script
-#     # === SYSTEM UPDATE ===
-#     update_and_upgrade_packages
-#     # === PROCESS .env ===
-#     envfile_script
-#     # === DOCKER INSTALLATION ===
-#     docker_install
-#     # docker_setup_ipv6
-#     # docker_create_ipv6_network
-#     # Ensure DOCKER_DIR exists
-#     if [[ ! -d "$DOCKER_DIR" ]]; then
-#       mkdir -p "$DOCKER_DIR" || exit_error "Failed to create Docker directory: $DOCKER_DIR"
-#       log "INFO" "Created Docker directory: $DOCKER_DIR"
-#     fi
-#     # === CONFIG GENERATION ===
-#     generate_env_file "$DOCKER_ENV_TEMPLATE" "$DOCKER_ENV_FILE"
-#     # docker_compose_generate
-#     # === NETWORK OPTIMIZATION ===
-#     network_config_modify
-#     # === USER SETUP ===
-#     #user_create
-#     # === FIREWALL ===
-#     #firewall_config
-#     # === SSH CONFIGURATION ===
-#     #sshd_config
-#     # === HTML TEMPLATE ===
-#     # random_html
-#     # === FINALIZATION ===
-#     msg_final
-#     exit_script
-# }
-
 
 # === Массив шагов ===
 declare -A INSTALL_STEPS=(
@@ -363,10 +385,7 @@ auto_full() {
 main() {
   if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
   log "INFO" "Starting installation script..."
-  check_root
-  load_all_modules
   initialize_script
-  envfile_script
 
   while true; do
     if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
