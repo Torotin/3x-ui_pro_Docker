@@ -4,7 +4,7 @@ http:
     secured:
       chain:
         middlewares:
-          - default-whitelist
+          # - default-whitelist
           - default-headers
           - crowdsec-bouncer
           - error-pages

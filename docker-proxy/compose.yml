@@ -129,7 +129,29 @@ services:
         exec /entrypoint.sh "$@"
     networks:
       - traefik-proxy
-      
+
+  dozzle:
+    container_name: dozzle
+    image: amir20/dozzle:latest
+    restart: always
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - /opt/docker-proxy/.env
+    environment:
+      - DOZZLE_ENABLE_ACTIONS=true
+      - DOZZLE_BASE=/${URI_DOZZLE}
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 3s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+    networks:
+      - traefik-proxy
+    security_opt:
+      - no-new-privileges=true
+            
   3x-ui:
     image: torotin/3x-ui:latest
     container_name: 3x-ui
@@ -156,7 +178,7 @@ services:
       - /opt/docker-proxy/.env
       - /opt/docker-proxy/3x-ui/3x-ui.env
     environment:
-      - XUI_LOG_LEVEL=debug
+      # - XUI_LOG_LEVEL=debug
       - XUI_LOG_FOLDER=/var/log/3x-ui
 
   warp-plus:

@@ -1,74 +1,86 @@
-#!/bin/bash
-# ./lib/08_finalize.sh — Финальный вывод настроек и сохранение в файл
+#!/usr/bin/env bash
+# lib/render.sh — универсальный движок шаблонов на bash + awk
 
-msg_final() {
-    local summary_file="$PROJECT_ROOT/install.summary"
-    local template_file="$PROJECT_ROOT/template/install.summary.template"
-    : > "$summary_file"
+render_template() {
+  local tpl="$1"
+  local out="${2:-/dev/stdout}"
 
-    log "SEP"
-    log "WARN" "Installation complete. Summary of key configuration:"
-    log "SEP"
+  awk '
+    BEGIN { skip = 0 }
+    # хелпер: получить окружение
+    function getenv(n,   v) {
+      v = ENVIRON[n]
+      return (v == "" ? "" : v)
+    }
+    {
+      # 1) Обработка {{#if VAR}}
+      if ($0 ~ /^\{\{#if[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)\}\}$/) {
+        match($0, /^\{\{#if[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)\}\}$/, m)
+        val = getenv(m[1])
+        if (val == "" || val == "false") skip = 1
+        else skip = 0
+        next
+      }
+      # 2) {{else}} / {{/if}}
+      if ($0 == "{{else}}") { skip = !skip; next }
+      if ($0 == "{{/if}}")  { skip = 0;      next }
+      if (skip) next
 
-    # Вычисление условий
-    [[ -n "$PORT_REMOTE_SSH" && -n "$USER_SSH" ]] && SSH_ENABLED=true || SSH_ENABLED=false
-    [[ -n "$PUBLIC_IPV6" && "$PUBLIC_IPV6" != "::" && "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] && IPV6_ENABLED=true || IPV6_ENABLED=false
+      line = $0
+      out_line = ""
 
-    render_template_with_conditions "$template_file" "$summary_file"
+      # 3) Подстановка {{VAR:-default}} и {{VAR}}
+      while (match(line, /\{\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]+)?\}\}/)) {
+        token  = substr(line, RSTART, RLENGTH)
+        prefix = substr(line, 1, RSTART-1)
+        suffix = substr(line, RSTART+RLENGTH)
 
-    while IFS= read -r line; do
-        [[ -n "$line" ]] && log "INFO" "$line" || log "SEP"
-    done < "$summary_file"
+        # внутри без {{ }}
+        inner = token; sub(/^\{\{/, "", inner); sub(/\}\}$/, "", inner)
+
+        # разбиваем на имя и дефолт по ":-"
+        split(inner, parts, ":-")
+        name  = parts[1]
+        defval = ""
+        if (length(parts) > 1) defval = parts[2]
+
+        value = getenv(name)
+        if (value == "") value = defval
+
+        out_line = out_line prefix value
+        line     = suffix
+      }
+      # остаток строки
+      out_line = out_line line
+      print out_line
+    }
+  ' "$tpl" > "$out"
 }
 
 
-render_template_with_conditions() {
-    local template="$1"
-    local output="$2"
+# Пример: финальная функция
+msg_final() {
+    local PROJECT_ROOT="${PROJECT_ROOT:-.}"
+    local tpl="$PROJECT_ROOT/template/install.summary.template"
+    local out="$PROJECT_ROOT/install.summary"
 
-    local SSH_ENABLED="${SSH_ENABLED:-false}"
-    local IPV6_ENABLED="${IPV6_ENABLED:-false}"
+    : > "$out"
 
-    # Экранируем значения для безопасной подстановки
-    escape_sed() { printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'; }
+    log "WARN" "Installation complete. Summary of key configuration:"
 
-    local esc_PORT_REMOTE_SSH=$(escape_sed "$PORT_REMOTE_SSH")
-    local esc_USER_SSH=$(escape_sed "$USER_SSH")
-    local esc_msg_pubkey_auth=$(escape_sed "${msg_pubkey_auth:-unspecified}")
-    local esc_PUBLIC_IPV4=$(escape_sed "$PUBLIC_IPV4")
-    local esc_PUBLIC_IPV6=$(escape_sed "$PUBLIC_IPV6")
-    local esc_WEBDOMAIN=$(escape_sed "$WEBDOMAIN")
-    local esc_URI_PANEL_PATH=$(escape_sed "$URI_PANEL_PATH")
-    local esc_URI_JSON_PATH=$(escape_sed "$URI_JSON_PATH")
-    local esc_URI_SUB_PATH=$(escape_sed "$URI_SUB_PATH")
-    local esc_URI_CORSA=$(escape_sed "$URI_CORSA")
-    local esc_URI_DOZZLE=$(escape_sed "$URI_DOZZLE")
-    local esc_DOCKER_DIR=$(escape_sed "$DOCKER_DIR")
-    local esc_summary_file=$(escape_sed "$output")
+  export SSH_ENABLED=$(
+    [[ -n "$PORT_REMOTE_SSH" && -n "$USER_SSH" ]] && echo true || echo false
+  )
+  export IPV6_ENABLED=$(
+    [[ -n "$PUBLIC_IPV6" && "$PUBLIC_IPV6" != "::" && "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] \
+      && echo true || echo false
+  )
 
-    # Этап 1: убрать неактивные блоки через awk
-    awk -v ssh="$SSH_ENABLED" -v ipv6="$IPV6_ENABLED" '
-    BEGIN { skip = 0 }
-    /^\{\{#if SSH_ENABLED\}\}/ { if (ssh != "true") skip = 1; next }
-    /^\{\{#if IPV6_ENABLED\}\}/ { if (ipv6 != "true") skip = 1; next }
-    /^\{\{else\}\}/ { skip = !skip; next }
-    /^\{\{\/if\}\}/ { skip = 0; next }
-    skip == 0 { print }
-    ' "$template" |
+    render_template "$tpl" "$out"
 
-    # Этап 2: подставить переменные через sed
-    sed -e "s#{{PORT_REMOTE_SSH}}#${esc_PORT_REMOTE_SSH}#g" \
-        -e "s#{{USER_SSH}}#${esc_USER_SSH}#g" \
-        -e "s#{{msg_pubkey_auth}}#${esc_msg_pubkey_auth}#g" \
-        -e "s#{{PUBLIC_IPV4}}#${esc_PUBLIC_IPV4}#g" \
-        -e "s#{{PUBLIC_IPV6}}#${esc_PUBLIC_IPV6}#g" \
-        -e "s#{{WEBDOMAIN}}#${esc_WEBDOMAIN}#g" \
-        -e "s#{{URI_PANEL_PATH}}#${esc_URI_PANEL_PATH}#g" \
-        -e "s#{{URI_JSON_PATH}}#${esc_URI_JSON_PATH}#g" \
-        -e "s#{{URI_SUB_PATH}}#${esc_URI_SUB_PATH}#g" \
-        -e "s#{{URI_CORSA}}#${esc_URI_CORSA}#g" \
-        -e "s#{{URI_DOZZLE}}#${esc_URI_DOZZLE}#g" \
-        -e "s#{{DOCKER_DIR}}#${esc_DOCKER_DIR}#g" \
-        -e "s#{{summary_file}}#${esc_summary_file}#g" \
-        > "$output"
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+        log "INFO" "$line"
+        fi
+    done < "$out"
 }

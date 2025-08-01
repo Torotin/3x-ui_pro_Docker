@@ -150,7 +150,6 @@ populate_env_vars_from_template() {
                         export "$var"="$(generate_random_string 8 12)"
                         log "WARN" "$var not set, generated automatically: ${!var}"
                     }
-                    generate_htpasswd
                     ;;
                 PASS_*)
                     read_required_var "$var" "Enter password ($var)" || {
@@ -213,6 +212,7 @@ envfile_script() {
     load_existing_env_file "$ENV_FILE"
     detect_public_ips
     populate_env_vars_from_template "$ENV_TEMPLATE_FILE"
+    generate_htpasswd
     backup_file "$ENV_FILE"
     generate_env_file "$ENV_TEMPLATE_FILE" "$ENV_FILE"
     log "INFO" ".env file updated: $ENV_FILE"

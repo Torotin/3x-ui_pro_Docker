@@ -52,11 +52,11 @@ sshd_define_auth_method() {
     if [[ -n "$SSH_PBK" ]]; then
         PASS_SSH_auth="no"
         pubkey_auth="yes"
-        msg_pubkey_auth="Authentication via public key"
+        export msg_pubkey_auth="Authentication via public key"
     else
         PASS_SSH_auth="yes"
         pubkey_auth="no"
-        msg_pubkey_auth="Authentication via password"
+        export msg_pubkey_auth="Authentication via password"
     fi
 }
 

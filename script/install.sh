@@ -281,13 +281,14 @@ declare -A INSTALL_STEPS=(
   ["0"]="auto_full:Automatic full install"
   ["1"]="update_and_upgrade_packages:System update"
   ["2"]="docker_install;docker_create_network traefik-proxy external:Docker. (Re)Install"
-  ["3"]="ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}";generate_env_file "$DOCKER_ENV_TEMPLATE" "$DOCKER_ENV_FILE":Docker. Generate docker dir"
-  ["4"]="user_create:Create user"
-  ["5"]="firewall_config:Configure firewall"
-  ["6"]="sshd_config:Configure SSH"
-  ["7"]="network_config_modify:Network optimization"
-  ["8"]="docker compose --env-file "$DOCKER_ENV_FILE" -f "$DOCKER_COMPOSE_FILE" up -d:Docker. Run Compose"
-  ["9"]="msg_final:Final message"
+  ["3"]="ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}";:Docker. Generate docker dir"
+  ["4"]="generate_env_file "$DOCKER_ENV_TEMPLATE" "$DOCKER_ENV_FILE":Docker. Generate docker env-file"
+  ["5"]="user_create:Create user"
+  ["6"]="firewall_config:Configure firewall"
+  ["7"]="sshd_config:Configure SSH"
+  ["8"]="network_config_modify:Network optimization"
+  ["9"]="docker compose --env-file "$DOCKER_ENV_FILE" -f "$DOCKER_COMPOSE_FILE" up -d:Docker. Run Compose"
+  ["10"]="msg_final:Final message"
   ["x"]="exit_script:Exit"
 )
 
@@ -387,11 +388,48 @@ auto_full() {
   read -r
 }
 
+check_args() {
+  # Если переданы аргументы — воспринимаем их как список шагов и сразу выполняем
+  if (( $# > 0 )); then
+    log "INFO" "Запуск в неинтерактивном режиме: шаги = $*"
+    # Разбор указанных шагов (в том числе диапазонов) функцией parse_step_selection
+    selected=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && selected+=("$line")
+    done < <(parse_step_selection "$*")
+
+    for key in "${selected[@]}"; do
+      key="$(echo "$key" | xargs)"
+      entry="${INSTALL_STEPS[$key]:-}"
+      if [[ -z "$entry" ]]; then
+        log "WARN" "Unknown or missing step: $key"
+        continue
+      fi
+
+      IFS=':' read -r cmds desc <<< "$entry"
+      log "SEP"
+      log "TITLE" "Step $key: $desc"
+      IFS=';' read -r -a cmd_array <<< "$cmds"
+      for cmd in "${cmd_array[@]}"; do
+        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+        cmd="${cmd%"${cmd##*[![:space:]]}"}"
+        if [[ -n "$(type -t "${cmd%% *}")" ]]; then
+          log "INFO" "Executing: $cmd"
+          eval "$cmd"
+        else
+          log "WARN" "Command or function '${cmd%% *}' not found, skipping."
+        fi
+      done
+    done
+    exit_script
+  fi
+}
 
 main() {
   if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
   log "INFO" "Starting installation script..."
   initialize_script
+  check_args "$@"
 
   while true; do
     if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
