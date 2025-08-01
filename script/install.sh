@@ -13,7 +13,7 @@ LOG_FILE="$LOGS_DIR/$LOG_NAME.log"
 ENV_FILE="$PROJECT_ROOT/$LOG_NAME.env"
 ENV_TEMPLATE_FILE="$TEMPLATE_DIR/$LOG_NAME.env.template"
 DOCKER_DIR="/opt/docker-proxy"
-DOCKER_COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
+DOCKER_COMPOSE_FILE="$DOCKER_DIR/compose.yml"
 DOCKER_ENV_FILE="$DOCKER_DIR/.env"
 DOCKER_ENV_TEMPLATE="$TEMPLATE_DIR/docker.env.template"
 GITHUB_REPO_OWNER="${REPO_OWNER:-Torotin}"
@@ -279,20 +279,16 @@ load_all_modules() {
 declare -A INSTALL_STEPS=(
   ["0"]="auto_full:Automatic full install"
   ["1"]="update_and_upgrade_packages:System update"
-  ["2"]="docker_install;docker_create_network traefik-proxy external:Docker. Install"
-  ["3"]="ensure_docker_dir;download_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}":Docker. Generate docker dir"
+  ["2"]="docker_install;docker_create_network traefik-proxy external:Docker. (Re)Install"
+  ["3"]="ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}";generate_env_file "$DOCKER_ENV_TEMPLATE" "$DOCKER_ENV_FILE":Docker. Generate docker dir"
   ["4"]="user_create:Create user"
   ["5"]="firewall_config:Configure firewall"
   ["6"]="sshd_config:Configure SSH"
   ["7"]="network_config_modify:Network optimization"
-  ["8"]="msg_final:Final message"
+  ["8"]="docker compose --env-file "$DOCKER_ENV_FILE" -f "$DOCKER_COMPOSE_FILE" up -d:Docker. Run Compose"
+  ["9"]="msg_final:Final message"
   ["x"]="exit_script:Exit"
 )
-
-# === Steps that require parameters ===
-generate_env_docker() {
-  generate_env_file "$DOCKER_ENV_TEMPLATE" "$DOCKER_ENV_FILE"
-}
 
 ensure_docker_dir() {
   if [[ ! -d "$DOCKER_DIR" ]]; then
@@ -319,28 +315,35 @@ show_menu() {
 
 parse_step_selection() {
   local raw_input="$1"
-  local tokens=()
   local expanded=()
+  raw_input="$(echo "$raw_input" | tr ',' ' ' | xargs)"
 
-  read -r -a tokens <<< "$(echo "$raw_input" | tr ',' ' ')"
+  IFS=' ' read -r -a tokens <<< "$raw_input"
 
   for token in "${tokens[@]}"; do
-    token="$(echo "$token" | xargs)"
-    if [[ "$token" =~ ^[0-9]+$ ]]; then
+    echo "TOKEN: $token" >&2
+    if [[ "$token" =~ ^[0-9]+-[0-9]+$ ]]; then
+      local start="${token%-*}"
+      local end="${token#*-}"
+      if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ && $start -le $end ]]; then
+        for ((i=start; i<=end; i++)); do
+          expanded+=("$i")
+        done
+      fi
+    elif [[ "$token" =~ ^[0-9]+$ ]]; then
       expanded+=("$token")
-    elif [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-      for ((i=${BASH_REMATCH[1]}; i<=${BASH_REMATCH[2]}; i++)); do
-        expanded+=("$i")
-      done
     elif [[ "$token" =~ ^[a-zA-Z]+$ ]]; then
       expanded+=("$token")
     fi
   done
 
+  log "DEBUG" "[parse_step_selection] expanded: ${expanded[*]}"
   for item in "${expanded[@]}"; do
     echo "$item"
   done
 }
+
+
 
 auto_full() {
   log "INFO" "Running all steps (auto mode)..."

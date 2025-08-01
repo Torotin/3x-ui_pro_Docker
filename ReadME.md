@@ -1,13 +1,13 @@
 ## 1. **Скачать скрипт**
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/main/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/refs/heads/main/script/install.sh
 ```
 
 или
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/main/install.sh
+wget -O install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/refs/heads/main/script/install.sh
 ```
 
 ---
@@ -31,11 +31,11 @@ sudo ./install.sh
 ### **Всё вместе одной строкой:**
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/main/install.sh && chmod +x install.sh && sudo ./install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/refs/heads/main/script/install.sh && chmod +x install.sh && sudo ./install.sh
 ```
 
 или с wget:
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/main/install.sh && chmod +x install.sh && sudo ./install.sh
+wget -O install.sh https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/refs/heads/main/script/install.sh && chmod +x install.sh && sudo ./install.sh
 ```
