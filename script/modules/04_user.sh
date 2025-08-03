@@ -1,147 +1,197 @@
 #!/bin/bash
 # lib/04_user.sh — User management module
 
-# === Глобальные переменные (ожидаются извне или из .env) ===
-: "${TEMPLATE_DIR:=/opt/template}"
-: "${PROJECT_ROOT:=/opt}"
-: "${USER_SSH:=}"
-: "${PASS_SSH:=}"
-: "${SSH_PBK:=}"
+# === Global variables ===
+TEMPLATE_DIR=${TEMPLATE_DIR:-}
+PROJECT_ROOT=${PROJECT_ROOT:-}
+USER_SSH=${USER_SSH:-}
+PASS_SSH=${PASS_SSH:-}
+SSH_PBK=${SSH_PBK:-}   # optional
 
-# Получение домашней дирректории
-get_home_dir() {
-    eval echo "~$USER_SSH"
+# === Helper functions ===
+
+# ensure_directory: create directory with specified mode and chown to USER_SSH
+ensure_directory() {
+    local mode=$1
+    local dir=$2
+    mkdir -p "$dir"
+    chmod "$mode" "$dir"
+    chown "$USER_SSH:$USER_SSH" "$dir" || true
 }
 
-# === Главная функция ===
-user_create() {
-    log "INFO" "Starting full user setup: $USER_SSH"
-
-    if [[ "$USER_SSH" == "root" ]]; then
-        log "WARN" "Skipping setup for root user — not supported by design."
-        return
-    fi
-
-    check_user_vars
-    user_create_account
-    user_set_password
-    user_setup_ssh
-    user_add_to_groups
-    user_configure_sudo
-    user_generate_ssh_key
-    user_install_bash_aliases
-
-    chown -R "$USER_SSH:$USER_SSH" "$(get_home_dir)"
-    log "OK" "User $USER_SSH fully configured."
+# ensure_file: create empty file if missing, set mode and chown to USER_SSH
+ensure_file() {
+    local mode=$1
+    local file=$2
+    [[ -e "$file" ]] || touch "$file"
+    chmod "$mode" "$file"
+    chown "$USER_SSH:$USER_SSH" "$file" || true
 }
 
-# === Проверка переменных ===
-check_user_vars() {
-    [[ -z "$USER_SSH" || -z "$PASS_SSH" ]] && exit_error "Variables USER_SSH or PASS_SSH are not set."
-}
-
-# === Создание пользователя и домашней директории ===
-user_create_account() {
-    local home_dir="$(get_home_dir)"
-    if id "$USER_SSH" &>/dev/null; then
-        log "WARN" "User $USER_SSH already exists."
-        ensure_directory_exists "$home_dir"
+# detect_home_dir: get the user's home directory via getent or fallback to /home/USER_SSH
+detect_home_dir() {
+    local hd
+    if hd=$(getent passwd "$USER_SSH" 2>/dev/null | cut -d: -f6) && [[ -n "$hd" ]]; then
+        echo "$hd"
     else
-        useradd -m -s /bin/bash "$USER_SSH" || exit_error "Failed to create user $USER_SSH."
-        log "OK" "User $USER_SSH created."
+        echo "/home/$USER_SSH"
     fi
 }
 
-# === Установка пароля ===
+# check_user_vars: ensure USER_SSH and PASS_SSH are provided
+check_user_vars() {
+    if [[ -z "$USER_SSH" || -z "$PASS_SSH" ]]; then
+        exit_error "Both USER_SSH and PASS_SSH must be provided."
+    fi
+}
+
+# === Module functions ===
+
+# user_create_account: create the system user if it does not exist
+user_create_account() {
+    log "INFO" "Creating account for user $USER_SSH"
+    if id "$USER_SSH" &>/dev/null; then
+        log "WARN" "User $USER_SSH already exists, skipping creation."
+        ensure_directory 700 "$HOME_DIR"
+    else
+        useradd -m -d "$HOME_DIR" -s /bin/bash "$USER_SSH" \
+            || exit_error "Failed to create user $USER_SSH."
+        log "OK" "User account $USER_SSH created."
+    fi
+}
+
+# user_set_password: set the user's password and unset PASS_SSH
 user_set_password() {
-    echo "$USER_SSH:$PASS_SSH" | chpasswd || exit_error "Failed to set password for $USER_SSH."
+    echo "${USER_SSH}:${PASS_SSH}" | chpasswd \
+        || exit_error "Failed to set password for $USER_SSH."
     unset PASS_SSH
     log "DEBUG" "Password set for $USER_SSH."
 }
 
-# === Настройка SSH-директории и authorized_keys ===
+# user_generate_ssh_key: generate ED25519 keypair if missing
+user_generate_ssh_key() {
+    log "INFO" "Ensuring ED25519 keypair for $USER_SSH"
+    local ed_key="$HOME_DIR/.ssh/id_ed25519"
+
+    # prepare .ssh directory
+    ensure_directory 700 "$HOME_DIR/.ssh"
+
+    # generate ED25519 keypair
+    if [[ ! -f "$ed_key" ]]; then
+        ssh-keygen -t ed25519 -N "" -f "$ed_key" -C "$USER_SSH" -q \
+            || exit_error "Failed to generate ED25519 key"
+        chown "$USER_SSH:$USER_SSH" "$ed_key"{,.pub}
+        log "DEBUG" "ED25519 keypair generated"
+    else
+        log "INFO" "ED25519 keypair already exists"
+    fi
+}
+
+# user_setup_ssh: populate authorized_keys with provided and generated ED25519 key
 user_setup_ssh() {
-    local ssh_dir="$(get_home_dir)/.ssh"
+    log "INFO" "Setting up authorized_keys for $USER_SSH"
+    local ssh_dir="$HOME_DIR/.ssh"
     local auth_keys="$ssh_dir/authorized_keys"
 
-    ensure_directory_exists "$ssh_dir"
-    chmod 700 "$ssh_dir"
-    chown "$USER_SSH:$USER_SSH" "$ssh_dir"
+    ensure_directory 700 "$ssh_dir"
+    ensure_file      600 "$auth_keys"
 
-    ensure_file_exists "$auth_keys"
-    chmod 600 "$auth_keys"
-    chown "$USER_SSH:$USER_SSH" "$auth_keys"
-
+    # collect keys: optional SSH_PBK, then generated ED25519 public key
+    declare -a pub_keys=()
     if [[ -n "$SSH_PBK" ]]; then
-        echo "$SSH_PBK" >> "$auth_keys"
-        sort -u "$auth_keys" -o "$auth_keys"
-        log "DEBUG" "SSH public key added to authorized_keys."
-    else
-        log "WARN" "No SSH key provided for $USER_SSH."
+        pub_keys+=( "$SSH_PBK" )
     fi
-}
+    pub_keys+=( "$(cat "$ssh_dir/id_ed25519.pub")" )
 
-# === Добавление в группы ===
-user_add_to_groups() {
-    local groups=("sudo" "docker")
-    for group in "${groups[@]}"; do
-        usermod -aG "$group" "$USER_SSH" 2>/dev/null || log "WARN" "Group $group not found, skipping."
+    # append each key if not already present
+    for key in "${pub_keys[@]}"; do
+        grep -qxF "$key" "$auth_keys" || echo "$key" >> "$auth_keys"
     done
-    log "DEBUG" "User $USER_SSH added to groups."
+
+    # remove duplicates just in case
+    sort -u "$auth_keys" -o "$auth_keys"
+    log "DEBUG" "authorized_keys populated with ED25519 key(s)"
 }
 
-# === Настройка sudo-прав и логирования ===
+# user_add_to_groups: add the user to default groups (sudo, docker)
+user_add_to_groups() {
+    log "INFO" "Adding $USER_SSH to default groups"
+    local groups=(sudo docker)
+    for g in "${groups[@]}"; do
+        if getent group "$g" &>/dev/null; then
+            usermod -aG "$g" "$USER_SSH" \
+                && log "DEBUG" "Added $USER_SSH to group $g"
+        else
+            log "DEBUG" "Group $g not found, skipping"
+        fi
+    done
+}
+
+# user_configure_sudo: create sudoers entry with NOPASSWD and logging
 user_configure_sudo() {
+    log "INFO" "Configuring sudoers for $USER_SSH"
     local sudoers_file="/etc/sudoers.d/$USER_SSH"
-    local sudo_log="$home_dir/sudo_${USER_SSH}.log"
+    local sudo_log="$HOME_DIR/sudo_${USER_SSH}.log"
 
     backup_file "$sudoers_file"
-    {
-        echo "$USER_SSH ALL=(ALL) NOPASSWD:ALL"
-        echo "Defaults:$USER_SSH log_output"
-        echo "Defaults:$USER_SSH logfile=\"$sudo_log\""
-        echo "Defaults:$USER_SSH !tty_tickets"
-        echo "Defaults:$USER_SSH !requiretty"
-    } > "$sudoers_file"
+    umask 0277
+    cat > "$sudoers_file" <<EOF
+$USER_SSH ALL=(ALL) NOPASSWD:ALL
+Defaults:$USER_SSH log_output
+Defaults:$USER_SSH logfile="$sudo_log"
+Defaults:$USER_SSH !tty_tickets
+Defaults:$USER_SSH !requiretty
+EOF
     chmod 0440 "$sudoers_file"
 
-    ensure_file_exists "$sudo_log"
+    # ensure sudo log exists under root ownership
+    [[ -e "$sudo_log" ]] || touch "$sudo_log"
     chmod 600 "$sudo_log"
     chown root:root "$sudo_log"
-    log "DEBUG" "Sudo configuration complete for $USER_SSH."
+    log "DEBUG" "Sudo configuration completed for $USER_SSH."
 }
 
-# === Генерация SSH-ключа, если не существует ===
-user_generate_ssh_key() {
-    local ssh_key="$(get_home_dir)/.ssh/id_rsa"
-
-    if [[ ! -f "$ssh_key" ]]; then
-        ssh-keygen -t rsa -b 4096 -N "" -f "$ssh_key" -C "$USER_SSH" -q
-        chown "$USER_SSH:$USER_SSH" "$ssh_key" "$ssh_key.pub"
-        log "DEBUG" "SSH keypair generated for $USER_SSH."
-    else
-        log "INFO" "SSH key already exists for $USER_SSH."
-    fi
-}
-
-# === Установка и подключение .bash_aliases ===
+# user_install_bash_aliases: copy .bash_aliases template and enable sourcing
 user_install_bash_aliases() {
-    local alias_src="$TEMPLATE_DIR/.bash_aliases.template"
-    local alias_dst="$(get_home_dir)/.bash_aliases"
-    local bashrc="$(get_home_dir)/.bashrc"
+    log "INFO" "Installing bash aliases for $USER_SSH"
+    local src="$TEMPLATE_DIR/.bash_aliases.template"
+    local dst="$HOME_DIR/.bash_aliases"
+    local bashrc="$HOME_DIR/.bashrc"
 
-    if [[ -f "$alias_src" ]]; then
-        cp "$alias_src" "$alias_dst"
-        chmod 644 "$alias_dst"
-        chown "$USER_SSH:$USER_SSH" "$alias_dst"
-        log "DEBUG" ".bash_aliases installed from template."
+    if [[ -f "$src" ]]; then
+        cp "$src" "$dst"
+        chmod 644 "$dst"
+        chown "$USER_SSH:$USER_SSH" "$dst"
+        if ! grep -qxF '[[ -f ~/.bash_aliases ]] && . ~/.bash_aliases' "$bashrc"; then
+            echo '[[ -f ~/.bash_aliases ]] && . ~/.bash_aliases' >> "$bashrc"
+            log "DEBUG" ".bash_aliases sourcing added to .bashrc"
+        fi
+        log "DEBUG" ".bash_aliases installed from template"
     else
-        log "WARN" "Alias template not found: $alias_src"
+        log "WARN" "Alias template not found at: $src"
+    fi
+}
+
+# user_create: orchestrate the full user setup (not invoked automatically)
+user_create() {
+    check_user_vars
+    log "INFO" "Starting full user setup for user $USER_SSH"
+
+    if [[ "$USER_SSH" == "root" ]]; then
+        log "WARN" "Skipping setup for root user"
+        return
     fi
 
-    if [[ -f "$bashrc" && ! $(grep -F '.bash_aliases' "$bashrc") ]]; then
-        echo -e '\n[ -f ~/.bash_aliases ] && . ~/.bash_aliases' >> "$bashrc"
-        log "DEBUG" ".bash_aliases sourcing added to .bashrc"
-    fi
+    HOME_DIR=$(detect_home_dir)
 
+    user_create_account
+    user_set_password
+    user_generate_ssh_key
+    user_setup_ssh
+    user_add_to_groups
+    user_configure_sudo
+    user_install_bash_aliases
+
+    chown -R "$USER_SSH:$USER_SSH" "$HOME_DIR"
+    log "OK" "User $USER_SSH has been fully configured."
 }
