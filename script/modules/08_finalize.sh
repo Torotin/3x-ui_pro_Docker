@@ -58,29 +58,34 @@ render_template() {
 }
 
 
-# Пример: финальная функция
+# msg_final: render install summary and emit each non-empty line via log
 msg_final() {
     local PROJECT_ROOT="${PROJECT_ROOT:-.}"
     local tpl="$PROJECT_ROOT/template/install.summary.template"
     local out="$PROJECT_ROOT/install.summary"
 
+    log "INFO" "Preparing final summary"
+    log "DEBUG" "Summary template: $tpl"
     : > "$out"
 
-    log "WARN" "Installation complete. Summary of key configuration:"
+    # determine flags
+    export SSH_ENABLED=$(
+      [[ -n "$PORT_REMOTE_SSH" && -n "$USER_SSH" ]] && echo true || echo false
+    )
+    export IPV6_ENABLED=$(
+      [[ -n "$PUBLIC_IPV6" && "$PUBLIC_IPV6" != "::" && "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] \
+        && echo true || echo false
+    )
+    log "DEBUG" "SSH_ENABLED=$SSH_ENABLED, IPV6_ENABLED=$IPV6_ENABLED"
 
-  export SSH_ENABLED=$(
-    [[ -n "$PORT_REMOTE_SSH" && -n "$USER_SSH" ]] && echo true || echo false
-  )
-  export IPV6_ENABLED=$(
-    [[ -n "$PUBLIC_IPV6" && "$PUBLIC_IPV6" != "::" && "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] \
-      && echo true || echo false
-  )
-
+    # render and capture
     render_template "$tpl" "$out"
 
+    # log each non-empty line from summary
+    log "INFO" "Installation summary:"
     while IFS= read -r line; do
-        if [[ -n "$line" ]]; then
-        log "INFO" "$line"
-        fi
+        [[ -n "$line" ]] && log "INFO" "$line"
     done < "$out"
+
+    log "OK" "Final summary delivered"
 }

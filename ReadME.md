@@ -1,3 +1,6 @@
+## AI Документация
+[![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
+
 ## 1. **Скачать скрипт**
 
 ```bash
