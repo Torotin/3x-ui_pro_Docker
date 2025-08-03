@@ -2,28 +2,28 @@
 
 http:
   services:
-    xui-panel-svc:
+    3xui-panel-svc:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_VLESS_PANEL}"
-    xui-sub-svc:
+    3xui-sub-svc:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}"
-    xhttp3xui-svc:
+    3xui-xhttp-svc:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_XHTTP}"
 
   middlewares:
-    xui-sub-hostheader:
+    3xui-sub-hostheader:
       headers:
         customRequestHeaders:
           Host: "${WEBDOMAIN}"
 
   routers:
     # Панель 3x-ui (SPA-путь)
-    xui-panel:
+    3xui-panel:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)"
       entryPoints:
         - websecure
@@ -31,25 +31,25 @@ http:
         - secured
       tls:
         certResolver: le
-      service: xui-panel-svc
+      service: 3xui-panel-svc
 
     # Подписки (SUB + JSON)
-    xui-sub:
+    3xui-sub:
       rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
       entryPoints:
         - websecure
       middlewares:
         - secured
-        - xui-sub-hostheader
+        - 3xui-sub-hostheader
       tls:
         certResolver: le
-      service: xui-sub-svc
+      service: 3xui-sub-svc
 
     # XHTTP (plain HTTP)
     xhttp3xui:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)"
       entryPoints:
-        - web
+        - websecure
       middlewares:
         - secured
-      service: xhttp3xui-svc
+      service: 3xui-xhttp-svc
