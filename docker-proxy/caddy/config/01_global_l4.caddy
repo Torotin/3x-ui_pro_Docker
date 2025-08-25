@@ -63,7 +63,7 @@
                 quic
             }
             route @quic {
-                proxy 3x-ui:{$PORT_LOCAL_XHTTP}
+                proxy udp/3x-ui:{$PORT_LOCAL_XHTTP}
             }
         }
 

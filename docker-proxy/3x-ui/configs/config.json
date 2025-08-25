@@ -29,27 +29,6 @@
         "protocol": [
           "bittorrent"
         ]
-      },
-      {
-        "type": "field",
-        "outboundTag": "WARP-PLUS",
-        "domain": [
-          "ext:geosite_RU.dat:category-gov-ru",
-          "ext:geosite_RU.dat:private",
-          "ext:geosite_RU.dat:yandex",
-          "ext:geosite_RU.dat:steam",
-          "ext:geosite_RU.dat:vk",
-          "regexp:\\.ru$",
-          "regexp:\\.su$",
-          "regexp:\\.xn--p1ai$",
-          "regexp:\\.xn--p1acf$",
-          "regexp:\\.80asehdb$",
-          "regexp:\\.c1avg$",
-          "regexp:\\.80aswg$",
-          "regexp:\\.80adxhks$",
-          "regexp:\\.moscow$",
-          "regexp:\\.d1acj3b$"
-        ]
       }
     ]
   },
@@ -66,167 +45,6 @@
       "tag": "api",
       "sniffing": null,
       "allocate": null
-    },
-    {
-      "listen": null,
-      "port": 30862,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "email": "user_1ZD3ILVT",
-            "flow": "xtls-rprx-vision",
-            "id": "0c7f9859-c5e3-4a08-a820-9de4cffb2f9f"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "alpn": "h2 h3",
-            "dest": "127.0.0.1:21150",
-            "name": "",
-            "path": "",
-            "xver": 2
-          },
-          {
-            "alpn": "",
-            "dest": "traefik:4443",
-            "path": "",
-            "xver": 2
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "realitySettings": {
-          "dest": "traefik:4443",
-          "maxClient": "",
-          "maxTimediff": 0,
-          "minClient": "",
-          "privateKey": "oOu_4gZT_QADWi0j-PD6TVDmcC6i7uCPo_kcfOMK5kw",
-          "serverNames": [
-            "v395233.hosted-by-vdsina.com"
-          ],
-          "shortIds": [
-            "a9332b472264",
-            "ebee7bddee3f",
-            "118b",
-            "3474ce9425",
-            "d01310",
-            "c3fa5e37",
-            "5147",
-            "9cc0d03e8e"
-          ],
-          "show": true,
-          "xver": 0
-        },
-        "security": "reality",
-        "sockopt": {
-          "V6Only": false,
-          "acceptProxyProtocol": true,
-          "dialerProxy": "",
-          "domainStrategy": "UseIP",
-          "interface": "",
-          "mark": 0,
-          "penetrate": true,
-          "tcpFastOpen": true,
-          "tcpKeepAliveIdle": 300,
-          "tcpKeepAliveInterval": 0,
-          "tcpMaxSeg": 1440,
-          "tcpMptcp": false,
-          "tcpUserTimeout": 10000,
-          "tcpWindowClamp": 600,
-          "tcpcongestion": "bbr",
-          "tproxy": "tproxy"
-        },
-        "tcpSettings": {
-          "acceptProxyProtocol": true,
-          "header": {
-            "type": "none"
-          }
-        }
-      },
-      "tag": "inbound-30862",
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ],
-        "metadataOnly": false,
-        "routeOnly": false
-      },
-      "allocate": {
-        "strategy": "always",
-        "refresh": 5,
-        "concurrency": 3
-      }
-    },
-    {
-      "listen": null,
-      "port": 21150,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "email": "user_tSPAMdDr",
-            "flow": "",
-            "id": "16075932-e4a1-41a7-b339-302da0cad094"
-          }
-        ],
-        "decryption": "none",
-        "fallbacks": []
-      },
-      "streamSettings": {
-        "network": "xhttp",
-        "security": "none",
-        "sockopt": {
-          "V6Only": false,
-          "acceptProxyProtocol": true,
-          "dialerProxy": "",
-          "domainStrategy": "UseIP",
-          "interface": "",
-          "mark": 0,
-          "penetrate": true,
-          "tcpFastOpen": true,
-          "tcpKeepAliveIdle": 300,
-          "tcpKeepAliveInterval": 0,
-          "tcpMaxSeg": 1440,
-          "tcpMptcp": false,
-          "tcpUserTimeout": 10000,
-          "tcpWindowClamp": 600,
-          "tcpcongestion": "bbr",
-          "tproxy": "tproxy"
-        },
-        "xhttpSettings": {
-          "headers": {},
-          "host": "",
-          "mode": "packet-up",
-          "noSSEHeader": false,
-          "path": "/I6Y7J7VXZEH3llYeJANLG0cDpfh",
-          "scMaxBufferedPosts": 30,
-          "scMaxEachPostBytes": "1000000",
-          "scStreamUpServerSecs": "20-80",
-          "xPaddingBytes": "100-1000"
-        }
-      },
-      "tag": "inbound-21150",
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ],
-        "metadataOnly": false,
-        "routeOnly": false
-      },
-      "allocate": {
-        "strategy": "always",
-        "refresh": 5,
-        "concurrency": 3
-      }
     }
   ],
   "outbounds": [
@@ -243,19 +61,6 @@
       "tag": "blocked",
       "protocol": "blackhole",
       "settings": {}
-    },
-    {
-      "tag": "WARP-PLUS",
-      "protocol": "socks",
-      "settings": {
-        "servers": [
-          {
-            "address": "warp-plus",
-            "port": 1080,
-            "users": []
-          }
-        ]
-      }
     }
   ],
   "transport": null,
@@ -285,9 +90,5 @@
   "reverse": null,
   "fakedns": null,
   "observatory": null,
-  "burstObservatory": null,
-  "metrics": {
-    "tag": "metrics_out",
-    "listen": "127.0.0.1:11111"
-  }
+  "burstObservatory": null
 }

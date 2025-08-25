@@ -1,121 +1,114 @@
-
 ############################################################
 #                  НАВИГАЦИЯ / NAVIGATION                 #
 ############################################################
-alias ..='cd ..'                            # На уровень вверх / Up one level
-alias ...='cd ../..'                        # На два уровня вверх / Up two levels
-alias ....='cd ../../..'                    # На три уровня вверх / Up three levels
-alias cls='clear'                           # Очистка экрана / Clear screen
-alias mkdir='mkdir -pv'                     # Создать каталог с родителями / Make dir with parents
+alias ..='cd ..'             # Перейти на один уровень вверх
+alias ...='cd ../..'         # Перейти на два уровня вверх
+alias ....='cd ../../..'     # Перейти на три уровня вверх
+alias cls='clear'            # Очистить экран терминала
+alias mkdir='mkdir -pv'      # Создать каталог с родителями и показать путь
 
 ############################################################
 #                  FILE LISTING                            #
 ############################################################
-alias lf  ='ls -CF'     # list files (columns + classification)
-alias lfa ='ls -A'      # list files all (show hidden except . and ..)
-alias ll  ='ls -alF'    # long list with indicators
-alias lfs ='ls -lSh'    # list files sorted by size
-alias lft ='ls -lt'     # list files sorted by time (new first)
-alias lftr ='ls -ltr'   # list files sorted by time (old first)
-alias lsh ='ls -lhS'    # list files human-readable + sort by size
+alias lf='ls -CF'            # Список файлов в колонках с классификацией
+alias lfa='ls -A'            # Список всех файлов (включая скрытые, кроме . и ..)
+alias ll='ls -alF'           # Подробный список с индикаторами
+alias lfs='ls -lSh'          # Список файлов по размеру (человекочитаемо)
+alias lft='ls -lt'           # Список файлов по времени (новые первыми)
+alias lftr='ls -ltr'         # Список файлов по времени (старые первыми)
+alias lfsr='ls -lhS'         # Список файлов по размеру (human-readable)
 
 ############################################################
 #                  QUICK CD                                #
 ############################################################
-# Go Home
-alias hd='cd ~'              # Go to home directory
+alias hd='cd ~'              # Перейти в домашнюю директорию
+alias cdopt='cd /opt'        # Перейти в /opt
+alias cdetc='cd /etc'        # Перейти в /etc
+alias cdvar='cd /var'        # Перейти в /var
+alias cdlogs='cd /var/log'   # Перейти в /var/log
+alias cdroot='cd /root'      # Перейти в /root
 
-# Extract archives
-alias untar='tar -xvf'       # Extract tar balls
-
-# Quick jumps to system dirs
-alias cdopt='cd /opt'
-alias cdetc='cd /etc'
-alias cdvar='cd /var'
-alias cdlogs='cd /var/log'
-alias cdroot='cd /root'
-
+############################################################
+#                  ARCHIVES                                #
+############################################################
+alias untar='tar -xvf'       # Распаковать tar-архив
 
 ############################################################
 #                  СИСТЕМА / SYSTEM                       #
 ############################################################
-alias reboot='sudo reboot now'              # Перезагрузка / Reboot
-alias shutdown='sudo shutdown now'          # Выключение / Shutdown
-alias show-ports   ='ss -tuln'              # Show listening ports
-alias cpu-info     ='lscpu'                 # CPU information
-alias mem-info     ='free -h'               # Memory usage
-alias disk-usage   ='df -h'                 # Disk usage
-alias sys-journal  ='journalctl -xe'        # Systemd journal
-alias sc-restart   ='sudo systemctl restart'# Restart a service
-alias sc-status    ='sudo systemctl status' # Service status
-alias sc-enable    ='sudo systemctl enable' # Enable service at boot
-alias sc-disable   ='sudo systemctl disable'# Disable service at boot
+alias reboot='sudo reboot now'       # Перезагрузить систему
+alias shutdown='sudo shutdown now'   # Выключить систему
+alias show-ports='ss -tuln'          # Показать слушающие порты
+alias cpu-info='lscpu'               # Информация о CPU
+alias mem-info='free -h'             # Использование памяти
+alias disk-usage='df -h'             # Использование диска
+alias sys-journal='journalctl -xe'   # Журнал systemd
+
+# systemctl shortcuts
+alias sc-restart='sudo systemctl restart'   # Перезапуск сервиса
+alias sc-status='sudo systemctl status'     # Статус сервиса
+alias sc-enable='sudo systemctl enable'     # Включить автозапуск сервиса
+alias sc-disable='sudo systemctl disable'   # Отключить автозапуск сервиса
 
 ############################################################
 #                  DOCKER                                  #
 ############################################################
-alias docker-ps               ='docker ps'                       # Running containers
-alias docker-ps-all           ='docker ps -a'                    # All containers
-alias docker-start            ='docker start'                    # Start container
-alias docker-stop             ='docker stop'                     # Stop container
-alias docker-rm               ='docker rm'                       # Remove container
-alias docker-images           ='docker images'                   # Images list
-alias docker-exec             ='docker exec -it'                 # Exec into container
-alias docker-build            ='docker build .'                  # Build image
-alias docker-logs             ='docker logs'                     # Container logs
+alias docker-ps='docker ps'               # Список запущенных контейнеров
+alias docker-ps-all='docker ps -a'        # Список всех контейнеров
+alias docker-start='docker start'         # Запустить контейнер
+alias docker-stop='docker stop'           # Остановить контейнер
+alias docker-rm='docker rm'               # Удалить контейнер
+alias docker-images='docker images'       # Список образов
+alias docker-exec='docker exec -it'       # Выполнить команду в контейнере
+alias docker-build='docker build'         # Собрать образ (путь указывать вручную)
+alias docker-logs='docker logs'           # Просмотр логов контейнера
 
-# Docker-Compose shortcuts
-alias docker-compose-up       ='docker compose up -d'            # Compose up
-alias docker-compose-down     ='docker compose down'             # Compose down
-alias docker-compose-logs     ='docker compose logs -f'          # Compose logs follow
-alias docker-compose-build    ='docker compose build'            # Compose build
-
+# Docker Compose shortcuts
+alias dc-up='docker compose up -d'        # Запустить сервисы в фоне
+alias dc-down='docker compose down'       # Остановить и удалить сервисы
+alias dc-logs='docker compose logs -f'    # Просмотр логов (follow)
+alias dc-build='docker compose build'     # Пересобрать образы
 
 ############################################################
 #                  APT                                    #
 ############################################################
-alias apt-update='sudo apt update'                               # Обновить пакеты / Update packages
-alias apt-upgrade='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y'  # Обновить и очистить / Upgrade and autoremove
-alias apt-install='sudo apt install -y'                          # Установить пакет / Install package
-alias apt-remove='sudo apt remove -y'                            # Удалить пакет / Remove package
-alias apt-autoremove='sudo apt autoremove -y'                    # Удалить неиспользуемые / Autoremove
-alias apt-search='apt search'                                    # Поиск пакета / Search package
-alias apt-clean='sudo apt clean && sudo apt autoclean'           # Очистка кэша / Clean apt cache
+alias apt-update='sudo apt update'                 # Обновить индекс пакетов
+alias apt-upgrade='sudo apt upgrade -y'            # Обновить установленные пакеты
+alias apt-full-upgrade='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y' # Полное обновление и очистка
+alias apt-install='sudo apt install -y'            # Установить пакет
+alias apt-remove='sudo apt remove -y'              # Удалить пакет
+alias apt-autoremove='sudo apt autoremove -y'      # Удалить неиспользуемые пакеты
+alias apt-search='apt search'                      # Найти пакет
+alias apt-clean='sudo apt clean && sudo apt autoclean' # Очистить кэш APT
 
 ############################################################
-#                  SEARCH & UTILS / ПОИСК И УТИЛИТЫ        #
+#                  SEARCH & UTILS                         #
 ############################################################
-alias grep        ='grep --color=auto' 
-alias find-links  ='find . -type l -ls'       
-alias find-file   ='find . -name'             
-alias whichall    ='type -a'                  
-alias datetime    ='date "+%Y-%m-%d %H:%M:%S"' 
+alias grep='grep --color=auto'        # Подсветка совпадений в grep
+alias find-links='find . -type l -ls' # Найти символические ссылки
+alias find-file='find . -name'        # Найти файл по имени
+alias whichall='type -a'              # Показать все варианты команды
+alias datetime='date "+%Y-%m-%d %H:%M:%S"' # Текущая дата и время
 
-# use htop directly, avoid aliasing top
-alias top        ='htop'
-
-alias fcat      ='find . -type f -exec sh -c '\''echo "=== $1 ==="; cat "$1"; echo'\'' _ {} \;' 
-
-# archive extraction (safe)
-alias untar       ='tar -xvf'
+alias fcat='find . -type f -exec sh -c '\''echo "=== $1 ==="; cat "$1"; echo'\'' _ {} \;' 
+# Показать содержимое всех файлов в текущей директории (с разделителями)
 
 ############################################################
-#                  NETWORK / СЕТЬ                         #
+#                  NETWORK                                #
 ############################################################
-alias public-ip='curl -s ifconfig.me'                             # External IP
-alias ping-google='ping 8.8.8.8 -c 4'                             # Ping Google DNS
-alias netstat-all='netstat -tulpen'                               # Show all network connections
-alias trace-route='traceroute'                                    # Trace network route
-alias dns-status='resolvectl status'                              # DNS information
+alias public-ip='curl -s ifconfig.me'    # Показать внешний IP
+alias ping-google='ping 8.8.8.8 -c 4'    # Проверить соединение с Google DNS
+alias netstat-all='netstat -tulpen'      # Сеть: все соединения и процессы
+alias trace-route='traceroute'           # Трассировка маршрута
+alias dns-status='resolvectl status'     # Статус DNS
 
 alias ss-ports='echo "Netid State  Recv-Q Send-Q   Local_Address:Port     Peer:Port    Process,PID,FD"; \
-sudo ss -tulpn | tail -n +2 | sort -t: -k2,2n | sed -E "s/users:\(\((.*)\)\)/\1/" | sed -E "s/[\"()]//g"'  
-
+sudo ss -tulpn | tail -n +2 | sort -t: -k2,2n | sed -E "s/users:\(\((.*)\)\)/\1/" | sed -E "s/[\"()]//g"'
+# Красивый вывод прослушивающих портов с PID/Process
 
 ############################################################
-#                  MISC                                    #
+#                  MISC                                   #
 ############################################################
-alias reload-bashrc='source ~/.bashrc'         # Reload Bash configuration
-alias show-path='echo $PATH'                   # Show current $PATH
-alias tar-extract='tar -xvf'                   # Extract tar archives
-alias list-aliases='cat ~/.bash_aliases'       # List all defined aliases
+alias reload-bashrc='source ~/.bashrc'   # Перезагрузить конфигурацию Bash
+alias show-path='echo $PATH'             # Показать текущий $PATH
+alias list-aliases='cat ~/.bash_aliases' # Показать список всех алиасов
