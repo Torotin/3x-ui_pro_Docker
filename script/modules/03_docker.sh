@@ -11,6 +11,16 @@
 : "${DOCKER_NETWORK_NAME:=my-ipv6-network}"
 : "${DOCKER_IPV6_SUBNET:=fd00:dead:beef::/64}"
 
+# --- Ensure Docker directory exists ---
+ensure_docker_dir() {
+  if [[ ! -d "$DOCKER_DIR" ]]; then
+    mkdir -p "$DOCKER_DIR" || exit_error "Failed to create directory: $DOCKER_DIR"
+    log "INFO" "Docker directory created: $DOCKER_DIR"
+  else
+    log "INFO" "$DOCKER_DIR already exists"
+  fi
+}
+
 # --- Get Linux distribution ---
 get_linux_distro() {
     lsb_release -si | tr '[:upper:]' '[:lower:]'

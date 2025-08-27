@@ -112,103 +112,89 @@ log() {
 }
 
 # === Exit Handling ===
-exit_error() {
-  log "ERROR" "$1"
-  exit 1
+reset_permissions() {
+  log "INFO" "Resetting ownership and permissions for '$PROJECT_ROOT'"
+
+  # Change ownership if USER_SSH exists
+  if [[ -n "${USER_SSH:-}" ]] && id -u "$USER_SSH" &>/dev/null; then
+    # Determine group: prefer group with the same name, else use primary group
+    if getent group "$USER_SSH" &>/dev/null; then
+      if chown -R "$USER_SSH:$USER_SSH" "$PROJECT_ROOT"; then
+        log "INFO" "Ownership set to $USER_SSH:$USER_SSH"
+      else
+        log "ERROR" "Failed to set ownership to $USER_SSH:$USER_SSH"
+        return 1
+      fi
+    else
+      MAIN_GROUP="$(id -gn "$USER_SSH")"
+      if chown -R "$USER_SSH:$MAIN_GROUP" "$PROJECT_ROOT"; then
+        log "INFO" "Ownership set to $USER_SSH:$MAIN_GROUP (primary group)"
+      else
+        log "ERROR" "Failed to set ownership to $USER_SSH:$MAIN_GROUP"
+        return 1
+      fi
+    fi
+  else
+    log "WARN" "User '$USER_SSH' not found. Ownership not changed."
+  fi
+
+  # Set safe permissions: rw for owner, rX for group/others
+  if chmod -R u=rwX,go=rX "$PROJECT_ROOT"; then
+    log "INFO" "Permissions reset to u=rwX,go=rX for '$PROJECT_ROOT'"
+  else
+    log "ERROR" "Failed to reset permissions for '$PROJECT_ROOT'"
+    return 1
+  fi
+
+  log "OK" "Ownership and permissions successfully reset for '$PROJECT_ROOT'"
+  return 0
 }
 
 exit_script() {
-  chmod -f -R 777 "$PROJECT_ROOT"
-  log "INFO" "Script completed."
-  exit 0
+  if reset_permissions; then
+    log "INFO" "Script completed."
+    exit 0
+  else
+    log "WARN" "Script completed, but resetting permissions failed."
+    exit 0
+  fi
+}
+
+exit_error() {
+  # $1 = error message
+  log "ERROR" "${1:-Unknown error}"
+  if ! reset_permissions; then
+    log "WARN" "Reset permissions failed during error exit."
+  fi
+  exit 1
+}
+
+reboot_system() {
+  # Ask for confirmation with timeout
+  read -r -t 10 -p "Reboot now? [y/N] (auto-cancel in 10s): " answer || {
+    log "INFO" "Timeout reached, reboot canceled."
+    return 0
+  }
+
+  case "$answer" in
+    [yY]|[yY][eE][sS])
+      if ! reset_permissions; then
+        log "WARN" "Proceeding to reboot despite failing to reset permissions."
+      fi
+      log "INFO" "Rebooting..."
+      /sbin/reboot
+      exit 0
+      ;;
+    *)
+      log "INFO" "Reboot canceled."
+      return 0
+      ;;
+  esac
 }
 
 # === Checks ===
 check_root() {
   [[ $EUID -ne 0 ]] && exit_error "Root privileges are required."
-}
-
-check_LOG_FILE() {
-  if [[ -z "${LOG_FILE:-}" || ! -f "$LOG_FILE" || ! -w "$LOG_FILE" ]]; then
-    mkdir -p "$LOGS_DIR" || exit_error "Cannot create logs directory: $LOGS_DIR"
-    LOG_FILE="$LOGS_DIR/${LOG_NAME}.log"
-    touch "$LOG_FILE" || exit_error "Cannot create log file: $LOG_FILE"
-    log "WARN" "Using fallback log file: $LOG_FILE"
-  fi
-}
-
-# === Initialization ===
-initialize_script() {
-  [[ -f "$LOG_FILE" ]] && rm -f "$LOG_FILE"
-  check_root
-  ensure_templates
-  load_all_modules
-  check_LOG_FILE
-  ensure_directory_exists "$LOGS_DIR"
-  ensure_file_exists "$LOG_FILE"
-  check_system_resources
-  check_required_commands
-  install_packages
-  envfile_script
-  yq_install
-  type check_required_commands &>/dev/null || exit_error "Missing function: check_required_commands (module not loaded?)"
-}
-
-download_repo_dir() {
-  local repo_path="${1:?Не задан путь в репозитории (например: docker-proxy)}"
-  local target="${2:?Не задан локальный путь назначения}"
-  local repo_owner="${GITHUB_REPO_OWNER:?Не задан GITHUB_REPO_OWNER}"
-  local repo_name="${GITHUB_REPO_NAME:?Не задан GITHUB_REPO_NAME}"
-  local branch="${GITHUB_BRANCH:-main}"
-  local auth_token="${GITHUB_TOKEN:-}"
-  local repo_url
-
-  # Сборка URL
-  if [[ -n "$auth_token" ]]; then
-    repo_url="https://${auth_token}@github.com/${repo_owner}/${repo_name}.git"
-  else
-    repo_url="https://github.com/${repo_owner}/${repo_name}.git"
-  fi
-
-  log "INFO" "Клонирую папку '$repo_path' из '$repo_owner/$repo_name' через git sparse-checkout → '$target'"
-
-  # Проверка наличия git
-  if ! command -v git &>/dev/null; then
-    log "ERROR" "git не установлен, невозможно скачать через git"
-    return 1
-  fi
-
-  # Временная папка
-  local tmp
-  tmp=$(mktemp -d) || { log "ERROR" "Не удалось создать временную папку"; return 1; }
-
-  # sparse-checkout
-  pushd "$tmp" >/dev/null || { log "ERROR" "Не удалось перейти в $tmp"; rm -rf "$tmp"; return 1; }
-  git init -q
-  git remote add origin "$repo_url"
-  git config core.sparseCheckout true
-  echo "$repo_path/" > .git/info/sparse-checkout
-  if ! git pull --depth=1 origin "$branch" -q; then
-    log "ERROR" "git pull не удался"
-    popd >/dev/null
-    rm -rf "$tmp"
-    return 1
-  fi
-  popd >/dev/null
-
-  # Копирование
-  mkdir -p "$target" \
-    || { log "ERROR" "Не удалось создать каталог назначения: $target"; rm -rf "$tmp"; return 1; }
-  cp -a "$tmp/$repo_path/." "$target/" \
-    || log "WARN" "Не удалось скопировать все файлы из $repo_path"
-
-  rm -rf "$tmp"
-
-  # +x для .sh файлов
-  log "INFO" "Назначаю +x всем .sh-файлам в '$target'"
-  find "$target" -type f -name '*.sh' -exec chmod +x -v {} \;
-  log "OK" "Папка '$target' успешно загружена через git"
-  return 0
 }
 
 # ================================================================================
@@ -228,6 +214,118 @@ ensure_templates() {
   else
     log "DEBUG" "$TEMPLATE_DIR already exists, skipping templates download"
   fi
+}
+
+download_repo_dir() {
+  local repo_path="${1:?Repository subdir is required (e.g.: docker-proxy)}"
+  local target="${2:?Local destination path is required}"
+  local repo_owner="${GITHUB_REPO_OWNER:?GITHUB_REPO_OWNER is required}"
+  local repo_name="${GITHUB_REPO_NAME:?GITHUB_REPO_NAME is required}"
+  local branch="${GITHUB_BRANCH:-main}"
+  local auth_token="${GITHUB_TOKEN:-}"
+  local repo_url="https://github.com/${repo_owner}/${repo_name}.git"
+
+  # Build authenticated URL if token is provided (warning: visible in process list).
+  # Prefer using a credential helper in production environments.
+  if [[ -n "$auth_token" ]]; then
+    repo_url="https://${repo_owner}:${auth_token}@github.com/${repo_owner}/${repo_name}.git"
+  fi
+
+  log "INFO" "Fetching '$repo_path' from '$repo_owner/$repo_name@$branch' into '$target'"
+
+  # Create destination
+  mkdir -p "$target" || { log "ERROR" "Failed to create destination: $target"; return 1; }
+
+  # If git is available, prefer sparse-checkout
+  if command -v git &>/dev/null; then
+    local tmp; tmp="$(mktemp -d)" || { log "ERROR" "Cannot create temp dir"; return 1; }
+    # Always clean up temp dir
+    local cleanup
+    cleanup() {
+      [[ -n "${tmp:-}" && -d "$tmp" ]] && rm -rf "$tmp"
+    }
+    trap cleanup RETURN
+
+    pushd "$tmp" >/dev/null || { log "ERROR" "Cannot cd to temp dir"; return 1; }
+
+    # Init minimal repo
+    git init -q || { log "ERROR" "git init failed"; return 1; }
+    git remote add origin "$repo_url" || { log "ERROR" "git remote add failed"; return 1; }
+
+    # Enable sparse checkout (support both modern and legacy commands)
+    git config core.sparseCheckout true
+    if git sparse-checkout -h &>/dev/null; then
+      # Modern flow (git >= 2.25): use 'set'
+      git sparse-checkout init --cone || { log "ERROR" "sparse-checkout init failed"; return 1; }
+      git sparse-checkout set "$repo_path" || { log "ERROR" "sparse-checkout set failed"; return 1; }
+    else
+      # Legacy flow: write pattern directly
+      echo "$repo_path/" > .git/info/sparse-checkout
+    fi
+
+    # Shallow fetch of the branch
+    if ! git pull --depth=1 origin "$branch" -q; then
+      log "ERROR" "git pull failed"
+      return 1
+    fi
+    popd >/dev/null || true
+
+    # Verify that the requested path actually exists in the pulled tree
+    if [[ ! -d "$tmp/$repo_path" ]]; then
+      log "ERROR" "Subdirectory '$repo_path' not found in repo '$repo_owner/$repo_name' on branch '$branch'"
+      return 1
+    fi
+
+    # Copy files preserving attrs; verbose warning on partial copy
+    if ! cp -a "$tmp/$repo_path/." "$target/"; then
+      log "WARN" "Failed to copy all files from '$repo_path'"
+    fi
+
+  else
+    # Fallback: download repo tarball and extract only the needed subdir
+    log "WARN" "git not found; falling back to tarball download (may be larger)"
+    local archive_url="https://codeload.github.com/${repo_owner}/${repo_name}/tar.gz/${branch}"
+    local curl_args=(-LfsS)
+    if [[ -n "$auth_token" ]]; then
+      curl_args+=(-H "Authorization: token ${auth_token}")
+    fi
+
+    local tarball; tarball="$(mktemp)" || { log "ERROR" "Cannot allocate tarball temp file"; return 1; }
+    local cleanup_tarball
+    cleanup_tarball() { [[ -f "$tarball" ]] && rm -f "$tarball"; }
+    trap cleanup_tarball RETURN
+
+    if ! curl "${curl_args[@]}" -o "$tarball" "$archive_url"; then
+      log "ERROR" "Failed to download tarball"
+      return 1
+    fi
+
+    # GitHub tarball contains top-level dir '<repo_name>-<branch>/...'
+    # Extract only the requested subdir if present
+    local top_dir="${repo_name}-${branch}"
+    if ! tar -tzf "$tarball" "${top_dir}/${repo_path}/" &>/dev/null; then
+      log "ERROR" "Subdirectory '$repo_path' not found in tarball"
+      return 1
+    fi
+
+    # Extract to temp and then copy to target to avoid polluting target with top_dir
+    local tmp; tmp="$(mktemp -d)" || { log "ERROR" "Cannot create temp dir"; return 1; }
+    local cleanup2
+    cleanup2() { [[ -d "$tmp" ]] && rm -rf "$tmp"; }
+    trap cleanup2 RETURN
+
+    tar -xzf "$tarball" -C "$tmp" "${top_dir}/${repo_path}/" || { log "ERROR" "Failed to extract tarball"; return 1; }
+    if ! cp -a "$tmp/${top_dir}/${repo_path}/." "$target/"; then
+      log "WARN" "Failed to copy all files from tarball subdir"
+    fi
+  fi
+
+  # Make all .sh files executable (non-fatal)
+  log "INFO" "Marking *.sh as executable under '$target'"
+  find "$target" -type f -name '*.sh' -exec chmod +x {} \; || log "WARN" "chmod on scripts failed"
+
+  log "OK" "Directory '$target' is ready"
+  return 0
 }
 
 # === ensure_lib_loaded ===
@@ -276,215 +374,22 @@ load_all_modules() {
   fi
 }
 
-# === Массив шагов ===
-declare -A INSTALL_STEPS=(
-  ["0"]="auto_full:Automatic full install"
-  ["1"]="update_and_upgrade_packages:System update"
-  ["2"]="docker_install;docker_create_network traefik-proxy external:Docker. (Re)Install"
-  ["3"]="ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}";:Docker. Generate docker dir"
-  ["4"]="generate_env_file "$DOCKER_ENV_TEMPLATE" "$DOCKER_ENV_FILE":Docker. Generate docker env-file"
-  ["5"]="user_create:Create user"
-  ["6"]="firewall_config:Configure firewall"
-  ["7"]="sshd_config:Configure SSH"
-  ["8"]="network_config_modify:Network optimization"
-  ["9"]="docker compose --env-file "$DOCKER_ENV_FILE" -f "$DOCKER_COMPOSE_FILE" up -d:Docker. Run Compose"
-  ["10"]="msg_final:Final message"
-  ["x"]="exit_script:Exit"
-)
-
-ensure_docker_dir() {
-  if [[ ! -d "$DOCKER_DIR" ]]; then
-    mkdir -p "$DOCKER_DIR" || exit_error "Failed to create directory: $DOCKER_DIR"
-    log "INFO" "Docker directory created: $DOCKER_DIR"
-  else
-    log "INFO" "$DOCKER_DIR already exists"
-  fi
+# === Initialization ===
+initialize_script() {
+  [[ -f "$LOG_FILE" ]] && rm -f "$LOG_FILE"
+  check_root
+  ensure_templates
+  load_all_modules
+  check_LOG_FILE
+  ensure_directory_exists "$LOGS_DIR"
+  ensure_file_exists "$LOG_FILE"
+  check_system_resources
+  check_required_commands
+  install_packages
+  envfile_script
+  yq_install
+  type check_required_commands &>/dev/null || exit_error "Missing function: check_required_commands (module not loaded?)"
+  reset_permissions
 }
 
-# === Menu display ===
-show_menu() {
-  echo "Select steps to execute (1,3 5 7 or 1-6):"
-
-  local sorted_keys
-  IFS=$'\n' sorted_keys=($(printf "%s\n" "${!INSTALL_STEPS[@]}" | sort -V))  # поддержка и чисел, и 'x'
-
-  for key in "${sorted_keys[@]}"; do
-    IFS=":" read -r func desc <<< "${INSTALL_STEPS[$key]}"
-    printf " %3s) %-30s\n" "$key" "$desc"
-  done
-  echo -n "> "
-}
-
-parse_step_selection() {
-  local raw_input="$1"
-  local expanded=()
-  raw_input="$(echo "$raw_input" | tr ',' ' ' | xargs)"
-
-  IFS=' ' read -r -a tokens <<< "$raw_input"
-
-  for token in "${tokens[@]}"; do
-    if [[ "$token" =~ ^[0-9]+-[0-9]+$ ]]; then
-      local start="${token%-*}"
-      local end="${token#*-}"
-      if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ && $start -le $end ]]; then
-        for ((i=start; i<=end; i++)); do
-          expanded+=("$i")
-        done
-      fi
-    elif [[ "$token" =~ ^[0-9]+$ ]]; then
-      expanded+=("$token")
-    elif [[ "$token" =~ ^[a-zA-Z]+$ ]]; then
-      expanded+=("$token")
-    fi
-  done
-
-  for item in "${expanded[@]}"; do
-    echo "$item"
-  done
-}
-
-auto_full() {
-  log "INFO" "Running all steps (auto mode)..."
-
-  # Собираем только цифровые шаги, кроме "0"
-  local keys=()
-  for key in "${!INSTALL_STEPS[@]}"; do
-    [[ "$key" =~ ^[0-9]+$ ]] || continue
-    [[ "$key" == "0" ]] && continue
-    keys+=("$key")
-  done
-
-  # Сортируем по возрастанию
-  IFS=$'\n' keys_sorted=($(sort -n <<<"${keys[*]}"))
-  unset IFS
-
-  for key in "${keys_sorted[@]}"; do
-    entry="${INSTALL_STEPS[$key]}"
-    IFS=':' read -r cmds desc <<< "$entry"
-
-    log "SEP"
-    log "TITLE" "Step $key: $desc"
-
-    # Разбиваем на отдельные команды по ';'
-    IFS=';' read -r -a cmd_array <<< "$cmds"
-    for cmd in "${cmd_array[@]}"; do
-      # Тримим пробелы
-      cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-      cmd="${cmd%"${cmd##*[![:space:]]}"}"
-
-      # Отделяем имя команды/функции
-      cmd_name="${cmd%% *}"
-
-      if [[ -n "$(type -t "$cmd_name")" ]]; then
-        log "INFO" "Executing: $cmd"
-        eval "$cmd"
-      else
-        log "WARN" "Command or function '$cmd_name' not found, skipping."
-      fi
-    done
-  done
-
-  echo -e "\nAll steps complete. Press Enter to return to menu..."
-  read -r
-}
-
-check_args() {
-  # Если переданы аргументы — воспринимаем их как список шагов и сразу выполняем
-  if (( $# > 0 )); then
-    log "INFO" "Запуск в неинтерактивном режиме: шаги = $*"
-    # Разбор указанных шагов (в том числе диапазонов) функцией parse_step_selection
-    selected=()
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && selected+=("$line")
-    done < <(parse_step_selection "$*")
-
-    for key in "${selected[@]}"; do
-      key="$(echo "$key" | xargs)"
-      entry="${INSTALL_STEPS[$key]:-}"
-      if [[ -z "$entry" ]]; then
-        log "WARN" "Unknown or missing step: $key"
-        continue
-      fi
-
-      IFS=':' read -r cmds desc <<< "$entry"
-      log "SEP"
-      log "TITLE" "Step $key: $desc"
-      IFS=';' read -r -a cmd_array <<< "$cmds"
-      for cmd in "${cmd_array[@]}"; do
-        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-        cmd="${cmd%"${cmd##*[![:space:]]}"}"
-        if [[ -n "$(type -t "${cmd%% *}")" ]]; then
-          log "INFO" "Executing: $cmd"
-          eval "$cmd"
-        else
-          log "WARN" "Command or function '${cmd%% *}' not found, skipping."
-        fi
-      done
-    done
-    exit_script
-  fi
-}
-
-main() {
-  if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
-  log "INFO" "Starting installation script..."
-  initialize_script
-  check_args "$@"
-
-  while true; do
-    if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
-
-    show_menu
-    read -r input
-
-    selected=()
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && selected+=("$line")
-    done < <(parse_step_selection "$input")
-
-    for key in "${selected[@]}"; do
-      key="$(echo "$key" | xargs)"  # очистка пробелов
-
-      entry="${INSTALL_STEPS[$key]:-}"
-      if [[ -z "$entry" ]]; then
-        log "WARN" "Unknown or missing step: $key"
-        continue
-      fi
-
-      # разбиваем на команды и описание
-      IFS=':' read -r cmds desc <<< "$entry"
-
-      log "SEP"
-      log "TITLE" "Step $key: $desc"
-
-      # разбиваем cmds по ';' и выполняем каждую
-      IFS=';' read -r -a cmd_array <<< "$cmds"
-      for cmd in "${cmd_array[@]}"; do
-        # убираем ведущие/хвостовые пробелы
-        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-        cmd="${cmd%"${cmd##*[![:space:]]}"}"
-        [[ -z "$cmd" ]] && continue
-
-        # проверяем, существует ли команда/функция
-        cmd_name="${cmd%% *}"
-        if [[ -n "$(type -t "$cmd_name")" ]]; then
-          log "INFO" "Executing: $cmd"
-          eval "$cmd"
-        else
-          log "WARN" "Command or function '$cmd_name' not found, skipping."
-        fi
-      done
-
-      # если шаг — выход, прерываем main
-      if [[ "$cmds" == *"exit_script"* ]]; then
-        return
-      fi
-    done
-
-    echo -e "\nPress Enter to return to the menu..."
-    read -r
-    clear
-  done
-}
-
-main "$@"
+main_menu "$@"

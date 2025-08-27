@@ -2,6 +2,16 @@
 # lib/00_common.sh — Common utility functions for system checks, package installation, backups, and random generation
 : "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
+# === Check LOG_FILE ===
+check_LOG_FILE() {
+  if [[ -z "${LOG_FILE:-}" || ! -f "$LOG_FILE" || ! -w "$LOG_FILE" ]]; then
+    mkdir -p "$LOGS_DIR" || exit_error "Cannot create logs directory: $LOGS_DIR"
+    LOG_FILE="$LOGS_DIR/${LOG_NAME}.log"
+    touch "$LOG_FILE" || exit_error "Cannot create log file: $LOG_FILE"
+    log "WARN" "Using fallback log file: $LOG_FILE"
+  fi
+}
+
 # === Required commands and corresponding packages ===
 declare -g -a missing_packages=()
 

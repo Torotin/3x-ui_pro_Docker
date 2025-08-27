@@ -87,9 +87,6 @@ services:
     mem_limit: 512m
     cpus: "0.5"
     hostname: ${WEBDOMAIN}
-    ports:
-      - "443:443/udp"
-      - "443:443/tcp"
     networks:
       - traefik-proxy
     volumes:
@@ -119,6 +116,8 @@ services:
       - /opt/docker-proxy/traefik/dynamic:/templates:ro
       - /opt/docker-proxy/_logs/traefik:/logs
     ports:
+      - "443:443/udp"
+      - "443:443/tcp"
       - "80:80"
       - "${PORT_LOCAL_TRAEFIK}:${PORT_LOCAL_TRAEFIK}"
 
