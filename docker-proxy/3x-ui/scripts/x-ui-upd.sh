@@ -1057,7 +1057,6 @@ update_xray_routing_warp() {
       outboundTag: "WARP-PLUS",
       domain: [
         "ext:geosite_RU.dat:category-gov-ru",
-        "ext:geosite_RU.dat:private",
         "ext:geosite_RU.dat:yandex",
         "ext:geosite_RU.dat:steam",
         "ext:geosite_RU.dat:vk",
