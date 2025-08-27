@@ -1,0 +1,14 @@
+# /dynamic/disable-logs.yml
+http:
+  middlewares:
+    disable-logs:
+      plugin:
+        # no-op middleware, используется только как маркер
+        noop: {}
+
+# traefik.yml
+accessLog:
+  filters:
+    # исключить роутер по имени
+    routers:
+      - "!xhttp3xui-l4"

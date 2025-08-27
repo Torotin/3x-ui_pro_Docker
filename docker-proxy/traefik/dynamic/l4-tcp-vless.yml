@@ -1,0 +1,17 @@
+# /templates/vless-tcp.yml
+tcp:
+  routers:
+    vless-reality:
+      entryPoints: [l4tcp]                     # слушаем 443/TCP
+      rule: "HostSNI(`${WEBDOMAIN}`)"          # браузеры и клиенты VLESS на ваш домен
+      tls:
+        passthrough: true                      # Traefik НЕ терминирует TLS
+      service: vless-reality-svc
+      priority: 50
+
+  services:
+    vless-reality-svc:
+      loadBalancer:
+        servers:
+          - address: "3x-ui:${PORT_LOCAL_VISION}"  # xray TCP inbound (REALITY/XTLS)
+

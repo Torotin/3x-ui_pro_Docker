@@ -1,7 +1,0 @@
-# default-whitelist
-http:
-  middlewares:
-    default-whitelist:
-      ipAllowList:
-        sourceRange:
-          - "172.16.0.0/12"

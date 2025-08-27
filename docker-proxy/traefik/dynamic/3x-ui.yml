@@ -2,54 +2,62 @@
 
 http:
   services:
-    3xui-panel-svc:
+    xui-panel-svc:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_VLESS_PANEL}"
-    3xui-sub-svc:
+    xui-sub-svc:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}"
-    3xui-xhttp-svc:
+    xhttp3xui-svc:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_XHTTP}"
 
   middlewares:
-    3xui-sub-hostheader:
+    xui-sub-hostheader:
       headers:
         customRequestHeaders:
           Host: "${WEBDOMAIN}"
 
+    xhttp-headers:
+      headers:
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+        referrerPolicy: "no-referrer"
+
   routers:
     # Панель 3x-ui (SPA-путь)
-    3xui-panel:
+    xui-panel:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)"
       entryPoints:
         - websecure
-      middlewares:
-        - secured
       tls:
         certResolver: le
-      service: 3xui-panel-svc
+      service: xui-panel-svc
+      priority: 9997
 
     # Подписки (SUB + JSON)
-    3xui-sub:
+    xui-sub:
       rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
       entryPoints:
         - websecure
       middlewares:
-        - secured
-        - 3xui-sub-hostheader
+        - xui-sub-hostheader
       tls:
         certResolver: le
-      service: 3xui-sub-svc
+      service: xui-sub-svc
+      priority: 9998
 
     # XHTTP (plain HTTP)
-    xhttp3xui:
+    xhttp3xui-l4:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)"
-      entryPoints:
-        - websecure
+      entryPoints: [l4tcp]
       middlewares:
-        - secured
-      service: 3xui-xhttp-svc
+        - xhttp-headers
+      service: xhttp3xui-svc
+      priority: 9999
+      observability:
+        accessLogs: false   # <-- disable access logs for this router only

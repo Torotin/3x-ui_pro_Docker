@@ -8,19 +8,6 @@
 
 }
 
-# (logs_crowdsec) {
-#   log crowdsec {
-#     output file /var/log/caddy/crowdsec.log {
-#       roll_size 10mb
-#       roll_keep 7
-# 			roll_keep_for 48h
-#     }
-#     format json
-#     include crowdsec crowdsec.handlers
-#     level DEBUG
-#   }
-# }
-
 (logs_crowdsec) {
   log crowdsec {
 	output stdout

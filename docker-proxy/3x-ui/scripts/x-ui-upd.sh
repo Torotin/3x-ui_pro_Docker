@@ -734,16 +734,16 @@ create_inbound_tcp_reality() {
         --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
         [
             {
+              alpn: "h1 h2 h3",
+              path: "",
+              dest: ("traefik:" + $port_traefik),
+              xver: 2
+            },
+            {
               name: "",
               alpn: "h2 h3",
               dest: ("127.0.0.1:" + $port_xhttp),
               path: "",
-              xver: 2
-            },
-            {
-              alpn: "",
-              path: "",
-              dest: ("traefik:" + $port_traefik),
               xver: 2
             }
         ]
@@ -760,7 +760,7 @@ create_inbound_tcp_reality() {
     )
 
     # sockopt, externalProxy
-    sockopt_json=$(generate_sockopt_json acceptProxyProtocol=true tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
+    sockopt_json=$(generate_sockopt_json acceptProxyProtocol=false tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
     external_proxy_json=$(jq -nc --arg dest "$WEBDOMAIN" --argjson port 443 '[
         { forceTls: "same", dest: $dest, port: $port, remark: "" }
     ]')
@@ -803,7 +803,7 @@ create_inbound_tcp_reality() {
         },
         sockopt: $sockopt,
         tcpSettings: {
-          acceptProxyProtocol: true,
+          acceptProxyProtocol: false,
           header: { type: "none" }
         }
       }'
@@ -859,7 +859,7 @@ create_xhttp_inbound() {
         decryption: "none",
         fallbacks: []
     }')
-    sockopt_json=$(generate_sockopt_json acceptProxyProtocol=true tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
+    sockopt_json=$(generate_sockopt_json acceptProxyProtocol=false tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
     external_proxy_json=$(
       jq -nc --arg dest "$WEBDOMAIN" --argjson port 443 \
         '[{forceTls: "same", dest: $dest, port: $port, remark: ""}]'

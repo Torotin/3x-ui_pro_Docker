@@ -8,6 +8,7 @@ http:
           - url: "http://caddy:${PORT_LOCAL_CADDYWEB}"
 
   middlewares:
+    # Pretty error pages for 4xx/5xx from ANY upstream
     error-pages:
       errors:
         status:
@@ -16,14 +17,22 @@ http:
         query: "/index.html"
 
   routers:
+    # Fallback site: anything not matched elsewhere goes to Caddy
     catchall:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/`)"
-      entryPoints:
-        - websecure
+      entryPoints: [websecure]
       tls:
         certResolver: le
-      priority: -100
+      priority: -1
       middlewares:
-        - secured
-        - error-pages
+        - error-pages            # ошибки оформлять через /index.html
       service: caddy-error
+
+    # Отдача favicon напрямую из Caddy, чтобы не светить 404
+    favicon:
+      rule: "Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)"
+      entryPoints: [websecure]
+      tls:
+        certResolver: le
+      priority: 1                # выше catchall
+      service: caddy-error       # Caddy вернёт /favicon.ico из /www

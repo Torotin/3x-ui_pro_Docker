@@ -1,0 +1,85 @@
+# /templates/traefik_dashboard.yml
+http:
+  routers:
+    # Main router: serve dashboard and API under the secret prefix
+    # Example: /wxoFtF5N9wphDzgRMIrhZkRP75l/dashboard
+    traefik-dashboard-prefixed:
+      entryPoints: [websecure]
+      rule: "Host(`${WEBDOMAIN}`) && ( PathPrefix(`/${URI_TRAEFIK_DASHBOARD}/dashboard`) || PathPrefix(`/${URI_TRAEFIK_DASHBOARD}/api`) )"
+      middlewares:
+        - dash-strip-prefix
+        - basic-auth
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: 1000
+
+    # Support the dashboard's absolute /api calls (XHR/fetch) with the same auth
+    traefik-dashboard-api-absolute:
+      entryPoints: [websecure]
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)"
+      middlewares: [basic-auth]
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: 998
+
+    # Nice-to-have: redirect plain /dashboard to the prefixed /<URI>/dashboard
+    traefik-dashboard-redirect:
+      entryPoints: [websecure]
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/dashboard`)"
+      middlewares: [dash-redirect-to-prefixed]
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: 5
+
+    # Optional: if someone opens just "/<URI>" → send them to "/<URI>/dashboard/"
+    traefik-dashboard-root-to-ui:
+      entryPoints: [websecure]
+      rule: "Host(`${WEBDOMAIN}`) && ( Path(`/${URI_TRAEFIK_DASHBOARD}`) || Path(`/${URI_TRAEFIK_DASHBOARD}/`) )"
+      middlewares: [dash-redirect-root]
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: 999
+
+    # Redirect /favicon.ico -> /<SECRET>/dashboard/favicon.ico
+    traefik-favicon-redirect:
+      entryPoints: [websecure]
+      rule: "Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)"
+      middlewares: [dash-redirect-favicon]
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: -1000
+      
+  middlewares:
+    # Rewrite favicon request to the dashboard favicon under the secret prefix
+    dash-redirect-favicon:
+      redirectRegex:
+        # Browser asks /favicon.ico at site root
+        regex: "^/favicon\\.ico$"
+        # We send it to the dashboard's favicon behind the secret prefix
+        replacement: "/${URI_TRAEFIK_DASHBOARD}/dashboard/favicon.ico"
+        permanent: true
+        
+    # Strip the secret prefix, so dashboard sees /dashboard and /api at root
+    dash-strip-prefix:
+      stripPrefix:
+        prefixes:
+          - "/${URI_TRAEFIK_DASHBOARD}"
+
+    # Redirect /dashboard → /<URI>/dashboard
+    dash-redirect-to-prefixed:
+      redirectRegex:
+        regex: "^/dashboard(.*)$"
+        replacement: "/${URI_TRAEFIK_DASHBOARD}/dashboard$1"
+        permanent: true
+
+    # Redirect "/<URI>" → "/<URI>/dashboard/"
+    dash-redirect-root:
+      redirectRegex:
+        regex: "^/${URI_TRAEFIK_DASHBOARD}/?$"
+        replacement: "/${URI_TRAEFIK_DASHBOARD}/dashboard/"
+        permanent: true

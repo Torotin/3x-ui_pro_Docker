@@ -1,15 +1,3 @@
-# (logs_l4) {
-#   log l4_file {
-# 		output file /var/log/caddy/l4-events.log {
-# 			roll_size 10mb
-# 			roll_keep 7
-# 			roll_keep_for 48h
-# 		}
-# 		format json
-# 		include layer4 layer4.handlers
-# 		level DEBUG
-# 	}
-# }
 (logs_l4) {
   log l4_file {
 		output stdout

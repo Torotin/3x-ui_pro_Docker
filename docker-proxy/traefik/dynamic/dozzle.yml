@@ -4,29 +4,14 @@ http:
     dozzle-router:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_DOZZLE}`)"
       entryPoints:
-        - web
         - websecure
       tls:
         certResolver: le 
       service: dozzle-service
-      middlewares:
-        # - dozzle-strip
-        - dozzle-headers
-      priority: 98
-
-  middlewares:
-    dozzle-headers:
-      headers:
-        customRequestHeaders:
-          Host: "{host}"
-          X-Real-IP: "{remoteAddr}"
-          X-Forwarded-Port: "{serverPort}"
-          Range: "{header.Range}"
-          If-Range: "{header.If-Range}"
+      priority: 997
 
   services:
     dozzle-service:
       loadBalancer:
         servers:
           - url: "http://dozzle:8080"
-

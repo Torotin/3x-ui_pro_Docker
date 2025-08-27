@@ -28,12 +28,20 @@ entryPoints:
 
   websecure:
     address: ":4443"
+    http:
+      middlewares:
+        - secured-chain@file 
     transport:
       respondingTimeouts:
         idleTimeout: 90s
     proxyProtocol:
       trustedIPs:
         - "172.18.0.0/16"
+    http3: {}
+
+  l4tcp:
+    address: ":443"
+
 
 # -------------------
 # Провайдеры

@@ -1,0 +1,9 @@
+# dynamic/basicAuth.yml
+
+http:
+  middlewares:
+    basic-auth:
+      basicAuth:
+        users:
+          - "${HT_PASS_ENCODED}"
+        realm: "Basic Authentication"

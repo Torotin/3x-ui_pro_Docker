@@ -1,0 +1,12 @@
+# /templates/traefik_secured-chain.yml
+http:
+  middlewares:
+    # Chain middleware applied to protected routers
+    secured-chain:
+      chain:
+        middlewares:
+          # - default-whitelist@file      # 1) allowlist first
+          - crowdsec-bouncer@file         # 3) crowdsec (from file provider)
+          - default-headers@file          # 2) security/CORS/HSTS headers
+          # - default-compress@file       # 4) gzip/deflate (optional)
+          # - error-pages@file            # 5) pretty error pages last

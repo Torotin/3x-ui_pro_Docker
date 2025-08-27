@@ -1,8 +1,0 @@
-# dynamic/basicAuth.yml
-
-http:
-  middlewares:
-    basicAuth:
-      basicAuth:
-        users:
-          - "${HT_PASS_ENCODED}"
