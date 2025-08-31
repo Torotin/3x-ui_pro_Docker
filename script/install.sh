@@ -392,4 +392,5 @@ initialize_script() {
   reset_permissions
 }
 
+initialize_script
 main_menu "$@"
