@@ -2,7 +2,9 @@
 
 [![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 
-Проект устанавливает и настраивает прокси-окружение на базе Docker (Traefik/Caddy/3x-ui и др.).
+**3x-ui_pro_Docker** — окружение для прокси на базе Docker с поддержкой Traefik, Caddy и 3x-ui.  
+Собственные Docker-образы для этого проекта собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
+
 
 ## Быстрый старт
 
