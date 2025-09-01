@@ -55,16 +55,5 @@
         }
       ]
     }
-  },
-  {
-    "id": "svyatdemidov@gmail.com",
-    "ids": [],
-    "IsPasswd": false,
-    "expires": "3025-07-31T00:00:00",
-    "group": 1,
-    "ban": false,
-    "ban_msg": "",
-    "comment": "admin",
-    "params": null
   }
 ]
