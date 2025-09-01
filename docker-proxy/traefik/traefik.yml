@@ -41,7 +41,8 @@ entryPoints:
 
   l4tcp:
     address: ":443"
-
+  l4udp:
+    address: ":443/udp"
 
 # -------------------
 # Провайдеры

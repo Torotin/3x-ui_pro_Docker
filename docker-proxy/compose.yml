@@ -92,7 +92,7 @@ services:
     volumes:
       - /opt/docker-proxy/_logs/caddy:/var/log/caddy
       - /opt/docker-proxy/caddy/config:/etc/caddy
-      - /opt/docker-proxy/caddy/site:/srv
+      # - /opt/docker-proxy/caddy/site:/srv
     env_file:
       - /opt/docker-proxy/.env
     security_opt:
@@ -119,7 +119,6 @@ services:
       - "80:80"
       - "443:443/tcp"
       - "443:443/udp"
-
     entrypoint:
       - /bin/sh
       - -c
