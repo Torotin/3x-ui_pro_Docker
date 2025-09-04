@@ -148,7 +148,7 @@ services:
       - traefik-proxy
     security_opt:
       - no-new-privileges=true
-            
+
   3x-ui:
     image: torotin/3x-ui:latest
     container_name: 3x-ui
@@ -156,7 +156,6 @@ services:
     restart: always
     depends_on:
       - traefik
-      - warp-plus
     tty: true
     security_opt:
       - no-new-privileges=true
