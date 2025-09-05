@@ -22,4 +22,3 @@ Available Services (via Caddy reverse proxy):
 - 3X-UI Web Panel      : https://{{WEBDOMAIN}}/{{URI_PANEL_PATH}}/
 - Traefik Dashboard    : https://{{WEBDOMAIN}}/{{URI_TRAEFIK_DASHBOARD}}/dashboard/#/
 - Dozzle Logs Viewer   : https://{{WEBDOMAIN}}/{{URI_DOZZLE}}/
-- AdGuard Home         : https://{{WEBDOMAIN}}/{{URI_ADGUARD_PANEL}}/
