@@ -132,7 +132,7 @@ services:
     image: amir20/dozzle:latest
     restart: always
     volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - /opt/docker-proxy/.env
     environment:
