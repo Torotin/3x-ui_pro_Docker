@@ -162,9 +162,8 @@ services:
     networks:
       - traefik-proxy
     volumes:
-      - /opt/docker-proxy/3x-ui/scripts/xray_update.sh:/mnt/sh/beforestart/01-xray_update.sh
-      - /opt/docker-proxy/3x-ui/scripts/download-db.sh:/mnt/sh/beforestart/02-download-db.sh
-      - /opt/docker-proxy/3x-ui/scripts/x-ui-upd.sh:/mnt/sh/afterstart/03-x-ui-upd.sh
+      - /opt/docker-proxy/3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart
+      - /opt/docker-proxy/3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart
       - /opt/docker-proxy/3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
       - /opt/docker-proxy/3x-ui/configs/config.json:/app/bin/config.json:rw
       - /opt/docker-proxy/_logs/xray/access.log:/app/access.log
@@ -176,7 +175,37 @@ services:
     environment:
       # - XUI_LOG_LEVEL=debug
       - XUI_LOG_FOLDER=/var/log/3x-ui
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
 
+  warp:
+    image: caomingjun/warp
+    container_name: warp
+    restart: always
+    networks:
+      - traefik-proxy
+    # add removed rule back (https://github.com/opencontainers/runc/pull/3468)
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    environment:
+      - WARP_SLEEP=5
+    cap_add:
+      # Docker already have them, these are for podman users
+      # - MKNOD
+      # - AUDIT_WRITE
+      # additional required cap for warp, both for podman and docker
+      - NET_ADMIN
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    # volumes:
+    #   - /opt/warp/data:/var/lib/cloudflare-warp
+      
 networks:
   traefik-proxy:
     external: true
