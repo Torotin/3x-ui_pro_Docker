@@ -55,6 +55,13 @@ update_xray_outbounds() {
     log INFO "Обновление outbounds в XRAY-конфиге."
 
     update_xray_routing_warp
+    # TOR outbound + routing for .onion domains
+    if command -v update_xray_tor >/dev/null 2>&1; then
+        update_xray_tor || log WARN "TOR update failed; keeping existing TOR settings."
+    else
+        log DEBUG "TOR module not loaded; skipping TOR routing update."
+    fi
+    update_xray_dns || log WARN "DNS update failed; keeping existing DNS settings."
 
     log DEBUG "Итоговый XRAY-конфиг:\n$(echo "$XRAY_SETTINGS_JSON" | jq .)"
 

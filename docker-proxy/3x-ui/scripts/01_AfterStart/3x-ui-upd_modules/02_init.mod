@@ -68,6 +68,7 @@ check_and_install_utils() {
             jq=jq
             timeout=busybox
             openssl=openssl
+            dig=bind-tools
             xxd=xxd"
 
     for item in $UTILS; do
