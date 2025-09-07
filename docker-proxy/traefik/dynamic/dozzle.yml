@@ -5,6 +5,7 @@ http:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_DOZZLE}`)"
       entryPoints:
         - websecure
+        - basic-auth
       tls:
         certResolver: le 
       service: dozzle-service

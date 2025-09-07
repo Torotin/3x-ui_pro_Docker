@@ -5,10 +5,10 @@
 # -------------------
 log:
   level: INFO
-  filePath: /logs/traefik.log
+  # filePath: /logs/traefik.log
 
 accessLog:
-  format: "json"
+  format: "common"
   filePath: /logs/access.log
 
 api:
@@ -75,3 +75,9 @@ experimental:
     bouncer:
       moduleName: "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
       version: "v1.4.4"
+    traefik-plugin-rewrite-headers:
+      moduleName: "github.com/XciD/traefik-plugin-rewrite-headers"
+      version: "v0.0.4"
+    fullUrlRewrite:
+      moduleName: "github.com/e-flux-platform/full-url-rewrite-traefik-plugin"
+      version: "v0.0.7"

@@ -22,6 +22,12 @@ services:
       - no-new-privileges=true
     networks:
       - traefik-proxy
+    healthcheck:
+      test: ["CMD", "/watchtower", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
 
   crowdsec:
     image: crowdsecurity/crowdsec
@@ -46,7 +52,6 @@ services:
         crowdsecurity/appsec-generic-rules
         crowdsecurity/base-http-scenarios
         crowdsecurity/appsec-crs
-
       BOUNCER_KEY_CADDY: ${CROWDSEC_API_KEY_CADDY}
       BOUNCER_KEY_TRAEFIK: ${CROWDSEC_API_KEY_TRAEFIK}
       BOUNCER_KEY_FIREWALL: ${CROWDSEC_API_KEY_FIREWALL}
@@ -59,13 +64,20 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     security_opt:
       - no-new-privileges=true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=5 http://localhost:8080/health > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   crowdsec-firewall-bouncer:
     image: ghcr.io/shgew/cs-firewall-bouncer-docker:latest
     container_name: crowdsec_firewall_bouncer
     network_mode: host
     depends_on:
-      - crowdsec
+      crowdsec:
+        condition: service_healthy
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -79,11 +91,20 @@ services:
       - /opt/docker-proxy/crowdsec/crowdsec-firewall-bouncer.yaml:/config/crowdsec-firewall-bouncer.yaml:ro
       - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "crowdsec-firewall-bouncer"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   caddy:
     image: torotin/caddy-l4:latest
     container_name: caddy
     restart: unless-stopped
+    depends_on:
+      crowdsec:
+        condition: service_healthy
     mem_limit: 512m
     cpus: "0.5"
     hostname: ${WEBDOMAIN}
@@ -99,13 +120,24 @@ services:
       - no-new-privileges=true
     labels:
       - traefik.enable=true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:2019/config | grep -q '\"apps\"' || nc -z 127.0.0.1 ${PORT_LOCAL_CADDYWEB}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
       
   traefik:
     image: traefik:latest
     container_name: traefik
     restart: unless-stopped
     depends_on:
-      - crowdsec
+      crowdsec:
+        condition: service_healthy
+      caddy:
+        condition: service_healthy
+      dozzle:
+        condition: service_healthy
     env_file:
       - /opt/docker-proxy/.env
     volumes:
@@ -126,6 +158,12 @@ services:
         exec /entrypoint.sh "$@"
     networks:
       - traefik-proxy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x traefik >/dev/null && nc -z 127.0.0.1 80 && nc -z 127.0.0.1 443"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   dozzle:
     container_name: dozzle
@@ -155,7 +193,14 @@ services:
     hostname: ${WEBDOMAIN}
     restart: always
     depends_on:
-      - traefik
+      traefik:
+        condition: service_healthy
+      warp:
+        condition: service_healthy
+      adguard:
+        condition: service_healthy
+      tor-proxy:
+        condition: service_healthy
     tty: true
     security_opt:
       - no-new-privileges=true
@@ -182,7 +227,15 @@ services:
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
       - net.ipv4.conf.all.src_valid_mark=1
-
+    healthcheck:
+      # 1) проверяем, что панель жива по admin-порту (PORT_LOCAL_VLESS_PANEL или 2053 по умолчанию)
+      # 2) если панель отключена, хотя бы убедимся, что процесс жив (pgrep)
+      test: ["CMD-SHELL", "curl -fsS 127.0.0.1:$PORT_LOCAL_VLESS_PANEL/$URI_PANEL_PATH/ >/dev/null || pgrep -f 'x-ui|xray|sing-box' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+      
   warp:
     image: caomingjun/warp
     container_name: warp
@@ -205,7 +258,70 @@ services:
       - net.ipv4.conf.all.src_valid_mark=1
     # volumes:
     #   - /opt/warp/data:/var/lib/cloudflare-warp
-      
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard
+    restart: unless-stopped
+    networks:
+      - traefik-proxy
+    # DNS service ports (uncomment if 53 is free on host)
+    # ports:
+    #   - "53:53/udp"
+    #   - "53:53/tcp"
+    volumes:
+      - /opt/docker-proxy/adguard/work:/opt/adguardhome/work
+      - /opt/docker-proxy/adguard/conf:/opt/adguardhome/conf
+      - /opt/docker-proxy/adguard/update-pass.sh:/opt/adguardhome/update-pass.sh:ro
+    env_file:
+      - /opt/docker-proxy/.env
+    security_opt:
+      - no-new-privileges=true
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache bind-tools curl
+        if [ -f /opt/adguardhome/update-pass.sh ]; then
+          sh /opt/adguardhome/update-pass.sh || echo "[adguard-entrypoint] password update skipped"
+        fi
+        exec /opt/adguardhome/AdGuardHome -s run --config /opt/adguardhome/conf/AdGuardHome.yaml --work-dir /opt/adguardhome/work
+    healthcheck:
+      test: ["CMD-SHELL", "dig @127.0.0.1 -p 53 example.com +short | grep -q '.'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  tor-proxy:
+    container_name: tor-proxy
+    image: peterdavehello/tor-socks-proxy:latest
+    restart: unless-stopped
+    # ports:
+    ## SOCKS
+    #   - 127.0.0.1:9150:9150/tcp
+    ## DNS
+    #   - 127.0.0.1:8853:8853/tcp
+    healthcheck:
+      test: >
+        curl --fail --silent --socks5-hostname tor-proxy:9150 https://check.torproject.org/api/ip
+        | grep '"IsTor":true'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - traefik-proxy
+    security_opt:
+      - no-new-privileges=true
+
 networks:
   traefik-proxy:
     external: true
