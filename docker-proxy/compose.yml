@@ -125,7 +125,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 45s
       
   traefik:
     image: traefik:latest
