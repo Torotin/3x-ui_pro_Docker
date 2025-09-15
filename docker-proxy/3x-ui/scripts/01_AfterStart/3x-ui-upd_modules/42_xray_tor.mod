@@ -40,7 +40,7 @@ update_xray_tor() {
               else . end)')
         log INFO "Routing-правило для outboundTag=$TAG_TOR обновлено."
     else
-        new_rule=$(jq -nc --arg tag "$TAG_TOR" --argjson dom "$desired_domains" '{ type:"field", outboundTag:$tag, domain:$dom }')
+        new_rule=$(jq -nc --arg tag "$TAG_TOR" --argjson dom "$desired_domains" '{ type:"field", outboundTag:$tag, domains:$dom }')
         # Препендим правило, чтобы оно имело приоритет
         XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --argjson rule "$new_rule" '
             .xraySetting.routing.rules = [$rule] + (.xraySetting.routing.rules // [])')
