@@ -65,7 +65,6 @@ create_inbound_tcp_reality() {
         --arg port_xhttp "$PORT_LOCAL_XHTTP" \
         --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
         [
-          { alpn: "h2 h3",    path: "", dest: ("127.0.0.1:" + $port_xhttp),  xver: 2 },
           { alpn: "h1 h2 h3", path: "", dest: ("traefik:" + $port_traefik), xver: 2 }
         ]
         '
