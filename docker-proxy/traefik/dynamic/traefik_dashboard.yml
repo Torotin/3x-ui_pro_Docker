@@ -12,7 +12,7 @@ http:
       service: api@internal
       tls:
         certResolver: le
-      priority: 1000
+      priority: 1100
 
     # Support the dashboard's absolute /api calls (XHR/fetch) with the same auth
     traefik-dashboard-api-absolute:
@@ -22,7 +22,7 @@ http:
       service: api@internal
       tls:
         certResolver: le
-      priority: 998
+      priority: 1097
 
     # Nice-to-have: redirect plain /dashboard to the prefixed /<URI>/dashboard
     traefik-dashboard-redirect:
@@ -32,7 +32,7 @@ http:
       service: api@internal
       tls:
         certResolver: le
-      priority: 5
+      priority: 1098
 
     # Optional: if someone opens just "/<URI>" → send them to "/<URI>/dashboard/"
     traefik-dashboard-root-to-ui:
@@ -42,7 +42,7 @@ http:
       service: api@internal
       tls:
         certResolver: le
-      priority: 999
+      priority: 1099
 
     # Redirect /favicon.ico -> /<SECRET>/dashboard/favicon.ico
     traefik-favicon-redirect:

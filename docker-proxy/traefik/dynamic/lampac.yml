@@ -1,0 +1,41 @@
+# dynamic/lampac.yml
+# Traefik dynamic config mirroring the former lampac nginx reverse proxy.
+
+http:
+  routers:
+    lampac-main:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - lampac-body-limits
+      service: lampac-svc
+      priority: 900
+      observability:
+        accessLogs: false
+
+    lampac-proxy:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/proxy/`)"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: lampac-svc
+      priority: 910
+      observability:
+        accessLogs: false
+
+  services:
+    lampac-svc:
+      loadBalancer:
+        servers:
+          - url: "http://lampac:9118"
+        passHostHeader: true
+
+  middlewares:
+    lampac-body-limits:
+      buffering:
+        maxRequestBodyBytes: 10485760  # 10 MiB upload limit
+        memRequestBodyBytes: 131072    # 128 KiB buffer before disk spill

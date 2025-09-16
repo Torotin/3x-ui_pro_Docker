@@ -10,6 +10,7 @@ http:
         - redirect-adguard-panel
       tls:
         certResolver: le
+      priority: 1000
 
   services:
     adguard-panel:

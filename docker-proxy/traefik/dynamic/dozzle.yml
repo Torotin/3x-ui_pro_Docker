@@ -10,7 +10,7 @@ http:
       tls:
         certResolver: le 
       service: dozzle-service
-      priority: 997
+      priority: 999
 
   services:
     dozzle-service:
