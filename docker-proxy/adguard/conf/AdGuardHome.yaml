@@ -36,7 +36,6 @@ dns:
     - https://dns.rabbitdns.org/dns-query
     - https://basic.rethinkdns.com/
     - https://wikimedia-dns.org/dns-query
-    - https://dns.controld.com/comss
     - https://doh.libredns.gr/dns-query
     - https://doh.libredns.gr/ads
     - https://dns.twnic.tw/dns-query
@@ -50,7 +49,6 @@ dns:
     - tls://dns.nextdns.io
     - tls://dns.quad9.net
     - tls://dns11.quad9.net
-    - tls://comss.dns.controld.com
     - tls://dot.libredns.gr
   upstream_dns_file: ""
   bootstrap_dns:
@@ -116,14 +114,16 @@ tls:
   strict_sni_check: false
 querylog:
   dir_path: ""
-  ignored: []
+  ignored:
+    - example.com
   interval: 24h
   size_memory: 1000
   enabled: true
   file_enabled: true
 statistics:
   dir_path: ""
-  ignored: []
+  ignored:
+    - example.com
   interval: 24h
   enabled: true
 filters:
@@ -203,7 +203,7 @@ filtering:
     ids: []
   protection_disabled_until: null
   safe_search:
-    enabled: true
+    enabled: false
     bing: true
     duckduckgo: true
     ecosia: true
