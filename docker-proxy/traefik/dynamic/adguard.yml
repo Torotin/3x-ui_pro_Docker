@@ -11,23 +11,7 @@ http:
       tls:
         certResolver: le
 
-    adguard-first-start:
-      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_FIRST}`)"
-      service: "adguard-first-start"
-      entryPoints:
-        - "websecure"
-      middlewares:
-        - strip-adguard-prefix
-        - redirect-adguard-first-start
-      tls:
-        certResolver: le
-        
   services:
-    adguard-first-start:
-      loadBalancer:
-        servers:
-          - url: "http://adguard:3000"
-
     adguard-panel:
       loadBalancer:
         servers:
@@ -41,14 +25,6 @@ http:
             - header: "Location"
               regex: "^/(.*)"
               replacement: "/${URI_ADGUARD_PANEL}/$1"
-
-    redirect-adguard-first-start:
-      plugin:
-        traefik-plugin-rewrite-headers:
-          rewrites:
-            - header: "Location"
-              regex: "^/(.*)"
-              replacement: "/${URI_ADGUARD_FIRST}/$1"
 
     strip-adguard-prefix:
       stripPrefix:

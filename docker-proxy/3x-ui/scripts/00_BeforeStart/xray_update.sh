@@ -50,10 +50,10 @@ target_file="${target_dir}/xray-linux-${FNAME}"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-log INFO "Скачивание: $xray_url"
+log INFO "Загрузка: $xray_url"
 wget -O "$tmpdir/$xray_zip" "$xray_url"
 
-log INFO "Распаковка $xray_zip"
+log INFO "Распаковка: $xray_zip"
 cd "$tmpdir"
 unzip -q "$xray_zip"
 

@@ -1,140 +1,155 @@
+# -----------------------------
+# API endpoints (resolved base)
+# -----------------------------
+# Базовый URL панели берётся из переменной окружения `URL_BASE_RESOLVED`.
+# Ниже перечислены все используемые точки входа API панели 3x-ui.
 
-get_new_x25519_cert() {
-    log INFO "Получение сертификатов X25519."
-    url="$URL_BASE_RESOLVED/server/getNewX25519Cert"
+# Получить пары шифрования VLESS (в т.ч. Post‑Quantum ML‑KEM‑768)
+API_URL_GET_VLESS_ENC="${URL_BASE_RESOLVED}/panel/api/server/getNewVlessEnc"
+# Получить новую пару ключей X25519 (Reality)
+API_URL_GET_X25519="${URL_BASE_RESOLVED}/panel/api/server/getNewX25519Cert"
+# Получить seed/verify для mldsa65 (Reality + PQ)
+API_URL_GET_MLDSA65="${URL_BASE_RESOLVED}/panel/api/server/getNewmldsa65"
 
-    # Отправляем POST-запрос и сохраняем ответ в HTTP_BODY/HTTP_CODE
-    http_request POST "$url" \
+# Создать inbound (VLESS/XHTTP)
+API_URL_INBOUND_ADD="${URL_BASE_RESOLVED}/panel/api/inbounds/add"
+# Список inbound-ов
+API_URL_INBOUND_LIST="${URL_BASE_RESOLVED}/panel/api/inbounds/list"
+# Добавить клиента в inbound
+API_URL_ADD_CLIENT="${URL_BASE_RESOLVED}/panel/api/inbounds/addClient"
+
+panel_api_request() {
+    # panel_api_request <METHOD> <URL> [curl args...]
+    if [ "$#" -lt 2 ]; then
+        if command -v log >/dev/null 2>&1; then
+            log ERROR "panel_api_request: need METHOD and URL, got $#"
+        else
+            printf '%s\n' "panel_api_request: missing METHOD/URL (got $#)" >&2
+        fi
+        return 2
+    fi
+    method=$1; url=$2; shift 2
+    http_request "$method" "$url" \
         -H 'Accept: application/json' \
-        -H 'Content-Type: application/x-www-form-urlencoded'
+        -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' \
+        "$@"
+}
 
-    if [ "$HTTP_CODE" != "200" ]; then
-        log ERROR "HTTP $HTTP_CODE при получении X25519: $HTTP_BODY"
-        return 1
-    fi
+refresh_api_urls() {
+    # Recompute API URLs after resolve_and_login updates URL_BASE_RESOLVED
+    [ -n "${URL_BASE_RESOLVED:-}" ] || return 0
+    # Получить пары шифрования VLESS (в т.ч. Post‑Quantum ML‑KEM‑768)
+    API_URL_GET_VLESS_ENC="${URL_BASE_RESOLVED}/panel/api/server/getNewVlessEnc"
+    # Получить новую пару ключей X25519 (Reality)
+    API_URL_GET_X25519="${URL_BASE_RESOLVED}/panel/api/server/getNewX25519Cert"
+    # Получить seed/verify для mldsa65 (Reality + PQ)
+    API_URL_GET_MLDSA65="${URL_BASE_RESOLVED}/panel/api/server/getNewmldsa65"
 
-    # Проверяем поле success
-    success=$(printf '%s' "$HTTP_BODY" | jq -r '.success // false' 2>/dev/null)
-    if [ "$success" != "true" ]; then
-        log ERROR "Сервер вернул success=false при X25519: $HTTP_BODY"
-        return 1
-    fi
-
-    # Извлекаем ключи
-    X25519_PRIVATE_KEY=$(printf '%s' "$HTTP_BODY" | jq -r '.obj.privateKey // empty' 2>/dev/null)
-    X25519_PUBLIC_KEY=$(printf '%s' "$HTTP_BODY" | jq -r '.obj.publicKey // empty' 2>/dev/null)
-
-    if [ -z "$X25519_PRIVATE_KEY" ] || [ -z "$X25519_PUBLIC_KEY" ]; then
-        log ERROR "В ответе отсутствуют privateKey или publicKey: $HTTP_BODY"
-        return 1
-    fi
-
-    log INFO "Получены X25519 privateKey и publicKey."
-    return 0
+    # Создать inbound (VLESS/XHTTP)
+    API_URL_INBOUND_ADD="${URL_BASE_RESOLVED}/panel/api/inbounds/add"
+    # Список inbound-ов
+    API_URL_INBOUND_LIST="${URL_BASE_RESOLVED}/panel/api/inbounds/list"
+    # Добавить клиента в inbound
+    API_URL_ADD_CLIENT="${URL_BASE_RESOLVED}/panel/api/inbounds/addClient"
 }
 
 create_inbound_tcp_reality() {
+    refresh_api_urls
     # Получаем X25519 ключи
-    get_new_x25519_cert || exit 1
+    get_new_vless_enc || return 1
+    get_new_x25519_cert || return 1
+    get_new_mldsa65 || return 1
 
     fallbacks_json=$(
-    jq -nc \
+      jq -nc \
         --arg port_xhttp "$PORT_LOCAL_XHTTP" \
-        --arg path_xhttp "$path_xhttp" \
         --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
         [
-            {
-              alpn: "h1 h2 h3",
-              path: "",
-              dest: ("traefik:" + $port_traefik),
-              xver: 2
-            },
-            {
-              name: "",
-              alpn: "h2 h3",
-              dest: ("127.0.0.1:" + $port_xhttp),
-              path: "",
-              xver: 2
-            }
+          { alpn: "h2 h3",    path: "", dest: ("127.0.0.1:" + $port_xhttp),  xver: 2 },
+          { alpn: "h1 h2 h3", path: "", dest: ("traefik:" + $port_traefik), xver: 2 }
         ]
-        ' 
+        '
     )
 
-    # JSON конфиг: settings (без клиентов)
-    settings_json=$(
+
+    # Ensure valid JSON defaults for args passed via --argjson
+    # short_ids: JSON array; sockopt_json: JSON object; external_proxy_json: JSON array
+    if [ -z "${short_ids:-}" ]; then
+        if command -v generate_short_ids >/dev/null 2>&1; then
+            short_ids=$(generate_short_ids 8 8 2>/dev/null) || short_ids='["" ]'
+        else
+            short_ids='["" ]'
+        fi
+    fi
+    if [ -z "${sockopt_json:-}" ]; then
+        sockopt_json=$(generate_sockopt_json 2>/dev/null || printf '{}')
+        [ -n "$sockopt_json" ] || sockopt_json='{}'
+    fi
+    if [ -z "${external_proxy_json:-}" ]; then
+        if [ -n "${WEBDOMAIN:-}" ]; then
+            external_proxy_json=$(jq -nc --arg dest "$WEBDOMAIN" --argjson port 443 '[{forceTls: "same", dest: $dest, port: $port, remark: ""}]')
+        else
+            external_proxy_json='[]'
+        fi
+    fi
+    [ -n "${allocate_json:-}" ] || allocate_json='{"strategy":"always","refresh":5,"concurrency":3}'
+
+    # Override auth-free settings to match requested shape
+    settings_json=$( \
         jq -nc --argjson fallbacks "$fallbacks_json" '{
-            clients: [],
-            decryption: "none",
-            fallbacks: $fallbacks
-        }'
+          clients: [],
+          decryption: "none",
+          encryption: "none",
+          fallbacks: $fallbacks
+        }' \
     )
 
-    # sockopt, externalProxy
-    sockopt_json=$(generate_sockopt_json acceptProxyProtocol=false tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
-    external_proxy_json=$(jq -nc --arg dest "$WEBDOMAIN" --argjson port 443 '[
-        { forceTls: "same", dest: $dest, port: $port, remark: "" }
-    ]')
-
-    # ShortIDs (в Reality — обязательны)
-    short_ids=$(generate_short_ids 8 6 | tr -d '[:space:]')
-
-    # streamSettings
-    stream_json=$(
+    stream_json=$( \
       jq -nc \
-        --arg dest "traefik:$PORT_LOCAL_TRAEFIK" \
+        --arg target "traefik:$PORT_LOCAL_TRAEFIK" \
+        --arg sni "$WEBDOMAIN" \
         --arg priv "$X25519_PRIVATE_KEY" \
         --arg pub "$X25519_PUBLIC_KEY" \
-        --arg sni "$WEBDOMAIN" \
         --arg fingerprint "chrome" \
         --arg spider "/" \
         --argjson shortIds "$short_ids" \
         --argjson sockopt "$sockopt_json" \
-        --argjson externalProxy "$external_proxy_json" '
-      {
+        --argjson externalProxy "$external_proxy_json" '{
         network: "tcp",
         security: "reality",
         externalProxy: $externalProxy,
         realitySettings: {
           show: true,
           xver: 0,
-          dest: $dest,
+          target: $target,
           serverNames: [$sni],
           privateKey: $priv,
-          minClient: "",
-          maxClient: "",
+          minClientVer: "",
+          maxClientVer: "",
           maxTimediff: 0,
           shortIds: $shortIds,
           settings: {
             publicKey: $pub,
             fingerprint: $fingerprint,
             serverName: "",
-            spiderX: $spider
+            spiderX: $spider,
+            mldsa65Verify: ""
           }
         },
         sockopt: $sockopt,
-        tcpSettings: {
-          acceptProxyProtocol: false,
-          header: { type: "none" }
-        }
-      }'
+        tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
+      }' \
     )
 
-    # sniffing / allocate
     sniffing_json=$(jq -nc '{
         enabled: true,
-        destOverride: ["http","tls","quic"],
+        destOverride: ["http","tls","quic","fakedns"],
         metadataOnly: false,
         routeOnly: false
     }')
-    allocate_json=$(jq -nc '{
-        strategy: "always",
-        refresh: 5,
-        concurrency: 3
-    }')
 
     # Запрос к API
-    http_request POST "$URL_BASE_RESOLVED/panel/inbound/add" \
-        -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' \
+    panel_api_request POST "$API_URL_INBOUND_ADD" \
         --data-urlencode "up=0" \
         --data-urlencode "down=0" \
         --data-urlencode "total=0" \
@@ -156,18 +171,18 @@ create_inbound_tcp_reality() {
         printf '%s\n' "$inbound_id"
     else
         log ERROR "Ошибка создания inbound: HTTP $HTTP_CODE — $HTTP_BODY"
-        exit 1
+        return 1
     fi
 }
 
 create_xhttp_inbound() {
+    refresh_api_urls
     port=${PORT_LOCAL_XHTTP}
     xhttp_path=${URI_VLESS_XHTTP}
 
     settings_json=$(jq -nc '{
         clients: [],
-        decryption: "none",
-        fallbacks: []
+        decryption: "none"
     }')
     sockopt_json=$(generate_sockopt_json acceptProxyProtocol=false tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
     external_proxy_json=$(
@@ -196,11 +211,10 @@ create_xhttp_inbound() {
           }
         }'
     )
-    sniffing_json='{"enabled":true,"destOverride":["http","tls","quic"],"metadataOnly":false,"routeOnly":false}'
+    sniffing_json='{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
     allocate_json='{"strategy":"always","refresh":5,"concurrency":3}'
 
-    http_request POST "${URL_BASE_RESOLVED}/panel/inbound/add" \
-        -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' \
+    panel_api_request POST "$API_URL_INBOUND_ADD" \
         -b "$COOKIE_JAR" \
         --data-urlencode "up=0" \
         --data-urlencode "down=0" \
@@ -235,108 +249,8 @@ generate_client_meta() {
     log INFO "generate_client_meta: id=$CLIENT_ID, flow=$CLIENT_FLOW, email=$CLIENT_EMAIL, subId=$CLIENT_SUBID"
 }
 
-make_json() {
-    template=$1; shift
-    log INFO "make_json: шаблон='$template'"
-
-    # Сохраняем параметры и обнуляем $@
-    kvs="$*"
-    set --
-
-    for kv in $kvs; do
-        key=${kv%%=*}
-        val=${kv#*=}
-        # Все значения передаём как строки
-        esc=$(printf '%s' "$val" | sed "s/'/'\"'\"'/g")
-        set -- "$@" --arg "$key" "$esc"
-    done
-
-    case "$template" in
-        inbound_settings)
-            filter='{
-              clients:[{
-                id:$id,flow:$flow,email:$email,limitIp:0,
-                totalGB:0,expiryTime:0,enable:true,
-                tgId:"",subId:$subId,comment:"",reset:0
-              }],
-              decryption:"none",fallbacks:[]
-            }'
-            ;;
-        inbound_stream)
-            filter='{
-              network:"tcp",security:"reality",externalProxy:[],
-              realitySettings:{
-                show:false,xver:0,dest:$dest|fromjson,
-                serverNames:[$(printf "%s" $dest|fromjson|split(":")[0])],
-                privateKey:$priv, minClient:"", maxClient:"",
-                maxTimediff:0,
-                shortIds:($shortIds|fromjson),
-                settings:{
-                  publicKey:$pub, fingerprint:$fingerprint,
-                  serverName:"", spiderX:$spider
-                }
-              },
-              tcpSettings:{acceptProxyProtocol:false,header:{type:"none"}}
-            }'
-            ;;
-        sniffing)
-            filter='{
-              enabled:(if ($enabled|type)=="string" then ($enabled|test("true")) else $enabled end),
-              destOverride:($destOverride|fromjson),
-              metadataOnly:(if ($metadataOnly|type)=="string" then ($metadataOnly|test("true")) else $metadataOnly end),
-              routeOnly:(if ($routeOnly|type)=="string" then ($routeOnly|test("true")) else $routeOnly end)
-            }'
-            ;;
-        allocate)
-            filter='{strategy:$strategy,refresh:( $refresh|tonumber ),concurrency:( $concurrency|tonumber )}'
-            ;;
-        *)
-            log ERROR "make_json: неизвестный шаблон '$template'"
-            return 1
-            ;;
-    esac
-
-    log DEBUG "make_json: jq -nc $* '$filter'"
-    jq -nc "$@" "$filter" || {
-        log ERROR "make_json: jq вернул ошибку при шаблоне '$template'"
-        return 1
-    }
-}
-
-check_inbound_exists() {
-    port="$1"
-    log INFO "Проверка существующего inbound на порту $port..."
-
-    # Отправляем запрос на список inbound-ов
-    http_request POST "${URL_BASE_RESOLVED}/panel/inbound/list" \
-        -H 'Content-Type: application/x-www-form-urlencoded' \
-        --data-urlencode ""   # POST с пустым телом
-
-    if [ "$HTTP_CODE" -ne 200 ]; then
-        log WARN "Не удалось получить список inbound (HTTP $HTTP_CODE)."
-        printf ''  # ничего не возвращаем
-        return 0
-    fi
-
-    # Ищем в JSON obj[] элемент с порт==$port
-    existing=$(printf '%s' "$HTTP_BODY" | \
-        jq -r --arg p "$port" '
-          .obj[]
-          | select(.port == ($p|tonumber))
-          | .id
-          | tostring
-        ' 2>/dev/null | head -n1)
-
-    if [ -n "$existing" ]; then
-        log INFO "Найден существующий inbound: ID=$existing"
-        printf '%s' "$existing"
-    else
-        log INFO "Inbound на порту $port не найден."
-        printf ''
-    fi
-}
-
 add_client_to_inbound() {
+    refresh_api_urls
     inbound_id="$1"
     subid="$2"
     flow="${3:-}"    # по умолчанию пустой или можно задать "xtls-rprx-vision"
@@ -378,8 +292,7 @@ add_client_to_inbound() {
     )
 
     # Отправляем запрос с таймаутами
-    http_request POST "${URL_BASE_RESOLVED}/panel/api/inbounds/addClient" \
-        -H 'Content-Type: application/x-www-form-urlencoded' \
+    panel_api_request POST "$API_URL_ADD_CLIENT" \
         --data-urlencode "id=$inbound_id" \
         --data-urlencode "settings=$settings_json"
 
@@ -460,4 +373,104 @@ generate_sockopt_json() {
       tcpcongestion: $tcpcongestion,
       tproxy: $tproxy
     }'
+}
+
+get_new_x25519_cert() {
+    refresh_api_urls
+    log INFO "Получение ключей X25519 для Reality (GET)."
+    # using unified API URL and method via panel_api_request
+    panel_api_request GET "$API_URL_GET_X25519"
+    if [ "$HTTP_CODE" != "200" ]; then
+        log ERROR "HTTP $HTTP_CODE при получении X25519: $HTTP_BODY"
+        return 1
+    fi
+    if ! printf '%s' "$HTTP_BODY" | jq -e '.success==true' >/dev/null 2>&1; then
+        log ERROR "Ответ success=false на X25519: $HTTP_BODY"
+        return 1
+    fi
+    X25519_PRIVATE_KEY=$(printf '%s' "$HTTP_BODY" | jq -r '.obj.privateKey // empty' 2>/dev/null)
+    X25519_PUBLIC_KEY=$(printf '%s' "$HTTP_BODY" | jq -r '.obj.publicKey // empty' 2>/dev/null)
+    if [ -z "$X25519_PRIVATE_KEY" ] || [ -z "$X25519_PUBLIC_KEY" ]; then
+        log ERROR "В ответе отсутствует privateKey или publicKey: $HTTP_BODY"
+        return 1
+    fi
+    log INFO "Получены X25519 privateKey и publicKey."
+}
+
+get_new_vless_enc() {
+    refresh_api_urls
+    log INFO "Запрос параметров шифрования VLESS (PQ/X25519) — GET."
+    # using unified API URL and method via panel_api_request
+    panel_api_request GET "$API_URL_GET_VLESS_ENC"
+    if [ "$HTTP_CODE" != "200" ]; then
+        log ERROR "HTTP $HTTP_CODE при getNewVlessEnc: $HTTP_BODY"
+        return 1
+    fi
+    if ! printf '%s' "$HTTP_BODY" | jq -e '.success==true' >/dev/null 2>&1; then
+        log ERROR "getNewVlessEnc success=false: $HTTP_BODY"
+        return 1
+    fi
+    local pick
+    # Prefer X25519 (not Post-Quantum)
+    pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[] | select(.label=="X25519, not Post-Quantum")' 2>/dev/null | head -n1)
+    if [ -z "$pick" ]; then
+        pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[0] // empty' 2>/dev/null)
+    fi
+    VLESS_DEC=$(printf '%s' "$pick" | jq -r '.decryption // empty')
+    VLESS_ENC=$(printf '%s' "$pick" | jq -r '.encryption // empty')
+    VLESS_LABEL=$(printf '%s' "$pick" | jq -r '.label // empty')
+    if [ -z "$VLESS_DEC" ] || [ -z "$VLESS_ENC" ]; then
+        log ERROR "Не удалось получить encryption/decryption из getNewVlessEnc."
+        return 1
+    fi
+    [ -z "$VLESS_LABEL" ] && VLESS_LABEL="X25519, not Post-Quantum"
+    log INFO "Выбран auth: $VLESS_LABEL"
+}
+
+get_new_mldsa65() {
+    refresh_api_urls
+    log INFO "Запрос mldsa65 seed/verify — GET."
+    # using unified API URL and method via panel_api_request
+    panel_api_request GET "$API_URL_GET_MLDSA65"
+    if [ "$HTTP_CODE" != "200" ]; then
+        log ERROR "HTTP $HTTP_CODE при getNewmldsa65: $HTTP_BODY"
+        return 1
+    fi
+    if ! printf '%s' "$HTTP_BODY" | jq -e '.success==true' >/dev/null 2>&1; then
+        log ERROR "getNewmldsa65 success=false: $HTTP_BODY"
+        return 1
+    fi
+    MLD_SA_SEED=$(printf '%s' "$HTTP_BODY" | jq -r '.obj.seed // empty' 2>/dev/null)
+    MLD_SA_VERIFY=$(printf '%s' "$HTTP_BODY" | jq -r '.obj.verify // empty' 2>/dev/null)
+    if [ -z "$MLD_SA_SEED" ] || [ -z "$MLD_SA_VERIFY" ]; then
+        log ERROR "Не удалось получить mldsa65 seed/verify"
+        return 1
+    fi
+    log INFO "Получены mldsa65 seed/verify."
+}
+
+check_inbound_exists() {
+    port="$1"
+    log INFO "Проверка существующего inbound на порту $port..."
+    panel_api_request GET "$API_URL_INBOUND_LIST" \
+        -H 'X-Requested-With: XMLHttpRequest'
+    if [ "$HTTP_CODE" -ne 200 ]; then
+        log WARN "Не удалось получить список inbound (HTTP $HTTP_CODE)."
+        printf ''
+        return 0
+    fi
+    existing=$(printf '%s' "$HTTP_BODY" | \
+        jq -r --arg p "$port" '
+          .obj[]
+          | select(.port == ($p|tonumber))
+          | .id
+          | tostring
+        ' 2>/dev/null | head -n1)
+    if [ -n "$existing" ]; then
+        log INFO "Найден существующий inbound: ID=$existing"
+        printf '%s' "$existing"
+    else
+        log INFO "Inbound на порту $port не найден."
+        printf ''
+    fi
 }

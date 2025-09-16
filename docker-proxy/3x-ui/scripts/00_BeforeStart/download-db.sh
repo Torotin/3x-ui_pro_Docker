@@ -88,11 +88,11 @@ while IFS= read -r entry <&3; do
 
     if [ "$DL_TOOL" = "curl" ]; then
         curl -fSL -o "$dest" "$url" \
-            || { log ERROR "Не удалось скачать $url"; exit 1; }
+            || { log ERROR "Не удалось загрузить $url"; exit 1; }
     else
         wget -q -O "$dest" "$url" \
-            || { log ERROR "Не удалось скачать $url"; exit 1; }
+            || { log ERROR "Не удалось загрузить $url"; exit 1; }
     fi
 done
 
-log INFO "Все файлы успешно скачаны."
+log INFO "Все файлы успешно загружены."

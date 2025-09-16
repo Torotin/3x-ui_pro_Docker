@@ -2,6 +2,39 @@
 
 # DNS helpers and XRAY dns section update
 
+# Default extra DNS resolvers list (DoH/DoT). You can override with env `XRAY_EXTRA_DNS_LIST`.
+EXTRA_DNS_LIST_DEFAULT='
+https://dns10.quad9.net/dns-query
+quic://dns.alidns.com:853
+https://dns.alidns.com/dns-query
+https://doh.sandbox.opendns.com/dns-query
+https://freedns.controld.com/p0
+https://doh.dns.sb/dns-query
+https://dns.google/dns-query
+https://dns.nextdns.io
+https://dns.quad9.net/dns-query
+https://dns11.quad9.net/dns-query
+https://dns.rabbitdns.org/dns-query
+https://basic.rethinkdns.com/
+https://wikimedia-dns.org/dns-query
+https://doh.libredns.gr/dns-query
+https://doh.libredns.gr/ads
+https://dns.twnic.tw/dns-query
+https://dns.switch.ch/dns-query
+tls://dns.alidns.com
+tls://sandbox.opendns.com
+tls://p0.freedns.controld.com
+tls://dot.sb
+tls://dns.google
+tls://dns.mullvad.net
+tls://dns.nextdns.io
+tls://dns.quad9.net
+tls://dns11.quad9.net
+tls://dot.libredns.gr'
+
+# Effective extra list used by update_xray_dns
+EXTRA_DNS_LIST="${XRAY_EXTRA_DNS_LIST:-$EXTRA_DNS_LIST_DEFAULT}"
+
 # Detect dig feature support (+https, +tls) once per run
 dns_detect_features() {
     if [ -n "$DNS_FEATURES_DETECTED" ]; then
@@ -122,12 +155,15 @@ dns_check_server() {
     case "$address" in
         https://*)
             log INFO "Checking DoH DNS: $address"
-            if [ "$mode" = "reply" ]; then
-                _dns_check_doh_reply "$address" "$test_domain" && return 0
-            else
-                _dns_check_doh "$address" "$test_domain" && return 0
+            # Prefer native dig +https only if supported; otherwise use HTTP JSON without warnings
+            if [ "${DIG_HAS_HTTPS:-0}" = "1" ]; then
+                if [ "$mode" = "reply" ]; then
+                    _dns_check_doh_reply "$address" "$test_domain" && return 0
+                else
+                    _dns_check_doh "$address" "$test_domain" && return 0
+                fi
             fi
-            # Fallback via HTTP JSON when dig lacks +https
+            # Fallback via HTTP JSON
             _http_check_doh_json "$address" "$test_domain" && return 0
             return 1
             ;;
@@ -138,10 +174,14 @@ dns_check_server() {
             p=${p##[:#]}
             [ -z "$p" ] && p=${port:-853}
             log INFO "Checking DoT DNS: tls://$host#$p"
-            if [ "$mode" = "reply" ]; then
-                _dns_check_dot_reply "$host" "$p" "$test_domain"
-            else
-                _dns_check_dot "$host" "$p" "$test_domain"
+            # Only attempt DoT probe if dig supports +tls
+            if [ "${DIG_HAS_TLS:-0}" = "1" ]; then
+                if [ "$mode" = "reply" ]; then
+                    _dns_check_dot_reply "$host" "$p" "$test_domain"
+                else
+                    _dns_check_dot "$host" "$p" "$test_domain"
+                fi
+                return $?
             fi
             return $?
             ;;
@@ -220,10 +260,15 @@ update_xray_dns() {
 
     TEST_DOMAIN="${TEST_DNS_DOMAIN:-example.com}"
     SERVERS_JSON='[]'
+    ADDED_LOCAL_ADGUARD=0
 
     add_server_if_ok() {
         addr="$1"; port="$2"; skip="$3"; domains_json="$4"; probe_domain="$5"; probe_mode="${6:-records}"
         d="${probe_domain:-$TEST_DOMAIN}"
+        # If AdGuard already added, skip any additional servers
+        if printf '%s' "$SERVERS_JSON" | jq -e 'any(.[]?; .address=="adguard")' >/dev/null 2>&1; then
+            [ "$addr" = "adguard" ] || return 1
+        fi
         if dns_check_server "$addr" "$port" "$d" "$probe_mode"; then
             entry=$(dns_build_server_json "$addr" "$port" "$skip" "$domains_json")
             SERVERS_JSON=$(printf '%s' "$SERVERS_JSON" | jq --argjson e "$entry" '. + [$e]')
@@ -243,21 +288,15 @@ update_xray_dns() {
     # 2) local AdGuard (port 53)
     if add_server_if_ok "adguard" 53 false ''; then
         log INFO "Добавлен DNS adguard:53"
+        ADDED_LOCAL_ADGUARD=1
     else
         log WARN "adguard:53 недоступен — пропускаю."
     fi
 
-    # 3) Cloudflare DoH
-    CF_DOH="${XRAY_DNS_CLOUDFLARE_DOH:-https://cloudflare-dns.com/dns-query}"
-    if add_server_if_ok "$CF_DOH" '' false ''; then
-        log INFO "Добавлен DNS DoH: $CF_DOH"
-    else
-        log WARN "DoH $CF_DOH недоступен — пропускаю."
-    fi
-
-    # 4) Extra DoH/DoT resolvers (skip quic://). Order as provided.
+    # 3) Extra DoH/DoT resolvers (skip quic://). Order as provided.
     # These act as additional fallbacks after adguard and Cloudflare.
-    while IFS= read -r raw; do
+    if [ "$ADDED_LOCAL_ADGUARD" != "1" ]; then
+    printf '%s\n' "$EXTRA_DNS_LIST" | while IFS= read -r raw; do
         addr=$(printf '%s' "$raw" | tr -d '\r' | sed 's/^\s*//; s/\s*$//')
         [ -z "$addr" ] && continue
         case "$addr" in quic://*) continue ;; esac
@@ -269,37 +308,8 @@ update_xray_dns() {
         if add_server_if_ok "$naddr" '' false ''; then
             log INFO "Добавлен дополнительный DNS: $naddr"
         fi
-    done <<'EXTRA_DNS_LIST'
-https://dns10.quad9.net/dns-query
-quic://dns.alidns.com:853
-https://dns.alidns.com/dns-query
-https://doh.sandbox.opendns.com/dns-query
-https://freedns.controld.com/p0
-https://doh.dns.sb/dns-query
-https://dns.google/dns-query
-https://dns.nextdns.io
-https://dns.quad9.net/dns-query
-https://dns11.quad9.net/dns-query
-https://dns.rabbitdns.org/dns-query
-https://basic.rethinkdns.com/
-https://wikimedia-dns.org/dns-query
-https://dns.controld.com/comss
-https://doh.libredns.gr/dns-query
-https://doh.libredns.gr/ads
-https://dns.twnic.tw/dns-query
-https://dns.switch.ch/dns-query
-tls://dns.alidns.com
-tls://sandbox.opendns.com
-tls://p0.freedns.controld.com
-tls://dot.sb
-tls://dns.google
-tls://dns.mullvad.net
-tls://dns.nextdns.io
-tls://dns.quad9.net
-tls://dns11.quad9.net
-tls://comss.dns.controld.com
-tls://dot.libredns.gr
-EXTRA_DNS_LIST
+    done
+    fi
 
     # If none available, do not touch existing dns
     if [ "$(printf '%s' "$SERVERS_JSON" | jq -r 'length')" -eq 0 ]; then

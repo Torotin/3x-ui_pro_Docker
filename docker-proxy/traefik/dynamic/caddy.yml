@@ -36,3 +36,4 @@ http:
         certResolver: le
       priority: 1                # выше catchall
       service: caddy-error       # Caddy вернёт /favicon.ico из /www
+      
