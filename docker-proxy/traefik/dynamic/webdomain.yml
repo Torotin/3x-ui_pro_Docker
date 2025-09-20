@@ -1,0 +1,17 @@
+# ${FALLBACK_DOMAIN} fallback via Traefik passthrough
+tcp:
+  routers:
+    webdomain-fallback:
+      entryPoints:
+        - websecure
+      rule: "HostSNI(`$WEBDOMAIN`,`www.$WEBDOMAIN`)"
+      service: webdomain-origin
+      tls:
+        passthrough: true
+      priority: 10
+
+  services:
+    webdomain-origin:
+      loadBalancer:
+        servers:
+          - address: "$WEBDOMAIN:443"
