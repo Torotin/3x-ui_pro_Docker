@@ -1,29 +1,9 @@
 services:
-      
-  tor-socks-proxy:
-    image: peterdavehello/tor-socks-proxy:latest
-    container_name: tor-socks-proxy
-    restart: unless-stopped
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - nc -z 127.0.0.1 9150
-      interval: 10s
-      timeout: 3s
-      retries: 3
-    environment:
-      - TZ=Europe/Moscow
-    networks:
-      - traefik-proxy
-    security_opt:
-      - no-new-privileges=true
 
   lampac:
     image: immisterio/lampac:latest
     container_name: lampac
-    restart: always
-    depends_on:
-      - tor-socks-proxy
+    restart: unless-stopped
     environment:
       - PUID=0
       - PGID=0
@@ -40,32 +20,42 @@ services:
       timeout: 3s
       retries: 3
       start_period: 15s
+    depends_on:
+      traefik:
+        condition: service_healthy
     env_file:
       - /opt/docker-proxy/.env
     volumes:
       - Lampac_cache:/home/cache
       #####################################################################################
-      - ./home/init.conf:/home/init.conf:rw
-      - ./home/users.json:/home/users.json:rw
-      - ./home/passwd:/home/passwd:ro
+      - /opt/docker-proxy/lampac/home/init.conf:/home/init.conf:rw
+      - /opt/docker-proxy/lampac/home/users.json:/home/users.json:rw
+      - /opt/docker-proxy/lampac/home/passwd:/home/passwd:ro
       # #####################################################################################
-      - ./module/manifest.json:/home/module/manifest.json
-      - ./module/TorrServer.conf:/home/module/TorrServer.conf
-      - ./torrserver/settings.json:/home/torrserver/settings.json
+      - /opt/docker-proxy/lampac/module/manifest.json:/home/module/manifest.json
       #####################################################################################
-      - ./plugins/lampainit.js:/home/plugins/lampainit.my.js:ro
-      - ./plugins/lampainit-invc.js:/home/plugins/lampainit-invc.my.js:ro
+      - /opt/docker-proxy/lampac/plugins/lampainit.js:/home/plugins/lampainit.my.js:ro
+      - /opt/docker-proxy/lampac/plugins/invc-rch.js:/home/plugins/invc-rch.js:ro
+      - /opt/docker-proxy/lampac/plugins/lampainit-invc.js:/home/plugins/lampainit-invc.my.js:ro
       # #####################################################################################
-      - ./wwwroot/profileIcons:/home/wwwroot/profileIcons
-      - ./wwwroot/js:/home/wwwroot/js
+      - /opt/docker-proxy/lampac/wwwroot/profileIcons:/home/wwwroot/profileIcons
+      - /opt/docker-proxy/lampac/wwwroot/js:/home/wwwroot/js
     security_opt:
       - no-new-privileges:true
     networks:
       - traefik-proxy
-      
+      - dns-net
+    dns:
+      - 172.31.0.53
+
 networks:
   traefik-proxy:
     external: true
+  dns-net:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
 
 volumes:
   Lampac_cache:

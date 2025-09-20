@@ -116,6 +116,7 @@ querylog:
   dir_path: ""
   ignored:
     - example.com
+    - docker.io
   interval: 24h
   size_memory: 1000
   enabled: true
@@ -124,6 +125,7 @@ statistics:
   dir_path: ""
   ignored:
     - example.com
+    - docker.io
   interval: 24h
   enabled: true
 filters:

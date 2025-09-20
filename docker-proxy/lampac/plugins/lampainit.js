@@ -78,16 +78,16 @@
     if (Lampa.Storage.get('lampac_initiale', 'false')) return;
 
     Lampa.Storage.set('lampac_initiale', 'true');
-    // Lampa.Storage.set('source', 'cub');
-    // Lampa.Storage.set('video_quality_default', '2160');
-    // Lampa.Storage.set('full_btn_priority', '{full_btn_priority_hash}');
-    // Lampa.Storage.set('proxy_tmdb', '{country}' == 'RU');
-    // Lampa.Storage.set('poster_size', 'w300');
+    Lampa.Storage.set('source', 'cub');
+    Lampa.Storage.set('video_quality_default', '2160');
+    Lampa.Storage.set('full_btn_priority', '{full_btn_priority_hash}');
+    Lampa.Storage.set('proxy_tmdb', '{country}' == 'RU');
+    Lampa.Storage.set('poster_size', 'w300');
 
-    // Lampa.Storage.set('parser_use', 'true');
-    // Lampa.Storage.set('jackett_url', '{jachost}');
-    // Lampa.Storage.set('jackett_key', '1');
-    // Lampa.Storage.set('parser_torrent_type', 'jackett');
+    Lampa.Storage.set('parser_use', 'true');
+    Lampa.Storage.set('jackett_url', '{jachost}');
+    Lampa.Storage.set('jackett_key', '1');
+    Lampa.Storage.set('parser_torrent_type', 'jackett');
 
     var plugins = Lampa.Plugins.get();
 
@@ -125,7 +125,19 @@
       {
         "url": '{localhost}/js/sisihide.js',
         "name": 'SISIHide',
-        "description": 'SISIHide',
+        "description": 'Позволяет скрыть из меню левое меню плагина SISI (Клубничка)',
+        "status": 1
+      },
+      {
+        "url": '{localhost}/js/hide_interface.js',
+        "name": 'Hide Interface',
+        "description": 'Позволяет скрыть элементы интерфейса',
+        "status": 1
+      },
+      {
+        "url": '{localhost}/js/surs_quality.js',
+        "name": 'Surs Quality',
+        "description": 'Добавляет в плагин Surs выбор качества видео',
         "status": 1
       }
     ];

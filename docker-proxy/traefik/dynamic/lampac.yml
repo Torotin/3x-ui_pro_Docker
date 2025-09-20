@@ -1,20 +1,16 @@
-# dynamic/lampac.yml
-
 http:
   routers:
-    lampac-main:
-      rule: "Host(`${WEBDOMAIN}`)"
-      service: lampac-service
+    lampac-preflight:
+      rule: "Host(`${WEBDOMAIN}`) && Method(`OPTIONS`)"
       entryPoints:
         - websecure
-      tls:
-        certResolver: le
       middlewares:
-        - lampac-headers
-      priority: 1
+        - lampac-cors-response
+      service: noop@internal
+      priority: 100
 
-    lampac-websocket:
-      rule: "Host(`${WEBDOMAIN}`) && Path(`/ws`)"
+    lampac-proxy:
+      rule: "Host(`${WEBDOMAIN}`) && (PathPrefix(`/proxy/`) || PathPrefix(`/proxy-dash/`))"
       service: lampac-service
       entryPoints:
         - websecure
@@ -22,7 +18,23 @@ http:
         certResolver: le
       middlewares:
         - lampac-headers
-      priority: 2
+        - lampac-cors-response   # CORS для реальных запросов
+        - lampac-proxy-headers   # если нужны доп. request-заголовки
+        - lampac-security
+      priority: 90
+
+    lampac-scripts:
+      rule: "Host(`${WEBDOMAIN}`) && PathRegexp(`^/(lampainit|sisi|lite|online|tmdbproxy|cubproxy|tracks|dlna|timecode|ts)\\.js`)"
+      service: lampac-service
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - lampac-headers
+        - lampac-scripts-cache   # длинный кэш для версионированных js
+        - lampac-security
+      priority: 80
 
     lampac-images:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/proxyimg`)"
@@ -34,10 +46,11 @@ http:
       middlewares:
         - lampac-headers
         - lampac-image-headers
-      priority: 3
+        - lampac-security
+      priority: 70
 
-    lampac-scripts:
-      rule: "Host(`${WEBDOMAIN}`) && PathRegexp(`^/(lampainit|sisi|lite|online|tmdbproxy|cubproxy|tracks|dlna|timecode|ts)\\.js`)"
+    lampac-websocket:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/ws`)"
       service: lampac-service
       entryPoints:
         - websecure
@@ -45,11 +58,11 @@ http:
         certResolver: le
       middlewares:
         - lampac-headers
-        - lampac-cache-control
-      priority: 3
+        - lampac-security
+      priority: 60
 
-    lampac-proxy:
-      rule: "Host(`${WEBDOMAIN}`) && (PathPrefix(`/proxy/`) || PathPrefix(`/proxy-dash/`))"
+    lampac-main:
+      rule: "Host(`${WEBDOMAIN}`)"
       service: lampac-service
       entryPoints:
         - websecure
@@ -57,32 +70,34 @@ http:
         certResolver: le
       middlewares:
         - lampac-headers
-        - lampac-proxy-headers
-      priority: 4
-
-    lampac-preflight:
-      rule: "Host(`${WEBDOMAIN}`) && Method(`OPTIONS`)"
-      entryPoints:
-        - websecure
-      middlewares:
-        - lampac-proxy-headers
-      service: noop@internal
-      priority: 5
+        - lampac-security
+      priority: 50
 
   services:
     lampac-service:
       loadBalancer:
+        passHostHeader: true
         servers:
           - url: "http://lampac:9118"
+        # healthCheck:
+        #   path: /health
+        #   interval: "10s"
+        #   timeout: "3s"
 
   middlewares:
     lampac-headers:
       headers:
+        # УБРАНО затирание IP. Traefik сам заполнит X-Forwarded-For/Proto/Host корректно.
         customRequestHeaders:
           X-Forwarded-Proto: "https"
-          X-Forwarded-For: ""
-          X-Real-IP: ""
 
+    # Для старых/неверсионированных скриптов оставь no-cache, иначе используй это
+    lampac-scripts-cache:
+      headers:
+        customResponseHeaders:
+          Cache-Control: "public, max-age=31536000, immutable"
+
+    # Если нужно полностью отключить кэш (как было)
     lampac-cache-control:
       headers:
         customResponseHeaders:
@@ -94,9 +109,40 @@ http:
       headers:
         customRequestHeaders:
           X-Forwarded-Proto: "https"
-          X-Real-IP: ""
+          # X-Real-IP / X-Forwarded-For не трогаем
 
     lampac-image-headers:
       headers:
         customResponseHeaders:
-          Cache-Control: "public, max-age=3600"
+          Cache-Control: "public, max-age=86400"  # было 3600, можно вернуть если нужно
+
+    lampac-cors-response:
+      headers:
+        customResponseHeaders:
+          Access-Control-Allow-Origin: "*"
+          Access-Control-Allow-Methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+          Access-Control-Allow-Headers: "Authorization, Content-Type, X-Requested-With"
+          Access-Control-Max-Age: "86400"
+          Vary: "Origin"
+
+    lampac-security:  
+      headers:  
+        stsSeconds: 31536000  
+        stsIncludeSubdomains: true  
+        stsPreload: true  
+        browserXssFilter: true  
+        contentTypeNosniff: true  
+        frameDeny: false  
+        # frameOptions не указываем для максимальной свободы  
+        referrerPolicy: "no-referrer-when-downgrade"  # Более мягкая политика  
+        permissionsPolicy: "geolocation=(), microphone=(), camera=()"
+        
+# (необязательно) В static config Traefik:
+# tls:
+#   options:
+#     modern:
+#       minVersion: VersionTLS12
+#       sniStrict: true
+# и затем в каждом роутере:
+#   tls:
+#     options: modern@file

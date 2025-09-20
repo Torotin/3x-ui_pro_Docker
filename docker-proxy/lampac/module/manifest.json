@@ -23,7 +23,11 @@
     },
     {
         "dll": "TorrServer.dll",
-        "enable": true,
+        "enable": false,
         "initspace": "TorrServer.ModInit"
+    },
+    {
+        "dll": "Merchant.dll",
+        "enable": true
     }
 ]

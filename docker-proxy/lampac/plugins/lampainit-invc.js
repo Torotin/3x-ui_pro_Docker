@@ -9,8 +9,8 @@ var lampainit_invc = {};
 // Лампа готова для использования 
 lampainit_invc.appload = function appload() {
   // Lampa.Utils.putScriptAsync(["{localhost}/myplugin.js"]);  // wwwroot/myplugin.js
-  Lampa.Utils.putScriptAsync(["{localhost}/plugins/ts-preload.js", "https://nb557.github.io/plugins/online_mod.js"]);
-  Lampa.Storage.set('proxy_tmdb', 'true');
+  // Lampa.Utils.putScriptAsync(["{localhost}/plugins/ts-preload.js", "https://nb557.github.io/plugins/online_mod.js"]);
+  // Lampa.Storage.set('proxy_tmdb', 'true');
   // etc
 };
 
@@ -26,6 +26,8 @@ lampainit_invc.first_initiale = function firstinitiale() {
   // Здесь можно указать/изменить первоначальные настройки 
   // Lampa.Storage.set('source', 'tmdb');
   Lampa.Utils.putScriptAsync(["https://aviamovie.github.io/surs.js"], function() {});
+  Lampa.Utils.putScriptAsync(["{localhost}/js/hide_interface.js"], function() {});
+  Lampa.Utils.putScriptAsync(["{localhost}/js/surs_quality.js"], function() {});
   Lampa.Storage.set('source', 'SURS');
   localStorage.setItem('menu_sort', '["Главная","Фильтр","Каталог","Фильмы","Сериалы","Релизы","Аниме","Избранное","IPTV","История","Расписание"]');
   localStorage.setItem('cub_domain', 'cub.rip');
@@ -48,22 +50,7 @@ lampainit_invc.first_initiale = function firstinitiale() {
   localStorage.setItem('internal_torrclient','true');
   localStorage.setItem('torrserver_use_link','one');
   localStorage.setItem('parser_torrent_type','jackett');
-  localStorage.setItem('torrserver_url', '{localhost}/ts');
-  // Сортировка меню:
-  if (!localStorage.getItem('menu_sort'))
-      localStorage.setItem('menu_sort', '["Главная","Фильмы","Сериалы","Лента","Подборки","Релизы","Избранное","История","Фильтр","Каталог","DLNA","Торренты"]');
-  // Скрытие:
-
-  Lampa.Listener.follow('app', function(e) {
-            if (e.type == 'ready') {
-    //  Полный список пунктов:
-    //  ['catalog', 'feed', 'filter', 'myperson', 'relise', 'anime', 'favorite', 'subscribes', 'timetable', 'mytorrents', 'console', 'about']
-    //  вставьте то, что хотите скрыть:
-    $(['mytorrents','console','DLNA']
-      .map(c => `[data-action="${c}"]`)
-      .join(','), e.body).hide();
-    }
-  });
+  localStorage.setItem('torrserver_url', '');
 };
 
 

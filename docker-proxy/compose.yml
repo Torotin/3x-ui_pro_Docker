@@ -3,7 +3,7 @@ services:
     container_name: watchtower
     hostname: ${WEBDOMAIN}
     image: containrrr/watchtower:latest
-    restart: always
+    restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -180,7 +180,7 @@ services:
   dozzle:
     container_name: dozzle
     image: amir20/dozzle:latest
-    restart: always
+    restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
@@ -206,7 +206,7 @@ services:
     image: torotin/3x-ui:latest
     container_name: 3x-ui
     hostname: ${WEBDOMAIN}
-    restart: always
+    restart: unless-stopped
     depends_on:
       traefik:
         condition: service_healthy
@@ -257,7 +257,7 @@ services:
   warp:
     image: caomingjun/warp
     container_name: warp
-    restart: always
+    restart: unless-stopped
     networks:
       - traefik-proxy
       - dns-net
