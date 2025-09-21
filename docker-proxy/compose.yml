@@ -23,8 +23,8 @@ services:
     networks:
       - traefik-proxy
       - dns-net
-    dns:
-      - 172.31.0.53
+    # dns:
+    #   - 172.31.0.53
     healthcheck:
       test: ["CMD", "/watchtower", "--health-check"]
       interval: 30s
