@@ -101,7 +101,7 @@ services:
       test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=5 http://localhost:8080/health > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 10
       start_period: 10s
 
   crowdsec-firewall-bouncer:
