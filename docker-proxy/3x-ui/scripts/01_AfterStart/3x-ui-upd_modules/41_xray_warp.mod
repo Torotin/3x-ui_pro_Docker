@@ -1,11 +1,63 @@
+ensure_socks_outbound() {
+    local host="$1"
+    local port="$2"
+    local tag="${3:-}"
+
+    if [ -z "$host" ] || [ -z "$port" ]; then
+        log ERROR "ensure_socks_outbound: требуется host и port"
+        return 1
+    fi
+
+    local log_tag
+    if [ -n "$tag" ]; then
+        log_tag="Outbound '$tag'"
+    else
+        log_tag="Outbound socks://${host}:${port}"
+    fi
+
+    if ! nc -z -w2 "$host" "$port" 2>/dev/null; then
+        log WARN "Адрес ${host}:${port} недоступен — ${log_tag} не добавляем."
+        return 0
+    fi
+
+    local exists
+    exists=$(echo "$XRAY_SETTINGS_JSON" | jq --arg tag "${tag:-}" --arg host "$host" --argjson port "$port" '
+        [.xraySetting.outbounds[]?
+         | select(.protocol=="socks"
+                  and any(.settings.servers[]?; .address==$host and ((.port|tonumber)==$port))
+                  and (($tag == "") or (.tag? == $tag))
+         )
+        ] | length')
+
+    if [ "${exists:-0}" -gt 0 ]; then
+        log INFO "${log_tag} уже существует."
+        return 0
+    fi
+
+    local new_outbound
+    new_outbound=$(jq -nc --arg host "$host" --argjson port "$port" --arg tag "${tag:-}" '
+        (if $tag != "" then {tag:$tag} else {} end) + {
+            protocol:"socks",
+            settings:{ servers:[{ address:$host, port:$port }] }
+        }')
+
+    XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --argjson ob "$new_outbound" '
+        .xraySetting.outbounds = (.xraySetting.outbounds // []) |
+        .xraySetting.outbounds += [$ob]')
+
+    log INFO "${log_tag} -> ${host}:${port} добавлен."
+}
 update_xray_routing_warp() {
     # Объединённый функционал: регистрация WARP (при необходимости),
     # добавление outbounds (warp, warp-docker), добавление balancer и rule.
 
     TAG_WARP="warp"
     TAG_SOCKS="warp-docker"
-    HOST="warp"
-    PORT=1080
+    TAG_SOCKS_V5="warp_socks_v5"
+    WARP="warp"
+    WARP_PORT=1080
+    WARP_V5="warp_socks_v5"
+    WARP_PORT_V5=9091
 
     # 1) Убедимся, что outbound wireguard:warp существует. Если нет — регистрируем WARP и создаём outbound.
     exists_warp=$(echo "$XRAY_SETTINGS_JSON" | jq --arg tag "$TAG_WARP" '
@@ -80,48 +132,36 @@ update_xray_routing_warp() {
         log INFO "Outbound '$TAG_WARP' уже существует."
     fi
 
-    # 2) Если доступен socks warp:1080 — гарантируем outbound TAG_SOCKS
-    if nc -z -w2 "$HOST" "$PORT" 2>/dev/null; then
-        exists_socks=$(echo "$XRAY_SETTINGS_JSON" | jq --arg tag "$TAG_SOCKS" --arg host "$HOST" --argjson port "$PORT" '
-            [.xraySetting.outbounds[]? | select(.tag==$tag and .protocol=="socks" and .settings.servers[0]?.address==$host and (.settings.servers[0]?.port|tonumber)==$port)] | length')
-        if [ "${exists_socks:-0}" -eq 0 ]; then
-            new_socks_ob=$(jq -nc --arg tag "$TAG_SOCKS" --arg host "$HOST" --argjson port "$PORT" '{
-                tag:$tag, protocol:"socks", settings:{ servers:[{ address:$host, port:$port }] }
-            }')
-            XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --argjson ob "$new_socks_ob" '
-                .xraySetting.outbounds = (.xraySetting.outbounds // []) |
-                .xraySetting.outbounds += [$ob]')
-            log INFO "Outbound '$TAG_SOCKS' -> ${HOST}:${PORT} добавлен."
-        else
-            log INFO "Outbound '$TAG_SOCKS' уже существует."
-        fi
-    else
-        log WARN "Адрес ${HOST}:${PORT} недоступен — outbound '$TAG_SOCKS' не добавляем."
-    fi
-
+    # 2) Проверяем socks-концы и добавляем outbounds
+    ensure_socks_outbound "$WARP" "$WARP_PORT" "$TAG_SOCKS"
+    ensure_socks_outbound "$WARP_V5" "$WARP_PORT_V5" "$TAG_SOCKS_V5"
     # 3) Добавляем routing.rule с balancerTag и 4) раздел балансировщика + 5) observatory
-    desired_domains=$(jq -nc '
-      [
-        "ext:geosite_RU.dat:category-gov-ru",
-        "ext:geosite_RU.dat:yandex",
-        "ext:geosite_RU.dat:steam",
-        "ext:geosite_RU.dat:vk",
-        "regexp:\\.ru",
-        "regexp:\\.org",
-        "regexp:\\.su",
-        "regexp:\\.xn--d1acj3b$",
-        "regexp:\\.xn--80adxhks$",
-        "regexp:\\.xn--80asehdb$",
-        "regexp:\\.xn--c1avg$",
-        "regexp:\\.xn--80aswg$",
-        "regexp:\\.p1ai$",
-        "regexp:\\.xn--j1amh$",
-        "regexp:\\.xn--90ae$",
-        "regexp:\\.xn--90a3ac$",
-        "regexp:\\.xn--l1acc$",
-        "regexp:\\.xn--d1alf$",
-        "regexp:\\.xn--90ais$"
-      ]')
+    desired_domains=$(
+        jq -nc --arg webdomain "$WEBDOMAIN" '
+            [
+                "ext:geosite_RU.dat:category-gov-ru",
+                "ext:geosite_RU.dat:yandex",
+                "ext:geosite_RU.dat:steam",
+                "ext:geosite_RU.dat:vk",
+                "regexp:\\.ru",
+                "regexp:\\.org",
+                "regexp:\\.su",
+                "regexp:\\.xn--d1acj3b$",
+                "regexp:\\.xn--80adxhks$",
+                "regexp:\\.xn--80asehdb$",
+                "regexp:\\.xn--c1avg$",
+                "regexp:\\.xn--80aswg$",
+                "regexp:\\.p1ai$",
+                "regexp:\\.xn--j1amh$",
+                "regexp:\\.xn--90ae$",
+                "regexp:\\.xn--90a3ac$",
+                "regexp:\\.xn--l1acc$",
+                "regexp:\\.xn--d1alf$",
+                "regexp:\\.xn--90ais$"
+            ]
+            + (if ($webdomain // "") != "" then ["domain:" + $webdomain] else [] end)
+        '
+    )
 
     # Гарантируем наличие routing.rules
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq '
@@ -144,7 +184,7 @@ update_xray_routing_warp() {
     fi
 
     # Добавим/обновим routing.balancers и observatory
-    balancer_json=$(jq -nc '{ tag:"warp-balancer", selector:["warp","warp-docker"], fallbackTag:"warp", strategy:{type:"leastPing"} }')
+    balancer_json=$(jq -nc '{ tag:"warp-balancer", selector:["warp-docker","warp_socks_v5"], fallbackTag:"warp", strategy:{type:"leastPing"} }')
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --argjson bal "$balancer_json" '
         .xraySetting.routing.balancers = (
           (.xraySetting.routing.balancers // [])
@@ -156,7 +196,7 @@ update_xray_routing_warp() {
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq '
         .xraySetting.observatory = (
           .xraySetting.observatory // {
-            subjectSelector:["warp","warp-docker"],
+            subjectSelector:["warp","warp-docker","warp_socks_v5"],
             probeURL:"http://www.google.com/gen_204",
             probeInterval:"10m",
             enableConcurrency:true

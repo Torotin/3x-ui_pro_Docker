@@ -3,7 +3,7 @@ services:
     container_name: watchtower
     hostname: ${WEBDOMAIN}
     image: containrrr/watchtower:latest
-    restart: unless-stopped
+    restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -127,8 +127,8 @@ services:
       - /opt/docker-proxy/.env
     security_opt:
       - no-new-privileges=true
-    labels:
-      - traefik.enable=true
+    # labels:
+    #   - traefik.enable=true
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:2019/config | grep -q '\"apps\"' || nc -z 127.0.0.1 ${PORT_LOCAL_CADDYWEB}"]
       interval: 30s
@@ -180,7 +180,7 @@ services:
   dozzle:
     container_name: dozzle
     image: amir20/dozzle:latest
-    restart: unless-stopped
+    restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
@@ -206,7 +206,7 @@ services:
     image: torotin/3x-ui:latest
     container_name: 3x-ui
     hostname: ${WEBDOMAIN}
-    restart: unless-stopped
+    restart: always
     depends_on:
       traefik:
         condition: service_healthy
@@ -248,7 +248,7 @@ services:
     healthcheck:
       # 1) проверяем, что панель жива по admin-порту (PORT_LOCAL_VLESS_PANEL или 2053 по умолчанию)
       # 2) если панель отключена, хотя бы убедимся, что процесс жив (pgrep)
-      test: ["CMD-SHELL", "curl -fsS 127.0.0.1:$PORT_LOCAL_VLESS_PANEL/$URI_PANEL_PATH/ >/dev/null || pgrep -f 'x-ui|xray|sing-box' >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS 127.0.0.1:$PORT_LOCAL_VLESS_PANEL/$URI_PANEL_PATH/ >/dev/null || nc -z 127.0.0.1 ${PORT_LOCAL_VISION} || pgrep -f 'x-ui|xray|sing-box' >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -257,22 +257,15 @@ services:
   warp:
     image: caomingjun/warp
     container_name: warp
-    restart: unless-stopped
+    restart: always
     networks:
       - traefik-proxy
       - dns-net
-    # dns:
-    #   - 172.31.0.53
-    # add removed rule back (https://github.com/opencontainers/runc/pull/3468)
     device_cgroup_rules:
       - 'c 10:200 rwm'
     environment:
       - WARP_SLEEP=5
     cap_add:
-      # Docker already have them, these are for podman users
-      # - MKNOD
-      # - AUDIT_WRITE
-      # additional required cap for warp, both for podman and docker
       - NET_ADMIN
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
@@ -283,8 +276,36 @@ services:
       test: ["CMD-SHELL", "curl -fsS --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 30s
+
+  docker-warp-socks:
+    restart: always
+    stdin_open: true
+    tty: true
+    container_name: warp_socks_v5
+    image: ghcr.io/mon-ius/docker-warp-socks:v5
+    networks:
+      - traefik-proxy
+      - dns-net
+    # dns:
+    #   - 172.31.0.53
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    cap_add:
+        - NET_ADMIN
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+      net.ipv6.conf.default.disable_ipv6: 0
+      net.ipv4.conf.all.src_valid_mark: 1
+    healthcheck:
+        test: ["CMD-SHELL", "curl -fsS --socks5-hostname 127.0.0.1:9091 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+        start_period: 30s
+    security_opt:
+      - no-new-privileges=true
 
   adguard:
     image: adguard/adguardhome:latest

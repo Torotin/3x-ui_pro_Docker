@@ -60,13 +60,20 @@ create_inbound_tcp_reality() {
     get_new_x25519_cert || return 1
     get_new_mldsa65 || return 1
 
+    # fallbacks_json=$(
+    #   jq -nc \
+    #     --arg port_xhttp "$PORT_LOCAL_XHTTP" \
+    #     --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
+    #     [
+    #       { alpn: "h1 h2 h3", path: "", dest: ("traefik:" + $port_traefik), xver: 2 }
+    #     ]
+    #     '
+    # )
     fallbacks_json=$(
       jq -nc \
         --arg port_xhttp "$PORT_LOCAL_XHTTP" \
         --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
-        [
-          { alpn: "h1 h2 h3", path: "", dest: ("traefik:" + $port_traefik), xver: 2 }
-        ]
+        []
         '
     )
 
