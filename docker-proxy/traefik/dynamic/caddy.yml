@@ -31,6 +31,7 @@ http:
             - header: "Location"
               regex: "^//(${WEBDOMAIN})(/.*)?$"
               replacement: "$2"
+              
   routers:
     favicon:
       rule: "Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)"

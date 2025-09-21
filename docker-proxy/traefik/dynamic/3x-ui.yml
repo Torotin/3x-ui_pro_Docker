@@ -41,7 +41,7 @@ http:
 
     # Подписки (SUB + JSON)
     xui-sub:
-      rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
+      rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`))
       entryPoints:
         - websecure
       middlewares:

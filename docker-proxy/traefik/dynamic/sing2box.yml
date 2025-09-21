@@ -1,0 +1,57 @@
+# sing2box.yml — Traefik dynamic config (file provider)
+
+http:
+  services:
+    # sub2sing-box слушает внутри контейнера 8080
+    sub2singbox-svc:
+      loadBalancer:
+        servers:
+          - url: "http://sub2sing:8080"
+
+    # Caddy-приложение (проверь имя контейнера и порт)
+    caddy-web-svc:
+      loadBalancer:
+        servers:
+          - url: "http://caddy:${PORT_TEST}"
+
+  middlewares:
+    # Срезает префикс /${URI_TEST} перед проксированием в sub2sing-box
+    strip-sub2sing-prefix:
+      stripPrefix:
+        prefixes:
+          - "/${URI_TEST}"
+
+    # Базовые заголовки безопасности
+    security-headers:
+      headers:
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXSSFilter: true
+        frameDeny: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # contentSecurityPolicy: "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';"
+
+  routers:
+    # ---- sub2sing-box (docker контейнер sub2sing) ----
+    sub2singbox-router:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TEST}/`)
+      entryPoints: [websecure]
+      service: sub2singbox-svc
+      middlewares:
+        - strip-sub2sing-prefix
+        - security-headers
+      tls:
+        certResolver: le
+
+    # ---- Web-приложение за Caddy:${PORT_TEST} ----
+    clashmeta-router:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TEST}/clashmeta/`)
+      entryPoints: [websecure]
+      service: caddy-web-svc
+      middlewares:
+        - security-headers
+      tls:
+        certResolver: le

@@ -388,6 +388,13 @@ services:
     security_opt:
       - no-new-privileges=true
 
+  sub2sing-box:
+    image: ghcr.io/legiz-ru/sub2sing-box:latest
+    container_name: sub2sing
+    restart: unless-stopped
+    networks:
+      - traefik-proxy
+      
 networks:
   traefik-proxy:
     external: true
