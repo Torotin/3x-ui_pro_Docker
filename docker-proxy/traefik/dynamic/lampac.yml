@@ -18,13 +18,14 @@ http:
         certResolver: le
       middlewares:
         - lampac-headers
+        - lampac-buffering
         - lampac-cors-response   # CORS для реальных запросов
         - lampac-proxy-headers   # если нужны доп. request-заголовки
         - lampac-security
       priority: 90
 
     lampac-scripts:
-      rule: "Host(`${WEBDOMAIN}`) && PathRegexp(`^/(lampainit|sisi|lite|online|tmdbproxy|cubproxy|tracks|dlna|timecode|ts)\\.js`)"
+      rule: "Host(`${WEBDOMAIN}`) && PathRegexp(`^/(.*)\\.js$`) && !PathRegexp(`^/.+/js/.+$`)"
       service: lampac-service
       entryPoints:
         - websecure
@@ -79,25 +80,55 @@ http:
         passHostHeader: true
         servers:
           - url: "http://lampac:9118"
-        # healthCheck:
-        #   path: /health
-        #   interval: "10s"
-        #   timeout: "3s"
+        healthCheck:
+          path: /ping
+          interval: "10s"
+          timeout: "3s"
 
   middlewares:
-    lampac-headers:
-      headers:
-        # УБРАНО затирание IP. Traefik сам заполнит X-Forwarded-For/Proto/Host корректно.
-        customRequestHeaders:
-          X-Forwarded-Proto: "https"
+    lampac-headers:  
+      headers:  
+        # --- TLS / HSTS ---  
+        sslRedirect: true  
+        stsSeconds: 63072000  
+        stsIncludeSubdomains: true  
+        stsPreload: true  
+  
+        # --- MIME & XSS ---  
+        contentTypeNosniff: true  
+        browserXssFilter: true  
+  
+        # --- Clickjacking (более мягкая политика для Lampac) ---  
+        frameDeny: false  
+ 
+        # --- Referrer policy (совместимо с Lampac) ---  
+        referrerPolicy: "no-referrer-when-downgrade"  
+  
+        # --- Отключаем встроенные CORS (полагаемся на Lampac) ---  
+        # accessControlAllowOriginList: []  
+        # accessControlAllowMethods: []  
+        # accessControlAllowHeaders: []  
+  
+        customResponseHeaders:  
+          X-Frame-Options: "SAMEORIGIN"
+          # Безопасность  
+          Cross-Origin-Opener-Policy: "same-origin"  
+          Cross-Origin-Resource-Policy: "same-origin"  
+          Permissions-Policy: "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"  
+            
+          # Убираем server header  
+          server: ""  
+            
+          # Дополнительная защита  
+          X-Content-Type-Options: "nosniff"  
+          X-XSS-Protection: "1; mode=block"
 
     # Для старых/неверсионированных скриптов оставь no-cache, иначе используй это
     lampac-scripts-cache:
       headers:
         customResponseHeaders:
-          Cache-Control: "public, max-age=31536000, immutable"
+          Cache-Control: "no-store, must-revalidate, no-cache"
 
-    # Если нужно полностью отключить кэш (как было)
     lampac-cache-control:
       headers:
         customResponseHeaders:
@@ -109,21 +140,23 @@ http:
       headers:
         customRequestHeaders:
           X-Forwarded-Proto: "https"
-          # X-Real-IP / X-Forwarded-For не трогаем
+          X-Forwarded-Timeout: "30s"
 
     lampac-image-headers:
       headers:
         customResponseHeaders:
-          Cache-Control: "public, max-age=86400"  # было 3600, можно вернуть если нужно
+          Cache-Control: "no-store, must-revalidate, no-cache"
 
     lampac-cors-response:
       headers:
         customResponseHeaders:
-          Access-Control-Allow-Origin: "*"
-          Access-Control-Allow-Methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-          Access-Control-Allow-Headers: "Authorization, Content-Type, X-Requested-With"
+          Access-Control-Allow-Origin: "*"  
+          Access-Control-Allow-Methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"  
+          Access-Control-Allow-Headers: "Accept, Origin, Content-Type, Authorization, X-Requested-With, X-Signalr-User-Agent, Cache-Control, DNT, If-Modified-Since, Keep-Alive, User-Agent, Token, Profile"
+          Access-Control-Allow-Credentials: "true"
+          Access-Control-Allow-Private-Network: "true"  
           Access-Control-Max-Age: "86400"
-          Vary: "Origin"
+          
 
     lampac-security:  
       headers:  
@@ -133,10 +166,15 @@ http:
         browserXssFilter: true  
         contentTypeNosniff: true  
         frameDeny: false  
-        # frameOptions не указываем для максимальной свободы  
-        referrerPolicy: "no-referrer-when-downgrade"  # Более мягкая политика  
-        permissionsPolicy: "geolocation=(), microphone=(), camera=()"
-        
+        referrerPolicy: "no-referrer-when-downgrade"
+
+    lampac-buffering:  
+      buffering:  
+        maxRequestBodyBytes: 0  # без ограничений  
+        memRequestBodyBytes: 1048576  # 1MB в памяти  
+        retryExpression: "IsNetworkError() && Attempts() < 3"  
+
+
 # (необязательно) В static config Traefik:
 # tls:
 #   options:
