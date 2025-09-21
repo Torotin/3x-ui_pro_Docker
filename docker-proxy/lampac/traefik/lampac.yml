@@ -11,7 +11,7 @@ http:
 
     lampac-proxy:
       rule: "Host(`${WEBDOMAIN}`) && (PathPrefix(`/proxy/`) || PathPrefix(`/proxy-dash/`))"
-      service: lampac-service
+      service: lampac-service-failover
       entryPoints:
         - websecure
       tls:
@@ -26,7 +26,7 @@ http:
 
     lampac-scripts:
       rule: "Host(`${WEBDOMAIN}`) && PathRegexp(`^/(.*)\\.js$`) && !PathRegexp(`^/.+/js/.+$`)"
-      service: lampac-service
+      service: lampac-service-failover
       entryPoints:
         - websecure
       tls:
@@ -39,7 +39,7 @@ http:
 
     lampac-images:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/proxyimg`)"
-      service: lampac-service
+      service: lampac-service-failover
       entryPoints:
         - websecure
       tls:
@@ -52,7 +52,7 @@ http:
 
     lampac-websocket:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/ws`)"
-      service: lampac-service
+      service: lampac-service-failover
       entryPoints:
         - websecure
       tls:
@@ -64,7 +64,7 @@ http:
 
     lampac-main:
       rule: "Host(`${WEBDOMAIN}`)"
-      service: lampac-service
+      service: lampac-service-failover
       entryPoints:
         - websecure
       tls:
@@ -84,6 +84,11 @@ http:
           path: /ping
           interval: "10s"
           timeout: "3s"
+
+    lampac-service-failover:
+      failover:
+        service: lampac-service
+        fallback: caddy-error@file
 
   middlewares:
     lampac-headers:  
