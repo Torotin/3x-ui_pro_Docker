@@ -33,7 +33,7 @@ services:
     environment:
       TZ: ${TZ}
       # cron: каждые 5 минут
-      LOGROTATE_CRONSCHEDULE: "*/5 * * * *"
+      LOGROTATE_CRONSCHEDULE: "* */5 * * *"
       # директории с логами (через пробел)
       LOGS_DIRECTORIES: "/logs"
       # какие файлы ротировать (через пробел)
