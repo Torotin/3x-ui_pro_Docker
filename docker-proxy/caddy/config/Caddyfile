@@ -1,8 +1,5 @@
 import *.caddy
 
-###############################################################################
-#                          ГЛОБАЛЬНЫЕ НАСТРОЙКИ                               #
-###############################################################################
 {
 	debug
 	order crowdsec before respond
@@ -14,25 +11,16 @@ import *.caddy
 	import logs_global
 }
 
-# порту Caddy слушает все запросы от Traefik
 :{$PORT_LOCAL_CADDYWEB} {
+	encode gzip zstd
+
 	route {
 		crowdsec
 		appsec
 
 		root * /srv
-		file_server
+		# SPA-фоллбек: если файла нет — отдать /index.html с 200
 		try_files {path} /index.html
-	}
-
-	handle_errors {
-		route {
-			crowdsec
-			appsec
-
-			root * /srv
-			file_server
-			try_files {path} /index.html
-		}
+		file_server
 	}
 }

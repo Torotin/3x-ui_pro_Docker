@@ -6,9 +6,12 @@ http:
       loadBalancer:
         servers:
           - url: "http://caddy:${PORT_LOCAL_CADDYWEB}"
+        healthCheck:
+          path: "/index.html"
+          interval: "10s"
+          timeout: "2s"
 
   middlewares:
-    # Pretty error pages for 4xx/5xx from ANY upstream
     error-pages:
       errors:
         status:
@@ -16,8 +19,27 @@ http:
         service: caddy-error
         query: "/index.html"
 
+    redirect-to-caddy:
+      plugin:
+        traefik-plugin-rewrite-headers:
+          rewrites:
+            # https://example.com/foo -> /foo
+            - header: "Location"
+              regex: "^https?://(${WEBDOMAIN})(/.*)?$"
+              replacement: "$2"
+            # На всякий: //example.com/foo -> /foo
+            - header: "Location"
+              regex: "^//(${WEBDOMAIN})(/.*)?$"
+              replacement: "$2"
   routers:
-    # Fallback site: anything not matched elsewhere goes to Caddy
+    favicon:
+      rule: "Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)"
+      entryPoints: [websecure]
+      tls:
+        certResolver: le
+      priority: 1
+      service: caddy-error
+
     catchall:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/`)"
       entryPoints: [websecure]
@@ -25,15 +47,6 @@ http:
         certResolver: le
       priority: -1
       middlewares:
-        - error-pages            # ошибки оформлять через /index.html
+        - error-pages
+        - redirect-to-caddy
       service: caddy-error
-
-    # Отдача favicon напрямую из Caddy, чтобы не светить 404
-    favicon:
-      rule: "Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)"
-      entryPoints: [websecure]
-      tls:
-        certResolver: le
-      priority: 1                # выше catchall
-      service: caddy-error       # Caddy вернёт /favicon.ico из /www
-      
