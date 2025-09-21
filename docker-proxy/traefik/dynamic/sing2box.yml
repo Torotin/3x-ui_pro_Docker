@@ -1,27 +1,28 @@
-# sing2box.yml — Traefik dynamic config (file provider)
+# sing2box.yml - Traefik dynamic config (file provider)
 
 http:
   services:
-    # sub2sing-box слушает внутри контейнера 8080
+    # sub2sing-box upstream on port 8080
     sub2singbox-svc:
       loadBalancer:
         servers:
           - url: "http://sub2sing:8080"
 
-    # Caddy-приложение (проверь имя контейнера и порт)
+    # Caddy web frontend (serves subscription UI)
     caddy-web-svc:
       loadBalancer:
         servers:
           - url: "http://caddy:${PORT_TEST}"
 
   middlewares:
-    # Срезает префикс /${URI_TEST} перед проксированием в sub2sing-box
+    # Strip leading prefixes before forwarding to sub2sing-box
     strip-sub2sing-prefix:
       stripPrefix:
         prefixes:
           - "/${URI_TEST}"
+          - "${URI_JSON_PATH}"
 
-    # Базовые заголовки безопасности
+    # Basic security headers
     security-headers:
       headers:
         sslRedirect: true
@@ -35,7 +36,18 @@ http:
         # contentSecurityPolicy: "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';"
 
   routers:
-    # ---- sub2sing-box (docker контейнер sub2sing) ----
+    # ---- Browser-friendly HTML for ${URI_JSON_PATH} ----
+    sub2singbox-json-html:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
+      priority: 100
+      entryPoints: [websecure]
+      service: caddy-web-svc
+      middlewares:
+        - security-headers
+      tls:
+        certResolver: le
+
+    # ---- sub2sing-box (base64/API subscribers) ----
     sub2singbox-router:
       rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TEST}/`)
       entryPoints: [websecure]
@@ -46,7 +58,7 @@ http:
       tls:
         certResolver: le
 
-    # ---- Web-приложение за Caddy:${PORT_TEST} ----
+    # ---- Web frontend on Caddy:${PORT_TEST} ----
     clashmeta-router:
       rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TEST}/clashmeta/`)
       entryPoints: [websecure]
@@ -55,3 +67,4 @@ http:
         - security-headers
       tls:
         certResolver: le
+

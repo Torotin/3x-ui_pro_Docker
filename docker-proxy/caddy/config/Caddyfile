@@ -36,9 +36,31 @@ import *.caddy
 		appsec
 
 		root * /srv/subs
-		# SPA-фоллбек: если файла нет — отдать /index.html с 200
-		try_files {path} /index.html
-		templates
-		file_server
+
+		@subjson-html {
+			path {$URI_JSON_PATH}*
+			header Accept *text/html*
+		}
+		handle @subjson-html {
+			rewrite * /index_sub.html
+			templates
+			file_server
+		}
+
+		@subjson-api {
+			path {$URI_JSON_PATH}*
+			not header Accept *text/html*
+		}
+		handle @subjson-api {
+			uri strip_prefix {$URI_JSON_PATH}
+			reverse_proxy http://sub2sing:8080
+		}
+
+		handle {
+			try_files {path} /index.html
+			templates
+			file_server
+		}
 	}
 }
+
