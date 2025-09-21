@@ -317,8 +317,6 @@ services:
     networks:
       - traefik-proxy
       - dns-net
-    sysctls:
-      net.ipv6.conf.all.disable_ipv6: 1
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -x socks5h://127.0.0.1:9091 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
       interval: 30s
