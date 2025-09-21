@@ -31,7 +31,7 @@ update_panel_settings() {
                subTitle subListen subPort subPath subJsonPath subDomain \
                externalTrafficInformEnable externalTrafficInformURI subCertFile \
                subKeyFile subUpdates subEncrypt subShowInfo subURI \
-               subJsonURI subJsonFragment subJsonNoises subJsonMux subJsonRules \
+               subJsonURI subJsonFragment subJsonNoises subJsonMux subJsonRules subJsonEnable \
                timeLocation; do
         # Получаем значение переменной
         val=$(eval "printf '%s' \"\${$var:-}\"")
