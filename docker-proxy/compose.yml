@@ -1,6 +1,6 @@
 services:
   watchtower:
-    container_name: _watchtower
+    container_name: watchtower
     hostname: ${WEBDOMAIN}
     image: containrrr/watchtower:latest
     restart: always
@@ -8,23 +8,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=${TZ}
-      - WATCHTOWER_TRACE=false
       - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_NO_PULL=false
-      - WATCHTOWER_NO_START=false
-      - WATCHTOWER_POLL_INTERVAL=600
-      - WATCHTOWER_MONITOR_ONLY=false
       - WATCHTOWER_INCLUDE_STOPPED=true
       - WATCHTOWER_ROLLING_RESTART=true
       - WATCHTOWER_NOTIFICATION_REPORT=true
       - WATCHTOWER_HEALTHCHECK_GRACE_PERIOD=300
+      - WATCHTOWER_POLL_INTERVAL=600
     security_opt:
       - no-new-privileges=true
     networks:
       - traefik-proxy
       - dns-net
-    # dns:
-    #   - 172.31.0.53
     healthcheck:
       test: ["CMD", "/watchtower", "--health-check"]
       interval: 30s
@@ -34,9 +28,10 @@ services:
 
   logrotate:
     image: blacklabelops/logrotate:1.3
-    container_name: _logrotate
+    container_name: logrotate
     restart: unless-stopped
     environment:
+      TZ: ${TZ}
       # cron: каждые 5 минут
       LOGROTATE_CRONSCHEDULE: "*/5 * * * *"
       # директории с логами (через пробел)
@@ -59,10 +54,10 @@ services:
       # логи самого ротатора/cron
       LOGROTATE_LOGFILE: "/logs/_logrotate/logrotate.log"
       LOG_FILE: "/logs/_logrotate/cron.log"
-      TZ: ${TZ}
     volumes:
       - /opt/docker-proxy/_logs:/logs:rw
       - logrotate-status:/logrotate-status
+
 
   crowdsec:
     image: crowdsecurity/crowdsec
@@ -293,49 +288,43 @@ services:
     networks:
       - traefik-proxy
       - dns-net
+    devices:
+      - /dev/net/tun:/dev/net/tun
     device_cgroup_rules:
       - 'c 10:200 rwm'
-    environment:
-      - WARP_SLEEP=5
     cap_add:
       - NET_ADMIN
     sysctls:
-      - net.ipv6.conf.all.disable_ipv6=0
-      - net.ipv4.conf.all.src_valid_mark=1
+      net.ipv6.conf.all.disable_ipv6: 0
+      net.ipv4.conf.all.src_valid_mark: 1
+    environment:
+      - WARP_SLEEP=5
     # volumes:
-    #   - /opt/warp/data:/var/lib/cloudflare-warp
+    #   - /opt/docker-proxy/warp/data:/var/lib/cloudflare-warp
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
+      test: ["CMD-SHELL", "curl -fsS -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+    # security_opt:
+    #   - no-new-privileges=true
 
   docker-warp-socks:
-    restart: always
-    stdin_open: true
-    tty: true
-    container_name: warp_socks_v5
     image: ghcr.io/mon-ius/docker-warp-socks:v5
+    container_name: warp_socks_v5
+    restart: always
     networks:
       - traefik-proxy
       - dns-net
-    # dns:
-    #   - 172.31.0.53
-    device_cgroup_rules:
-      - 'c 10:200 rwm'
-    cap_add:
-        - NET_ADMIN
     sysctls:
-      net.ipv6.conf.all.disable_ipv6: 0
-      net.ipv6.conf.default.disable_ipv6: 0
-      net.ipv4.conf.all.src_valid_mark: 1
+      net.ipv6.conf.all.disable_ipv6: 1
     healthcheck:
-        test: ["CMD-SHELL", "curl -fsS --socks5-hostname 127.0.0.1:9091 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
-        interval: 30s
-        timeout: 10s
-        retries: 5
-        start_period: 30s
+      test: ["CMD-SHELL", "curl -fsS -x socks5h://127.0.0.1:9091 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     security_opt:
       - no-new-privileges=true
 
