@@ -1,4 +1,4 @@
-# /dynamic/3x-ui.yml
+﻿# /dynamic/3x-ui.yml
 
 http:
   services:
@@ -25,11 +25,35 @@ http:
       headers:
         contentTypeNosniff: true
         browserXssFilter: true
-        frameDeny: true
-        referrerPolicy: "no-referrer"
+        frameDeny: false
+        referrerPolicy: "no-referrer-when-downgrade"
+
+        accessControlAllowOriginList: []
+        accessControlAllowMethods: []
+        accessControlAllowHeaders: []
+
+        customResponseHeaders:
+          X-Frame-Options: "SAMEORIGIN"
+          Cross-Origin-Opener-Policy: "same-origin"
+          Cross-Origin-Resource-Policy: "same-origin"
+          Permissions-Policy: "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+          server: ""
+          x-powered-by: ""
+          Access-Control-Allow-Origin: "*"
+          Access-Control-Allow-Methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+          Access-Control-Allow-Headers: "Accept, Origin, Content-Type, Authorization, X-Requested-With, X-Signalr-User-Agent, Cache-Control, DNT, If-Modified-Since, Keep-Alive, User-Agent, Token, Profile"
+          Access-Control-Allow-Credentials: "true"
+          Access-Control-Allow-Private-Network: "true"
+          Access-Control-Max-Age: "86400"
+
+    xui-assets:
+      plugin:
+        fullUrlRewrite:
+          regex: "^assets/(.*)"
+          replacement: "${URI_SUB_PATH}$1"
 
   routers:
-    # Панель 3x-ui (SPA-путь)
+    # Панель 3x-ui (SPA)
     xui-panel:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)"
       entryPoints:
@@ -41,7 +65,8 @@ http:
 
     # Подписки (SUB + JSON)
     xui-sub:
-      rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`))
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_SUB_PATH}`)
+      # rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
       entryPoints:
         - websecure
       middlewares:
@@ -50,6 +75,19 @@ http:
         certResolver: le
       service: xui-sub-svc
       priority: 9998
+
+    # Статика
+    xui-assets:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/assets/`)
+      entryPoints:
+        - websecure
+      middlewares:
+        - xui-sub-hostheader
+        - xui-assets
+      tls:
+        certResolver: le
+      service: xui-sub-svc
+      priority: 9996
 
     # XHTTP (plain HTTP)
     xhttp3xui-l4:

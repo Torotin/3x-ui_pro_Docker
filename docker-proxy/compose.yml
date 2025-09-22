@@ -149,6 +149,7 @@ services:
     volumes:
       - /opt/docker-proxy/_logs/caddy:/var/log/caddy
       - /opt/docker-proxy/caddy/config:/etc/caddy
+      - /opt/docker-proxy/caddy/subs:/srv/subs:ro
       # - /opt/docker-proxy/caddy/site:/srv
     env_file:
       - /opt/docker-proxy/.env
@@ -197,6 +198,8 @@ services:
       - dns-net
     # dns:
     #   - 172.31.0.53
+    extra_hosts:
+      - ${WEBDOMAIN}:${PUBLIC_IPV4}
     healthcheck:
       test: ["CMD-SHELL", "pgrep -x traefik >/dev/null && nc -z 127.0.0.1 80 && nc -z 127.0.0.1 443"]
       interval: 30s
@@ -392,8 +395,13 @@ services:
     image: ghcr.io/legiz-ru/sub2sing-box:latest
     container_name: sub2sing
     restart: unless-stopped
+    extra_hosts:
+      - ${WEBDOMAIN}:${PUBLIC_IPV4}
     networks:
       - traefik-proxy
+      - dns-net
+    # dns:
+    #   - 172.31.0.53
       
 networks:
   traefik-proxy:

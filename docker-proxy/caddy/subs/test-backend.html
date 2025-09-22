@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ru" data-bs-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>sub2sing-box demo</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" crossorigin="anonymous">
+    <style>
+      body { background-color: #1c1d24; color: #f8f9fa; }
+      textarea { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+      code { font-size: .85rem; }
+    </style>
+  </head>
+  <body class="py-5">
+    <main class="container-lg">
+      <section class="mb-4">
+        <h1 class="h3 mb-2">Проверка вызова sub2sing-box</h1>
+        <p class="text-secondary mb-0">Endpoint: <span class="badge bg-info" id="badge-endpoint"></span></p>
+      </section>
+
+      <section class="mb-5">
+        <h2 class="h5 mb-3">1. Конфигурация запроса</h2>
+        <textarea id="payload-input" class="form-control bg-dark text-light mb-3" rows="12"></textarea>
+        <div class="d-flex gap-3">
+          <button id="run-demo" class="btn btn-primary">Выполнить запрос</button>
+          <button id="reset-payload" class="btn btn-outline-secondary">Вернуть пример</button>
+        </div>
+        <div id="payload-error" class="text-danger small mt-2 d-none"></div>
+      </section>
+
+      <section class="mb-5">
+        <h2 class="h5 mb-3">2. Отправленный запрос</h2>
+        <div class="card bg-dark border-secondary">
+          <div class="card-body small">
+            <p class="mb-1">Относительный URL: <code id="request-relative">—</code></p>
+            <p class="mb-1">Полный URL: <code id="request-absolute">—</code></p>
+            <p class="mb-0">Base64 payload: <code id="request-base64">—</code></p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="h5 mb-3">3. Ответ сервера</h2>
+        <div class="card bg-dark border-secondary">
+          <div class="card-body small">
+            <p class="mb-2">Статус: <span id="response-status">—</span> · Время: <span id="response-latency">—</span></p>
+            <pre id="response-body" class="bg-black text-white p-3 rounded" style="min-height: 9rem;">—</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        const URI_SUB_PATH_RAW = '{{env "URI_SUB_PATH"}}';
+        const URI_JSON_PATH_RAW = '{{env "URI_JSON_PATH"}}';
+        const URI_TEST_RAW = '{{env "URI_TEST"}}';
+        const WEBDOMAIN = '{{env "WEBDOMAIN"}}';
+
+        const norm = s => '/' + String(s || '').replace(/^\/|\/$/g, '');
+        const strip = s => String(s || '').replace(/^\/|\/$/g, '');
+
+        const URI_SUB_PATH = norm(URI_SUB_PATH_RAW);
+        const URI_JSON_PATH = norm(URI_JSON_PATH_RAW || URI_SUB_PATH_RAW);
+        const URI_TEST = norm(URI_TEST_RAW || URI_SUB_PATH_RAW);
+        const origin = window.location.origin || `https://${WEBDOMAIN}`;
+        const endpointRelative = `${URI_TEST}/convert`;
+
+        document.getElementById('badge-endpoint').textContent = endpointRelative;
+
+        const segments = window.location.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+        const fromQuery = new URLSearchParams(window.location.search).get('name');
+        let subscriptionId = fromQuery ? decodeURIComponent(fromQuery) : '';
+
+        const resolveFromNeedle = needle => {
+          if (subscriptionId || !needle) return;
+          const idx = segments.indexOf(needle);
+          if (idx !== -1 && segments[idx + 1]) {
+            subscriptionId = decodeURIComponent(segments[idx + 1]);
+          }
+        };
+
+        resolveFromNeedle(strip(URI_JSON_PATH));
+        resolveFromNeedle(strip(URI_SUB_PATH));
+
+        if (!subscriptionId && segments.length) {
+          const last = segments[segments.length - 1];
+          if (last !== strip(URI_JSON_PATH) && last !== strip(URI_SUB_PATH) && last !== strip(URI_TEST)) {
+            subscriptionId = decodeURIComponent(last);
+          }
+        }
+
+        if (!subscriptionId) {
+          subscriptionId = 'demo-user';
+        }
+
+        const subscriptionUrl = `${origin}${URI_SUB_PATH}/${encodeURIComponent(subscriptionId)}`;
+
+        const payloadInput = document.getElementById('payload-input');
+        const errorBox = document.getElementById('payload-error');
+        const requestRelative = document.getElementById('request-relative');
+        const requestAbsolute = document.getElementById('request-absolute');
+        const requestBase64 = document.getElementById('request-base64');
+        const responseStatus = document.getElementById('response-status');
+        const responseLatency = document.getElementById('response-latency');
+        const responseBody = document.getElementById('response-body');
+        const runButton = document.getElementById('run-demo');
+        const resetButton = document.getElementById('reset-payload');
+
+        const defaultPayload = () => ({
+          subscription: [subscriptionUrl],
+          proxy: [],
+          delete: '',
+          template: '',
+          rename: {},
+          'group-type': 'selector',
+          sort: 'tag',
+          'sort-type': 'asc'
+        });
+
+        function loadDefaultPayload() {
+          payloadInput.value = JSON.stringify(defaultPayload(), null, 2);
+          errorBox.classList.add('d-none');
+        }
+
+        function toBase64Url(str) {
+          return btoa(str)
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_');
+        }
+
+        async function runDemo() {
+          errorBox.classList.add('d-none');
+          let body;
+          try {
+            body = JSON.parse(payloadInput.value);
+          } catch (err) {
+            errorBox.textContent = `Некорректный JSON: ${err.message}`;
+            errorBox.classList.remove('d-none');
+            return;
+          }
+
+          const payloadString = JSON.stringify(body);
+          const payloadBase64 = toBase64Url(payloadString);
+          const relativeUrl = `${endpointRelative}?data=${encodeURIComponent(payloadBase64)}`;
+          const absoluteUrl = `${origin}${relativeUrl}`;
+
+          requestRelative.textContent = relativeUrl;
+          requestAbsolute.textContent = absoluteUrl;
+          requestBase64.textContent = payloadBase64;
+
+          runButton.disabled = true;
+          responseStatus.textContent = 'запрос…';
+          responseLatency.textContent = '—';
+          responseBody.textContent = '—';
+
+          const started = performance.now();
+          try {
+            const res = await fetch(relativeUrl, { headers: { Accept: 'application/json' } });
+            const duration = performance.now() - started;
+            const text = await res.text();
+
+            responseStatus.textContent = `${res.status} ${res.statusText || ''}`.trim();
+            responseLatency.textContent = `${duration.toFixed(1)} ms`;
+            responseBody.textContent = text || '(пустой ответ)';
+          } catch (err) {
+            responseStatus.textContent = 'ошибка';
+            responseLatency.textContent = '—';
+            responseBody.textContent = String(err);
+          } finally {
+            runButton.disabled = false;
+          }
+        }
+
+        runButton.addEventListener('click', runDemo);
+        resetButton.addEventListener('click', loadDefaultPayload);
+        loadDefaultPayload();
+      })();
+    </script>
+  </body>
+</html>

@@ -11,7 +11,7 @@
 		<link rel="stylesheet" id="dynamic-stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" crossorigin="anonymous">
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 		<script>
-document.addEventListener("DOMContentLoaded", function () {
+		document.addEventListener("DOMContentLoaded", function () {
             toggleCustomTemplateInput();
         });
 
@@ -21,11 +21,13 @@ document.addEventListener("DOMContentLoaded", function () {
             customTemplateInput.style.display = templateSelect === "custom" ? "block" : "none";
         }
 
-		function opensingbox() {            var username = getSubscriptionId();
+		function opensingbox() {
+            var urlParams = new URLSearchParams(window.location.search);
+			var username = urlParams.get("name") || "first";
             var templateSelect = document.getElementById("templateSelect").value;
             var customTemplateUrl = document.getElementById("customTemplateUrl").value.trim();
             var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
-            var subUrl = "https://${CANON}${URI_JSON_PATH}" + encodeURIComponent(username);
+            var subUrl = "https://${DOMAIN}/${SUB_PATH}/" + encodeURIComponent(username);
 
             var jsonData = {
                 "subscription": [subUrl],
@@ -44,11 +46,13 @@ document.addEventListener("DOMContentLoaded", function () {
             window.open(fullUrl);
         }
 
-		function copySingboxLink() {            var username = getSubscriptionId();
+		function copySingboxLink() {
+            var urlParams = new URLSearchParams(window.location.search);
+			var username = urlParams.get("name") || "first";
             var templateSelect = document.getElementById("templateSelect").value;
             var customTemplateUrl = document.getElementById("customTemplateUrl").value.trim();
             var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
-            var subUrl = "https://${CANON}${URI_JSON_PATH}" + encodeURIComponent(username);
+            var subUrl = "https://${DOMAIN}/${SUB_PATH}/" + encodeURIComponent(username);
 
             var jsonData = {
                 "subscription": [subUrl],
@@ -74,46 +78,20 @@ document.addEventListener("DOMContentLoaded", function () {
         
 
         
-            // ---- ENV/paths & username from path ----
-            const WEBDOMAIN = '{{env "WEBDOMAIN"}}';
-            const URI_TEST_RAW = '{{env "URI_TEST"}}';
-            const URI_JSON_PATH_RAW = '{{env "URI_JSON_PATH"}}';
-            const SUB_JSON_PATH_RAW = '{{env "SUB_JSON_PATH"}}';
-
-            const norm = s => ('/' + String(s || '').replace(/^\/|\/$/g, ''));
-            const URI_TEST = norm(URI_TEST_RAW);
-            const URI_JSON_PATH = norm(URI_JSON_PATH_RAW || URI_TEST_RAW);
-            const SUB_JSON_PATH = SUB_JSON_PATH_RAW ? norm(SUB_JSON_PATH_RAW) : '';
-
-            function getSubscriptionId() {
-              const q = new URLSearchParams(window.location.search);
-              const fromQuery = q.get('name');
-              const segments = window.location.pathname.replace(/\/+$/,'').split('/').filter(Boolean);
-              const needle = URI_TEST.replace(/^\/|\/$/g, '');
-              let id = null;
-
-              const iTest = segments.indexOf(needle);
-              if (iTest !== -1 && segments[iTest + 1] && segments[iTest + 1] !== 'clashmeta') {
-                id = segments[iTest + 1];
-              }
-
-              if (!id) {
-                const iClash = segments.indexOf('clashmeta');
-                if (iClash !== -1 && segments[iClash + 1]) {
-                  id = segments[iClash + 1];
-                }
-              }
-
-              return decodeURIComponent(id || fromQuery || 'first');
-            }
-            const username = getSubscriptionId();
+            var urlParams = new URLSearchParams(window.location.search);
+			var username = urlParams.get("name") || "first";
 			var Base64={_keyStr:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",encode:function(e){var t="";var n,r,i,s,o,u,a;var f=0;e=Base64._utf8_encode(e);while(f<e.length){n=e.charCodeAt(f++);r=e.charCodeAt(f++);i=e.charCodeAt(f++);s=n>>2;o=(n&3)<<4|r>>4;u=(r&15)<<2|i>>6;a=i&63;if(isNaN(r)){u=a=64}else if(isNaN(i)){a=64}t=t+this._keyStr.charAt(s)+this._keyStr.charAt(o)+this._keyStr.charAt(u)+this._keyStr.charAt(a)}return t},decode:function(e){var t="";var n,r,i;var s,o,u,a;var f=0;e=e.replace(/[^A-Za-z0-9\+\/\=]/g,"");while(f<e.length){s=this._keyStr.indexOf(e.charAt(f++));o=this._keyStr.indexOf(e.charAt(f++));u=this._keyStr.indexOf(e.charAt(f++));a=this._keyStr.indexOf(e.charAt(f++));n=s<<2|o>>4;r=(o&15)<<4|u>>2;i=(u&3)<<6|a;t=t+String.fromCharCode(n);if(u!=64){t=t+String.fromCharCode(r)}if(a!=64){t=t+String.fromCharCode(i)}}t=Base64._utf8_decode(t);return t},_utf8_encode:function(e){e=e.replace(/\r\n/g,"\n");var t="";for(var n=0;n<e.length;n++){var r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r)}else if(r>127&&r<2048){t+=String.fromCharCode(r>>6|192);t+=String.fromCharCode(r&63|128)}else{t+=String.fromCharCode(r>>12|224);t+=String.fromCharCode(r>>6&63|128);t+=String.fromCharCode(r&63|128)}}return t},_utf8_decode:function(e){var t="";var n=0;var r=c1=c2=0;while(n<e.length){r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r);n++}else if(r>191&&r<224){c2=e.charCodeAt(n+1);t+=String.fromCharCode((r&31)<<6|c2&63);n+=2}else{c2=e.charCodeAt(n+1);c3=e.charCodeAt(n+2);t+=String.fromCharCode((r&15)<<12|(c2&63)<<6|c3&63);n+=3}}return t}}
-			// Canonical links (не зависят от текущего pathname)
-			const CANON = `https://${WEBDOMAIN}`;
-			const linkFull       = `${CANON}${URI_TEST}/${encodeURIComponent(username)}`;
-			const linkFullBase64 = `${CANON}${URI_JSON_PATH}/${encodeURIComponent(username)}`;
-			const linkFullXRAY   = SUB_JSON_PATH ? `${CANON}${SUB_JSON_PATH}/${encodeURIComponent(username)}` : '';
-			const linkFullClash  = `${CANON}${URI_TEST}/clashmeta/${encodeURIComponent(username)}`;
+			// Determine base URL using window.location.origin and window.location.pathname
+			let basePath = window.location.pathname;
+			// Remove trailing slash if exists
+			if (basePath.endsWith("/")) {
+				basePath = basePath.slice(0, -1);
+			}
+			const baseURL = window.location.origin + basePath;
+			const linkFull = `${baseURL}?name=${username}`;
+			const linkFullBase64 = `https://${DOMAIN}/${SUB_PATH}/${username}`;
+			const linkFullXRAY = `https://${DOMAIN}/${SUB_JSON_PATH}/${username}`;
+			const linkFullClash = `${baseURL}/clashmeta/${username}`;
 			var qrLink = linkFull;
 			const link64 = Base64.encode(linkFullBase64);
 			
@@ -139,14 +117,7 @@ document.addEventListener("DOMContentLoaded", function () {
 				document.getElementById("href-windows-invisibleman").href = `invxray://subscription/${linkFullXRAY}`;
 				document.getElementById("href-windows-clashvergerev").href = `clash://install-config/?url=${linkFullClash}`;
 				document.getElementById("href-linux-clashvergerev").href = `clash://install-config/?url=${linkFullClash}`;
-
-				// Заполнить data-link для блока "Отдельные конфиги"
-				document.querySelectorAll('[data-link-target="base64"]').forEach(el => el.dataset.link = linkFullBase64);
-				if (linkFullXRAY) {
-					document.querySelectorAll('[data-link-target="xray"]').forEach(el => el.dataset.link = linkFullXRAY);
-				}
-				document.querySelectorAll('[data-link-target="clash"]').forEach(el => el.dataset.link = linkFullClash);
-
+				
 				// Happ routing deeplinks
 				document.getElementById("href-ios-happ-RoscomVPN").href = `https://routing.vpn.ru.com/`;
 				document.getElementById("href-ios-happ-ReFilter").href = `happ://routing/onadd/ewogICAgIk5hbWUiOiAiUmU6ZmlsdGVyIiwKICAgICJHbG9iYWxQcm94eSI6ICJmYWxzZSIsCiAgICAiUmVtb3RlRG5zIjogIjEuMS4xLjEiLAogICAgIkRvbWVzdGljRG5zIjogIjc3Ljg4LjguOCIsCiAgICAiR2VvaXB1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9pcC5kYXQiLAogICAgIkdlb3NpdGV1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9zaXRlLmRhdCIsCiAgICAiRG5zSG9zdHMiOiB7fSwKICAgICJEaXJlY3RTaXRlcyI6IFtdLAogICAgIkRpcmVjdElwIjogWwogICAgICAgICIxMC4wLjAuMC84IiwKICAgICAgICAiMTcyLjE2LjAuMC8xMiIsCiAgICAgICAgIjE5Mi4xNjguMC4wLzE2IiwKICAgICAgICAiMTY5LjI1NC4wLjAvMTYiLAogICAgICAgICIyMjQuMC4wLjAvNCIsCiAgICAgICAgIjI1NS4yNTUuMjU1LjI1NSIKICAgIF0sCiAgICAiUHJveHlTaXRlcyI6IFsKICAgICAgICAiZ2Vvc2l0ZTpyZWZpbHRlciIKICAgIF0sCiAgICAiUHJveHlJcCI6IFsKICAgICAgICAiZ2VvaXA6cmVmaWx0ZXIiCiAgICBdLAogICAgIkJsb2NrU2l0ZXMiOiBbXSwKICAgICJCbG9ja0lwIjogW10sCiAgICAiRG9tYWluU3RyYXRlZ3kiOiAiSVBPbkRlbWFuZCIKfQ==`;
@@ -160,9 +131,9 @@ document.addEventListener("DOMContentLoaded", function () {
 		</script>
 		<style>
                   /* Скрываем поле ввода кастомного шаблона по умолчанию */
-		#customTemplateInput {
-			display: none;
-		}
+      #customTemplateWrapper {
+        display: none;
+      }
 			.my-block {
 				padding: 1rem;
 				padding-top: 0.5rem;
@@ -505,7 +476,7 @@ document.addEventListener("DOMContentLoaded", function () {
 						{% set date = (user.expire | datetime).split()[0].split('-')[::-1] %}
 						<span class="fw-semibold">
 							<span x-text="$t('until')"></span>
-							{{"{{ '.'.join(date) }}"}}
+							{{ '.'.join(date) }}
 						</span>
 						{% endif %}
 					</div>
@@ -515,11 +486,11 @@ document.addEventListener("DOMContentLoaded", function () {
 						<i class="bi my-color-blue fs-4 mb-3 bi-arrow-down-up"></i>
 						<span class="fs-5 fw-bold" x-text="$t('traffic')"></span>
 						<span class="fw-semibold">
-							{{"{{ user.used_traffic | bytesformat }}"}}
+							{{ user.used_traffic | bytesformat }}
 							<span x-text="$t('of')"></span>
 							{% if not user.data_limit %}∞{% else %}
-							{{"{{ user.data_limit | bytesformat }}"}}
-							{{"{% endif %}"}}
+							{{ user.data_limit | bytesformat }}
+							{% endif %}
 						</span>
 					</div>
 				</div>
@@ -1286,28 +1257,28 @@ document.addEventListener("DOMContentLoaded", function () {
 							<p x-text="$t('separateLinks1')"></p>
 							<div class="input-group input-group-lg border border-0 text-bg-dark rounded-4 mb-3">    
 								<input class="form-control my-link-separate border border-0 ps-4" type="text" x-bind:value="$t('x_ui_pro_base64')" disabled readonly>
-								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" data-link-target="base64">
+								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="linkFullBase64">
 									<i class="bi bi-clipboard2-fill"></i>
 								</button>
-								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" data-link-target="base64">
+								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="linkFullBase64">
 									<svg class="bi"><use href="#qr"></use></svg>
 								</button>
 							</div>
 							<div class="input-group input-group-lg border border-0 text-bg-dark rounded-4 mb-3">    
 								<input class="form-control my-link-separate border border-0 ps-4" type="text" x-bind:value="$t('x_ui_pro_xray_json')" disabled readonly>
-								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" data-link-target="xray">
+								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="linkFullXRAY">
 									<i class="bi bi-clipboard2-fill"></i>
 								</button>
-								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" data-link-target="xray">
+								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="linkFullXRAY">
 									<svg class="bi"><use href="#qr"></use></svg>
 								</button>
 							</div>
 							<div class="input-group input-group-lg border border-0 text-bg-dark rounded-4 mb-3">    
 								<input class="form-control my-link-separate border border-0 ps-4" type="text" x-bind:value="$t('x_ui_pro_clashmeta')" disabled readonly>
-								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" data-link-target="clash">
+								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="linkFullClash">
 									<i class="bi bi-clipboard2-fill"></i>
 								</button>
-								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" data-link-target="clash">
+								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="linkFullClash">
 									<svg class="bi"><use href="#qr"></use></svg>
 								</button>
 							</div>
@@ -2021,8 +1992,8 @@ document.addEventListener("DOMContentLoaded", function () {
 					qrLink = linkFull;
 					qrCode.clear();
 					qrCode.makeCode(qrLink);
-					const subscriptionTitle = MESSAGES[getPreferredLanguage()]['subscription'];
-					qrModalLabel.textContent = subscriptionTitle;
+					subscriptionTitle = MESSAGES[getPreferredLanguage()]['subscription'];
+					qrModalLabel.setAttribute('x-text', `'${subscriptionTitle}'`);
 				});
 				
 				// --- Separate servers links block start ---
@@ -2080,7 +2051,7 @@ document.addEventListener("DOMContentLoaded", function () {
 						
 						// Change QR modal header to server name
 						if (qrModalLabel) {
-							qrModalLabel.textContent = name || '';
+							qrModalLabel.setAttribute('x-text', `'${name}'`);
 						}
 					});
 				});
@@ -2138,6 +2109,3 @@ document.addEventListener("DOMContentLoaded", function () {
 		</script>
 	</body>
 </html>
-
-
-

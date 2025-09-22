@@ -197,6 +197,8 @@ create_xhttp_inbound() {
     )
     stream_json=$(
         jq -nc --arg path "$xhttp_path" \
+               --arg host "$WEBDOMAIN" \
+               --argjson sockopt "$sockopt_json" \
                --argjson sockopt "$sockopt_json" \
                --argjson externalProxy "$external_proxy_json" '
         {
@@ -206,8 +208,23 @@ create_xhttp_inbound() {
           sockopt: $sockopt,
           xhttpSettings: {
             path: $path,
-            host: "",
-            headers: {},
+            host: $host,
+            "headers": {
+            "X-Content-Type-Options": "nosniff",
+            "X-XSS-Protection": "1; mode=block",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Access-Control-Allow-Origin": "https://${WEBDOMAIN}",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Origin, Content-Type, Accept",
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+            "Access-Control-Max-Age": "600",
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
+            "Server": ""
+          },
             scMaxBufferedPosts: 30,
             scMaxEachPostBytes: "1000000",
             scStreamUpServerSecs: "20-80",
@@ -480,3 +497,4 @@ check_inbound_exists() {
         printf ''
     fi
 }
+
