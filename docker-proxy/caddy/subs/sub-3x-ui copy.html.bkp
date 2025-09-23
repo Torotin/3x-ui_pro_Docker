@@ -11,129 +11,181 @@
 		<link rel="stylesheet" id="dynamic-stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" crossorigin="anonymous">
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 		<script>
-document.addEventListener("DOMContentLoaded", function () {
-            toggleCustomTemplateInput();
-        });
+			document.addEventListener("DOMContentLoaded", function () {
+				vars();
+				toggleCustomTemplateInput();
+				setHrefs();
+			});
 
-        function toggleCustomTemplateInput() {
-            var templateSelect = document.getElementById("templateSelect").value;
-            var customTemplateInput = document.getElementById("customTemplateInput");
-            customTemplateInput.style.display = templateSelect === "custom" ? "block" : "none";
-        }
-
-		function opensingbox() {
-            var urlParams = new URLSearchParams(window.location.search);
-			var username = urlParams.get("name") || "first";
-            var templateSelect = document.getElementById("templateSelect").value;
-            var customTemplateUrl = document.getElementById("customTemplateUrl").value.trim();
-            var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
-            var subUrl = "https://{{env "WEBDOMAIN"}}{{env "URI_JSON_PATH"}}/" + encodeURIComponent(username);
-
-            var jsonData = {
-                "subscription": [subUrl],
-                "proxy": [],
-                "delete": "XHTTP",
-                "template": templateUrl,
-                "rename": {},
-                "group-type": "selector",
-                "sort": "tag",
-                "sort-type": "asc"
-            };
-
-            var sub2sbbase64 = btoa(JSON.stringify(jsonData));
-            var sub2sb = "sing-box://import-remote-profile/?url=https://sub.legiz.ru/convert?data=";
-            var fullUrl = sub2sb + sub2sbbase64 + "#" + encodeURIComponent(username);
-            window.open(fullUrl);
-        }
-
-		function copySingboxLink() {
-            var urlParams = new URLSearchParams(window.location.search);
-			var username = urlParams.get("name") || "first";
-            var templateSelect = document.getElementById("templateSelect").value;
-            var customTemplateUrl = document.getElementById("customTemplateUrl").value.trim();
-            var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
-            var subUrl = "https://{{env "WEBDOMAIN"}}{{env "URI_JSON_PATH"}}/" + encodeURIComponent(username);
-
-            var jsonData = {
-                "subscription": [subUrl],
-                "proxy": [],
-                "delete": "XHTTP",
-                "template": templateUrl,
-                "rename": {},
-                "group-type": "selector",
-                "sort": "tag",
-                "sort-type": "asc"
-            };
-
-            var sub2sbbase64 = btoa(JSON.stringify(jsonData));
-            var sub2sb = "https://sub.legiz.ru/convert?data=";
-            var sbUrl = sub2sb + sub2sbbase64;
-
-            navigator.clipboard.writeText(sbUrl).then(function () {
-                alert("Ссылка скопирована в буфер обмена!");
-            }, function (err) {
-                alert("Ошибка копирования: " + err);
-            });
-        }
-        
-
-        
-            var urlParams = new URLSearchParams(window.location.search);
-			var username = urlParams.get("name") || "first";
-			var Base64={_keyStr:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",encode:function(e){var t="";var n,r,i,s,o,u,a;var f=0;e=Base64._utf8_encode(e);while(f<e.length){n=e.charCodeAt(f++);r=e.charCodeAt(f++);i=e.charCodeAt(f++);s=n>>2;o=(n&3)<<4|r>>4;u=(r&15)<<2|i>>6;a=i&63;if(isNaN(r)){u=a=64}else if(isNaN(i)){a=64}t=t+this._keyStr.charAt(s)+this._keyStr.charAt(o)+this._keyStr.charAt(u)+this._keyStr.charAt(a)}return t},decode:function(e){var t="";var n,r,i;var s,o,u,a;var f=0;e=e.replace(/[^A-Za-z0-9\+\/\=]/g,"");while(f<e.length){s=this._keyStr.indexOf(e.charAt(f++));o=this._keyStr.indexOf(e.charAt(f++));u=this._keyStr.indexOf(e.charAt(f++));a=this._keyStr.indexOf(e.charAt(f++));n=s<<2|o>>4;r=(o&15)<<4|u>>2;i=(u&3)<<6|a;t=t+String.fromCharCode(n);if(u!=64){t=t+String.fromCharCode(r)}if(a!=64){t=t+String.fromCharCode(i)}}t=Base64._utf8_decode(t);return t},_utf8_encode:function(e){e=e.replace(/\r\n/g,"\n");var t="";for(var n=0;n<e.length;n++){var r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r)}else if(r>127&&r<2048){t+=String.fromCharCode(r>>6|192);t+=String.fromCharCode(r&63|128)}else{t+=String.fromCharCode(r>>12|224);t+=String.fromCharCode(r>>6&63|128);t+=String.fromCharCode(r&63|128)}}return t},_utf8_decode:function(e){var t="";var n=0;var r=c1=c2=0;while(n<e.length){r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r);n++}else if(r>191&&r<224){c2=e.charCodeAt(n+1);t+=String.fromCharCode((r&31)<<6|c2&63);n+=2}else{c2=e.charCodeAt(n+1);c3=e.charCodeAt(n+2);t+=String.fromCharCode((r&15)<<12|(c2&63)<<6|c3&63);n+=3}}return t}}
-			// Determine base URL using window.location.origin and window.location.pathname
-			let basePath = window.location.pathname;
-			// Remove trailing slash if exists
-			if (basePath.endsWith("/")) {
-				basePath = basePath.slice(0, -1);
+			function toggleCustomTemplateInput() {
+				var templateSelect = document.getElementById("templateSelect").value;
+				var customTemplateInput = document.getElementById("customTemplateInput");
+				if (customTemplateInput) {
+				customTemplateInput.style.display = templateSelect === "custom" ? "block" : "none";
+				}
 			}
-			const baseURL = window.location.origin + basePath;
-			const linkFull = `${baseURL}?name=${username}`;
-			const linkFullBase64 = `https://{{env "WEBDOMAIN"}}{{env "URI_JSON_PATH"}}/${username}`;
-			const linkFullXRAY = `https://{{env "WEBDOMAIN"}}/${SUB_JSON_PATH}/${username}`;
-			const linkFullClash = `${baseURL}/clashmeta/${username}`;
-			var qrLink = linkFull;
-			const link64 = Base64.encode(linkFullBase64);
-			
-			// Change "sub" to other string to customize subscription group name when import in app (works in some apps)
-			const serviceName = "sub";
-			
-			function setHrefs() {
-				// Apps deeplinks
-				document.getElementById("href-ios-hiddify").href = `hiddify://import/${linkFullBase64}`;
-				document.getElementById("href-ios-streisand").href = `streisand://import/${linkFullXRAY}`;
-				// document.getElementById("href-ios-foxray").href = `foxray://yiguo.dev/sub/add/?url=${link64}#` + serviceName;
-				// document.getElementById("href-ios-v2box").href = `v2box://install-sub?url=${linkFull}&name=` + serviceName;
-				// document.getElementById("href-ios-shadowrocket").href = `sub://${link64}`;
-				// document.getElementById("href-ios-singbox").href = `sing-box://import-remote-profile?url=${linkFullSB}#` + serviceName;
-				document.getElementById("href-ios-happ").href = `happ://add/${linkFullBase64}`;
-				document.getElementById("href-android-hiddify").href = `hiddify://import/${linkFullBase64}`;
-				document.getElementById("href-android-v2rayng").href = `v2rayng://install-config?url=${linkFullXRAY}&name=` + serviceName;
-				// document.getElementById("href-android-v2raytun").href = `v2raytun://import/${linkFull}#` + serviceName;
-				document.getElementById("href-android-cmfa").href = `clash://install-config/?url=${linkFullClash}`;
-				// document.getElementById("href-android-singbox").href = `sing-box://import-remote-profile?url=${linkFullSB}#` + serviceName;
-				document.getElementById("href-android-happ").href = `happ://add/${linkFullBase64}`;
-				document.getElementById("href-windows-hiddify").href = `hiddify://import/${linkFullBase64}`;
-				document.getElementById("href-windows-invisibleman").href = `invxray://subscription/${linkFullXRAY}`;
-				document.getElementById("href-windows-clashvergerev").href = `clash://install-config/?url=${linkFullClash}`;
-				document.getElementById("href-linux-clashvergerev").href = `clash://install-config/?url=${linkFullClash}`;
-				
-				// Happ routing deeplinks
-				document.getElementById("href-ios-happ-RoscomVPN").href = `https://routing.vpn.ru.com/`;
-				document.getElementById("href-ios-happ-ReFilter").href = `happ://routing/onadd/ewogICAgIk5hbWUiOiAiUmU6ZmlsdGVyIiwKICAgICJHbG9iYWxQcm94eSI6ICJmYWxzZSIsCiAgICAiUmVtb3RlRG5zIjogIjEuMS4xLjEiLAogICAgIkRvbWVzdGljRG5zIjogIjc3Ljg4LjguOCIsCiAgICAiR2VvaXB1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9pcC5kYXQiLAogICAgIkdlb3NpdGV1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9zaXRlLmRhdCIsCiAgICAiRG5zSG9zdHMiOiB7fSwKICAgICJEaXJlY3RTaXRlcyI6IFtdLAogICAgIkRpcmVjdElwIjogWwogICAgICAgICIxMC4wLjAuMC84IiwKICAgICAgICAiMTcyLjE2LjAuMC8xMiIsCiAgICAgICAgIjE5Mi4xNjguMC4wLzE2IiwKICAgICAgICAiMTY5LjI1NC4wLjAvMTYiLAogICAgICAgICIyMjQuMC4wLjAvNCIsCiAgICAgICAgIjI1NS4yNTUuMjU1LjI1NSIKICAgIF0sCiAgICAiUHJveHlTaXRlcyI6IFsKICAgICAgICAiZ2Vvc2l0ZTpyZWZpbHRlciIKICAgIF0sCiAgICAiUHJveHlJcCI6IFsKICAgICAgICAiZ2VvaXA6cmVmaWx0ZXIiCiAgICBdLAogICAgIkJsb2NrU2l0ZXMiOiBbXSwKICAgICJCbG9ja0lwIjogW10sCiAgICAiRG9tYWluU3RyYXRlZ3kiOiAiSVBPbkRlbWFuZCIKfQ==`;
-				document.getElementById("href-android-happ-RoscomVPN").href = `https://routing.vpn.ru.com/`;
-				document.getElementById("href-android-happ-ReFilter").href = `happ://routing/onadd/ewogICAgIk5hbWUiOiAiUmU6ZmlsdGVyIiwKICAgICJHbG9iYWxQcm94eSI6ICJmYWxzZSIsCiAgICAiUmVtb3RlRG5zIjogIjEuMS4xLjEiLAogICAgIkRvbWVzdGljRG5zIjogIjc3Ljg4LjguOCIsCiAgICAiR2VvaXB1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9pcC5kYXQiLAogICAgIkdlb3NpdGV1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9zaXRlLmRhdCIsCiAgICAiRG5zSG9zdHMiOiB7fSwKICAgICJEaXJlY3RTaXRlcyI6IFtdLAogICAgIkRpcmVjdElwIjogWwogICAgICAgICIxMC4wLjAuMC84IiwKICAgICAgICAiMTcyLjE2LjAuMC8xMiIsCiAgICAgICAgIjE5Mi4xNjguMC4wLzE2IiwKICAgICAgICAiMTY5LjI1NC4wLjAvMTYiLAogICAgICAgICIyMjQuMC4wLjAvNCIsCiAgICAgICAgIjI1NS4yNTUuMjU1LjI1NSIKICAgIF0sCiAgICAiUHJveHlTaXRlcyI6IFsKICAgICAgICAiZ2Vvc2l0ZTpyZWZpbHRlciIKICAgIF0sCiAgICAiUHJveHlJcCI6IFsKICAgICAgICAiZ2VvaXA6cmVmaWx0ZXIiCiAgICBdLAogICAgIkJsb2NrU2l0ZXMiOiBbXSwKICAgICJCbG9ja0lwIjogW10sCiAgICAiRG9tYWluU3RyYXRlZ3kiOiAiSVBPbkRlbWFuZCIKfQ==`;
 
-				// Change support and donate links below
-				document.getElementById("href-support").href = `https://t.me/gozargah_marzban`;
-				document.getElementById("href-donate").href = `https://github.com/Gozargah/Marzban#donation`;
+			function vars() {
+				const URI_SUB_PATH_RAW = '{{env "URI_SUB_PATH"}}';
+				const URI_JSON_PATH_RAW = '{{env "URI_JSON_PATH"}}';
+				const URI_SUB2SING_RAW = '{{env "URI_SUB2SING"}}';
+				const WEBDOMAIN = '{{env "WEBDOMAIN"}}';
+
+				const norm = s => '/' + String(s || '').replace(/^\/|\/$/g, '');
+				const strip = s => String(s || '').replace(/^\/|\/$/g, '');
+
+				const URI_SUB_PATH = norm(URI_SUB_PATH_RAW);
+				const URI_JSON_PATH = norm(URI_JSON_PATH_RAW || URI_SUB_PATH_RAW);
+				const URI_SUB2SING = norm(URI_SUB2SING_RAW || URI_SUB_PATH_RAW);
+
+				const origin = window.location.origin || `https://${WEBDOMAIN}`;
+				const endpointRelative = `${URI_SUB2SING}/convert`;
+
+				const badge = document.getElementById('badge-endpoint');
+				if (badge) badge.textContent = endpointRelative;
+
+				const segments = window.location.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+				const fromQuery = new URLSearchParams(window.location.search).get('name');
+				let subscriptionId = fromQuery ? decodeURIComponent(fromQuery) : '';
+
+				const resolveFromNeedle = needle => {
+				if (subscriptionId || !needle) return;
+				const idx = segments.indexOf(needle);
+				if (idx !== -1 && segments[idx + 1]) {
+					subscriptionId = decodeURIComponent(segments[idx + 1]);
+				}
+				};
+
+				resolveFromNeedle(strip(URI_JSON_PATH));
+				resolveFromNeedle(strip(URI_SUB_PATH));
+
+				if (!subscriptionId && segments.length) {
+				const last = segments[segments.length - 1];
+				if (last !== strip(URI_JSON_PATH) && last !== strip(URI_SUB_PATH) && last !== strip(URI_SUB2SING)) {
+					subscriptionId = decodeURIComponent(last);
+				}
+				}
+				if (!subscriptionId) subscriptionId = 'subscription-uri-here';
+
+				const subscriptionUrl = `${origin}${URI_SUB_PATH}/${encodeURIComponent(subscriptionId)}`;
+
+				const urlParams = new URLSearchParams(window.location.search);
+				const username = urlParams.get("name") || "first";
+
+				let basePath = window.location.pathname;
+				if (basePath.endsWith("/")) basePath = basePath.slice(0, -1);
+				const baseURL = window.location.origin + basePath;
+
+				const linkFull       = `${baseURL}?name=${encodeURIComponent(username)}`;
+				const linkFullBase64 = `https://${WEBDOMAIN}${URI_SUB_PATH}/${encodeURIComponent(username)}`;
+				const linkFullXRAY   = `https://${WEBDOMAIN}${URI_JSON_PATH}/${encodeURIComponent(username)}`;
+				const linkFullClash  = `${baseURL}/clashmeta/${encodeURIComponent(username)}`;
+				const link64         = btoa(linkFullBase64); // заменили кастом на btoa
+				const qrLink         = linkFull;
+
+				const serviceName = "sub";
+
+				window.appVars = {
+				WEBDOMAIN, URI_SUB_PATH, URI_JSON_PATH, URI_SUB2SING,
+				origin, endpointRelative,
+				subscriptionId, subscriptionUrl,
+				username, baseURL, linkFull, linkFullBase64, linkFullXRAY, linkFullClash, link64, qrLink, serviceName
+				};
+			}
+
+			function opensingbox() {
+				var v = window.appVars;
+
+				var templateSelect = document.getElementById("templateSelect").value;
+				var customTemplateUrl = (document.getElementById("customTemplateUrl").value || "").trim();
+				var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
+
+				var subUrl = `https://${v.WEBDOMAIN}${v.URI_SUB_PATH}/` + encodeURIComponent(v.username);
+
+				var jsonData = {
+				"subscription": [subUrl],
+				"proxy": [],
+				"delete": "XHTTP",
+				"template": templateUrl,
+				"rename": {},
+				"group-type": "selector",
+				"sort": "tag",
+				"sort-type": "asc"
+				};
+
+				var sub2sbbase64 = btoa(JSON.stringify(jsonData)); // btoa вместо кастомного
+				var sub2sb = `sing-box://import-remote-profile/?url=https://${v.WEBDOMAIN}${v.URI_SUB2SING}/convert?data=`;
+				var fullUrl = sub2sb + sub2sbbase64 + "#" + encodeURIComponent(v.username);
+				window.open(fullUrl);
+			}
+
+			function copySingboxLink() {
+				var v = window.appVars;
+
+				var templateSelect = document.getElementById("templateSelect").value;
+				var customTemplateUrl = (document.getElementById("customTemplateUrl").value || "").trim();
+				var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
+
+				var subUrl = `https://${v.WEBDOMAIN}${v.URI_SUB_PATH}/` + encodeURIComponent(v.username);
+
+				var jsonData = {
+				"subscription": [subUrl],
+				"proxy": [],
+				"delete": "XHTTP",
+				"template": templateUrl,
+				"rename": {},
+				"group-type": "selector",
+				"sort": "tag",
+				"sort-type": "asc"
+				};
+
+				var sub2sbbase64 = btoa(JSON.stringify(jsonData)); // btoa
+				var sub2sb = `https://${v.WEBDOMAIN}${v.URI_SUB2SING}/convert?data=`;
+				var sbUrl = sub2sb + sub2sbbase64;
+
+				navigator.clipboard.writeText(sbUrl).then(function () {
+				alert("Ссылка скопирована в буфер обмена!");
+				}, function (err) {
+				alert("Ошибка копирования: " + err);
+				});
+			}
+
+			function setHrefs() {
+				var v = window.appVars;
+				if (!v) return;
+
+				// Apps deeplinks
+				var el;
+				(el = document.getElementById("href-ios-hiddify")) && (el.href = `hiddify://import/${v.linkFullBase64}`);
+				(el = document.getElementById("href-ios-streisand")) && (el.href = `streisand://import/${v.linkFullXRAY}`);
+				(el = document.getElementById("href-ios-happ")) && (el.href = `happ://add/${v.linkFullBase64}`);
+
+				(el = document.getElementById("href-android-hiddify")) && (el.href = `hiddify://import/${v.linkFullBase64}`);
+				(el = document.getElementById("href-android-v2rayng")) && (el.href = `v2rayng://install-config?url=${v.linkFullXRAY}&name=${v.serviceName}`);
+				(el = document.getElementById("href-android-cmfa")) && (el.href = `clash://install-config/?url=${v.linkFullClash}`);
+				(el = document.getElementById("href-android-happ")) && (el.href = `happ://add/${v.linkFullBase64}`);
+
+				(el = document.getElementById("href-windows-hiddify")) && (el.href = `hiddify://import/${v.linkFullBase64}`);
+				(el = document.getElementById("href-windows-invisibleman")) && (el.href = `invxray://subscription/${v.linkFullXRAY}`);
+				(el = document.getElementById("href-windows-clashvergerev")) && (el.href = `clash://install-config/?url=${v.linkFullClash}`);
+				(el = document.getElementById("href-linux-clashvergerev")) && (el.href = `clash://install-config/?url=${v.linkFullClash}`);
+
+
+				// Happ routing deeplinks (как в исходнике)
+				(el = document.getElementById("href-ios-happ-RoscomVPN")) && (el.href = `https://routing.vpn.ru.com/`);
+				(el = document.getElementById("href-ios-happ-ReFilter")) && (el.href =
+				`happ://routing/onadd/ewogICAgIk5hbWUiOiAiUmU6ZmlsdGVyIiwKICAgICJHbG9iYWxQcm94eSI6ICJmYWxzZSIsCiAgICAiUmVtb3RlRG5zIjogIjEuMS4xLjEiLAogICAgIkRvbWVzdGljRG5zIjogIjc3Ljg4LjguOCIsCiAgICAiR2VvaXB1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9pcC5kYXQiLAogICAgIkdlb3NpdGV1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9zaXRlLmRhdCIsCiAgICAiRG5zSG9zdHMiOiB7fSwKICAgICJEaXJlY3RTaXRlcyI6IFtdLAogICAgIkRpcmVjdElwIjogWwogICAgICAgICIxMC4wLjAuMC84IiwKICAgICAgICAiMTcyLjE2LjAuMC8xMiIsCiAgICAgICAgIjE5Mi4xNjguMC4wLzE2IiwKICAgICAgICAiMTY5LjI1NC4wLjAvMTYiLAogICAgICAgICIyMjQuMC4wLjAvNCIsCiAgICAgICAgIjI1NS4yNTUuMjU1LjI1NSIKICAgIF0sCiAgICAiUHJveHlTaXRlcyI6IFsKICAgICAgICAiZ2Vvc2l0ZTpyZWZpbHRlciIKICAgIF0sCiAgICAiUHJveHlJcCI6IFsKICAgICAgICAiZ2VvaXA6cmVmaWx0ZXIiCiAgICBdLAogICAgIkJsb2NrU2l0ZXMiOiBbXSwKICAgICJCbG9ja0lwIjogW10sCiAgICAiRG9tYWluU3RyYXRlZ3kiOiAiSVBPbkRlbWFuZCIKfQ==`);
+				(el = document.getElementById("href-android-happ-RoscomVPN")) && (el.href = `https://routing.vpn.ru.com/`);
+				(el = document.getElementById("href-android-happ-ReFilter")) && (el.href =
+				`happ://routing/onadd/ewogICAgIk5hbWUiOiAiUmU6ZmlsdGVyIiwKICAgICJHbG9iYWxQcm94eSI6ICJmYWxzZSIsCiAgICAiUmVtb3RlRG5zIjogIjEuMS4xLjEiLAogICAgIkRvbWVzdGljRG5zIjogIjc3Ljg4LjguOCIsCiAgICAiR2VvaXB1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9pcC5kYXQiLAogICAgIkdlb3NpdGV1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tLzFhbmRyZXZpY2gvUmUtZmlsdGVyLWxpc3RzL3JlbGVhc2VzL2xhdGVzdC9kb3dubG9hZC9nZW9zaXRlLmRhdCIsCiAgICAiRG5zSG9zdHMiOiB7fSwKICAgICJEaXJlY3RTaXRlcyI6IFtdLAogICAgIkRpcmVjdElwIjogWwogICAgICAgICIxMC4wLjAuMC84IiwKICAgICAgICAiMTcyLjE2LjAuMC8xMiIsCiAgICAgICAgIjE5Mi4xNjguMC4wLzE2IiwKICAgICAgICAiMTY5LjI1NC4wLjAvMTYiLAogICAgICAgICIyMjQuMC4wLjAvNCIsCiAgICAgICAgIjI1NS4yNTUuMjU1LjI1NSIKICAgIF0sCiAgICAiUHJveHlTaXRlcyI6IFsKICAgICAgICAiZ2Vvc2l0ZTpyZWZpbHRlciIKICAgIF0sCiAgICAiUHJveHlJcCI6IFsKICAgICAgICAiZ2VvaXA6cmVmaWx0ZXIiCiAgICBdLAogICAgIkJsb2NrU2l0ZXMiOiBbXSwKICAgICJCbG9ja0lwIjogW10sCiAgICAiRG9tYWluU3RyYXRlZ3kiOiAiSVBPbkRlbWFuZCIKfQ==`);
 			}
 		</script>
+
 		<style>
-                  /* Скрываем поле ввода кастомного шаблона по умолчанию */
-      #customTemplateWrapper {
-        display: none;
-      }
+			/* Скрываем поле ввода кастомного шаблона по умолчанию */
+			#customTemplateWrapper {
+				display: none;
+			}
 			.my-block {
 				padding: 1rem;
 				padding-top: 0.5rem;
@@ -1257,28 +1309,28 @@ document.addEventListener("DOMContentLoaded", function () {
 							<p x-text="$t('separateLinks1')"></p>
 							<div class="input-group input-group-lg border border-0 text-bg-dark rounded-4 mb-3">    
 								<input class="form-control my-link-separate border border-0 ps-4" type="text" x-bind:value="$t('x_ui_pro_base64')" disabled readonly>
-								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="linkFullBase64">
+								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="v.linkFullBase64">
 									<i class="bi bi-clipboard2-fill"></i>
 								</button>
-								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="linkFullBase64">
+								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="v.linkFullBase64">
 									<svg class="bi"><use href="#qr"></use></svg>
 								</button>
 							</div>
 							<div class="input-group input-group-lg border border-0 text-bg-dark rounded-4 mb-3">    
 								<input class="form-control my-link-separate border border-0 ps-4" type="text" x-bind:value="$t('x_ui_pro_xray_json')" disabled readonly>
-								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="linkFullXRAY">
+								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="v.linkFullXRAY">
 									<i class="bi bi-clipboard2-fill"></i>
 								</button>
-								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="linkFullXRAY">
+								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="v.linkFullXRAY">
 									<svg class="bi"><use href="#qr"></use></svg>
 								</button>
 							</div>
 							<div class="input-group input-group-lg border border-0 text-bg-dark rounded-4 mb-3">    
 								<input class="form-control my-link-separate border border-0 ps-4" type="text" x-bind:value="$t('x_ui_pro_clashmeta')" disabled readonly>
-								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="linkFullClash">
+								<button class="btn my-btn btn-copy-link fs-5 mt-2 mb-2 rounded-3 pb-2 pt-1" :data-link="v.linkFullClash">
 									<i class="bi bi-clipboard2-fill"></i>
 								</button>
-								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="linkFullClash">
+								<button class="btn my-btn btn-show-qr m-2 rounded-3" id="btn-show-qr" data-bs-toggle="modal" data-bs-target="#qrModal" data-ignore="true" :data-link="v.linkFullClash">
 									<svg class="bi"><use href="#qr"></use></svg>
 								</button>
 							</div>
@@ -2107,5 +2159,5 @@ document.addEventListener("DOMContentLoaded", function () {
 				}
 			});
 		</script>
-	</body>
+	</body
 </html>

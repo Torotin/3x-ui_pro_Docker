@@ -54,7 +54,7 @@
       (function () {
         const URI_SUB_PATH_RAW = '{{env "URI_SUB_PATH"}}';
         const URI_JSON_PATH_RAW = '{{env "URI_JSON_PATH"}}';
-        const URI_TEST_RAW = '{{env "URI_TEST"}}';
+        const URI_SUB2SING_RAW = '{{env "URI_SUB2SING"}}';
         const WEBDOMAIN = '{{env "WEBDOMAIN"}}';
 
         const norm = s => '/' + String(s || '').replace(/^\/|\/$/g, '');
@@ -62,9 +62,9 @@
 
         const URI_SUB_PATH = norm(URI_SUB_PATH_RAW);
         const URI_JSON_PATH = norm(URI_JSON_PATH_RAW || URI_SUB_PATH_RAW);
-        const URI_TEST = norm(URI_TEST_RAW || URI_SUB_PATH_RAW);
+        const URI_SUB2SING = norm(URI_SUB2SING_RAW || URI_SUB_PATH_RAW);
         const origin = window.location.origin || `https://${WEBDOMAIN}`;
-        const endpointRelative = `${URI_TEST}/convert`;
+        const endpointRelative = `${URI_SUB2SING}/convert`;
 
         document.getElementById('badge-endpoint').textContent = endpointRelative;
 
@@ -85,13 +85,13 @@
 
         if (!subscriptionId && segments.length) {
           const last = segments[segments.length - 1];
-          if (last !== strip(URI_JSON_PATH) && last !== strip(URI_SUB_PATH) && last !== strip(URI_TEST)) {
+          if (last !== strip(URI_JSON_PATH) && last !== strip(URI_SUB_PATH) && last !== strip(URI_SUB2SING)) {
             subscriptionId = decodeURIComponent(last);
           }
         }
 
         if (!subscriptionId) {
-          subscriptionId = 'demo-user';
+          subscriptionId = 'subscription-uri-here';
         }
 
         const subscriptionUrl = `${origin}${URI_SUB_PATH}/${encodeURIComponent(subscriptionId)}`;

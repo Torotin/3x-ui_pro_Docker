@@ -9,17 +9,17 @@ http:
           - url: "http://sub2sing:8080"
 
     # Caddy web frontend (serves subscription UI)
-    caddy-web-svc:
+    caddy-sub2singbox:
       loadBalancer:
         servers:
-          - url: "http://caddy:${PORT_TEST}"
+          - url: "http://caddy:${PORT_LOCAL_SUB2SING}"
 
   middlewares:
     # Strip leading prefixes before forwarding to sub2sing-box
     strip-sub2sing-prefix:
       stripPrefix:
         prefixes:
-          - "/${URI_TEST}"
+          - "/${URI_SUB2SING}"
           - "${URI_JSON_PATH}"
 
     # Basic security headers
@@ -41,7 +41,7 @@ http:
       rule: Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
       priority: 100
       entryPoints: [websecure]
-      service: caddy-web-svc
+      service: caddy-sub2singbox
       middlewares:
         - security-headers
       tls:
@@ -49,7 +49,7 @@ http:
 
     # ---- sub2sing-box (base64/API subscribers) ----
     sub2singbox-router:
-      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TEST}/`)
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_SUB2SING}/`)
       entryPoints: [websecure]
       service: sub2singbox-svc
       middlewares:
@@ -57,14 +57,15 @@ http:
         - security-headers
       tls:
         certResolver: le
+      priority: 98
 
     # ---- Web frontend on Caddy:${PORT_TEST} ----
     clashmeta-router:
-      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TEST}/clashmeta/`)
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_SUB2SING}/clashmeta/`)
       entryPoints: [websecure]
-      service: caddy-web-svc
+      service: caddy-sub2singbox
       middlewares:
         - security-headers
       tls:
         certResolver: le
-
+      priority: 99

@@ -287,6 +287,48 @@ docker_create_network() {
         || { log "ERROR" "Failed to create network '$name'"; exit 1; }
 }
 
+docker_compose_restart() {
+  local env_file="${DOCKER_ENV_FILE:?DOCKER_ENV_FILE is not set}"
+  local compose_file="${DOCKER_COMPOSE_FILE:?DOCKER_COMPOSE_FILE is not set}"
+
+  log "INFO" "Restarting Docker stack using compose file '$compose_file' and env '$env_file'"
+
+  if [[ ! -f "$compose_file" ]]; then
+    log "ERROR" "Compose file not found: $compose_file"
+    return 1
+  fi
+  if ! command -v docker &>/dev/null; then
+    log "ERROR" "docker not found in PATH"
+    return 1
+  fi
+
+  # Корректно останавливаем и чистим orphans
+  if ! docker compose --env-file "$env_file" -f "$compose_file" down --remove-orphans; then
+    log "ERROR" "docker compose down failed"
+    return 1
+  else
+    log "INFO" "docker compose down succeeded"
+  fi
+
+  # Не обязательно, но полезно: подтянуть обновления образов (можно убрать, если не нужно)
+  log "INFO" "Pulling latest images..."
+  if ! docker compose --env-file "$env_file" -f "$compose_file" pull --quiet; then
+    log "WARN" "docker compose pull failed — продолжаю без обновления образов"
+  else
+    log "INFO" "docker compose pull succeeded"
+  fi
+
+  # Поднимаем стек заново
+  log "INFO" "Starting Docker stack using compose file '$compose_file' and env '$env_file'"
+  if docker compose --env-file "$env_file" -f "$compose_file" up -d --force-recreate; then
+    log "OK" "Docker stack restarted"
+    return 0
+  else
+    log "ERROR" "docker compose up failed"
+    return 1
+  fi
+}
+
 # --- Docker Compose Helpers ---
 docker_compose_generate() {
     local target_file="${1:-$DOCKER_COMPOSE_FILE}"

@@ -2,7 +2,7 @@
 # ./install.sh — Main installation script
 
 # === Parameters and Variables ===
-LOGLEVEL="DEBUG"
+LOGLEVEL="INFO"  # ERROR, WARN, INFO, DEBUG
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(realpath "$0")")"
 LIB_DIR="$SCRIPT_DIR/modules"
@@ -113,45 +113,76 @@ log() {
 
 # === Exit Handling ===
 reset_permissions() {
-  log "INFO" "Resetting ownership and permissions for '$PROJECT_ROOT'"
+  local TARGET_DIR="$1"
+  local TARGET_USER="${2:-}"
+  local rc=0
 
-  # Change ownership if USER_SSH exists
-  if [[ -n "${USER_SSH:-}" ]] && id -u "$USER_SSH" &>/dev/null; then
-    # Determine group: prefer group with the same name, else use primary group
-    if getent group "$USER_SSH" &>/dev/null; then
-      if chown -R "$USER_SSH:$USER_SSH" "$PROJECT_ROOT"; then
-        log "INFO" "Ownership set to $USER_SSH:$USER_SSH"
-      else
-        log "ERROR" "Failed to set ownership to $USER_SSH:$USER_SSH"
-        return 1
-      fi
-    else
-      MAIN_GROUP="$(id -gn "$USER_SSH")"
-      if chown -R "$USER_SSH:$MAIN_GROUP" "$PROJECT_ROOT"; then
-        log "INFO" "Ownership set to $USER_SSH:$MAIN_GROUP (primary group)"
-      else
-        log "ERROR" "Failed to set ownership to $USER_SSH:$MAIN_GROUP"
-        return 1
-      fi
-    fi
-  else
-    log "WARN" "User '$USER_SSH' not found. Ownership not changed."
+  log "INFO" "Resetting ownership and permissions for '$TARGET_DIR' (user: ${TARGET_USER:-<none>})"
+
+  # Валидация
+  if [[ -z "$TARGET_DIR" || ! -e "$TARGET_DIR" || ! -d "$TARGET_DIR" ]]; then
+    log "ERROR" "Target directory is invalid: '$TARGET_DIR'"
+    return 1
   fi
-
-  # Set safe permissions: rw for owner, rX for group/others
-  if chmod -R u=rwX,go=rX "$PROJECT_ROOT"; then
-    log "INFO" "Permissions reset to u=rwX,go=rX for '$PROJECT_ROOT'"
-  else
-    log "ERROR" "Failed to reset permissions for '$PROJECT_ROOT'"
+  if [[ "$TARGET_DIR" == "/" ]]; then
+    log "ERROR" "Refusing to operate on root '/'"
     return 1
   fi
 
-  log "OK" "Ownership and permissions successfully reset for '$PROJECT_ROOT'"
-  return 0
+  # Пытаемся сменить владельца (если пользователь указан и существует)
+  if [[ -n "$TARGET_USER" ]] && id -u "$TARGET_USER" &>/dev/null; then
+    local MAIN_GROUP
+    if getent group "$TARGET_USER" &>/dev/null; then
+      MAIN_GROUP="$TARGET_USER"
+    else
+      MAIN_GROUP="$(id -gn "$TARGET_USER")"
+    fi
+
+    if chown -hR -- "$TARGET_USER:$MAIN_GROUP" "$TARGET_DIR"; then
+      log "INFO" "Ownership set to $TARGET_USER:$MAIN_GROUP"
+    else
+      log "ERROR" "Failed to set ownership to $TARGET_USER:$MAIN_GROUP"
+      rc=1
+    fi
+  else
+    if [[ -n "$TARGET_USER" ]]; then
+      log "WARN" "User '$TARGET_USER' not found. Ownership not changed."
+      rc=1
+    else
+      log "INFO" "No user provided. Ownership not changed."
+    fi
+  fi
+
+  # Права применяем ВСЕГДА, вне зависимости от результата chown
+  if chmod -R u=rwX,go=rX -- "$TARGET_DIR"; then
+    log "INFO" "Permissions reset to u=rwX,go=rX for '$TARGET_DIR'"
+  else
+    log "ERROR" "Failed to reset permissions for '$TARGET_DIR'"
+    rc=1
+  fi
+
+  # Итог
+  if (( rc == 0 )); then
+    log "OK" "Ownership and permissions successfully reset for '$TARGET_DIR'"
+  else
+    log "WARN" "Completed with warnings/errors. See log above."
+  fi
+  return $rc
+}
+
+# Обёртка для применения к двум каталогам
+reset_all_permissions() {
+  local target_user="${1:-$USER_SSH}"
+  local rc=0
+
+  reset_permissions "$SCRIPT_DIR" "$target_user" || rc=1
+  reset_permissions "$DOCKER_DIR" "$target_user" || rc=1
+
+  return $rc
 }
 
 exit_script() {
-  if reset_permissions; then
+  if reset_all_permissions "$USER_SSH"; then
     log "INFO" "Script completed."
     exit 0
   else
@@ -163,14 +194,14 @@ exit_script() {
 exit_error() {
   # $1 = error message
   log "ERROR" "${1:-Unknown error}"
-  if ! reset_permissions; then
+  if ! reset_all_permissions "$USER_SSH"; then
     log "WARN" "Reset permissions failed during error exit."
   fi
   exit 1
 }
 
 reboot_system() {
-  # Ask for confirmation with timeout
+  # Подтверждение с таймаутом
   read -r -t 10 -p "Reboot now? [y/N] (auto-cancel in 10s): " answer || {
     log "INFO" "Timeout reached, reboot canceled."
     return 0
@@ -178,7 +209,7 @@ reboot_system() {
 
   case "$answer" in
     [yY]|[yY][eE][sS])
-      if ! reset_permissions; then
+      if ! reset_all_permissions "$USER_SSH"; then
         log "WARN" "Proceeding to reboot despite failing to reset permissions."
       fi
       log "INFO" "Rebooting..."
@@ -389,7 +420,7 @@ initialize_script() {
   envfile_script
   yq_install
   type check_required_commands &>/dev/null || exit_error "Missing function: check_required_commands (module not loaded?)"
-  reset_permissions
+  reset_all_permissions
 }
 
 initialize_script
