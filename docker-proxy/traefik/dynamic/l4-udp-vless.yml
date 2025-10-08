@@ -1,8 +1,9 @@
-# /templates/l4-udp-forward.yml
+# /templates/l4-udp-forward.yml - ОТКЛЮЧЕНО
+# UDP/QUIC не используется в данной конфигурации
 udp:
   routers:
     vless-xhttp:
-      entryPoints: [l4udp]                     # :443/udp
+      entryPoints: [l4udp]                  # :443/udp
       service: vless-xhttp-svc
 
   services:

@@ -1,24 +1,17 @@
+# templates/adguard.yml (оптимизированная версия)
 http:
-  routers:
-    adguard-panel:
-      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_PANEL}`)"
-      service: "adguard-panel"
-      entryPoints:
-        - "websecure"
-      middlewares:
-        - strip-adguard-prefix
-        - redirect-adguard-panel
-      tls:
-        certResolver: le
-      priority: 1000
-
   services:
     adguard-panel:
       loadBalancer:
         servers:
           - url: "http://adguard:80"
+        healthCheck:
+          path: "/"
+          interval: "30s"
+          timeout: "5s"
 
   middlewares:
+    # Оптимизированный middleware для AdGuard
     redirect-adguard-panel:
       plugin:
         traefik-plugin-rewrite-headers:
@@ -32,3 +25,41 @@ http:
         prefixes:
           - "/${URI_ADGUARD_PANEL}"
           - "/${URI_ADGUARD_FIRST}"
+
+    # Специальные заголовки для AdGuard
+    adguard-headers:
+      headers:
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: false
+        referrerPolicy: "no-referrer-when-downgrade"
+        customResponseHeaders:
+          X-Frame-Options: "SAMEORIGIN"
+          Cross-Origin-Opener-Policy: "same-origin"
+          Cross-Origin-Resource-Policy: "same-origin"
+          server: ""
+          X-Powered-By: ""
+          Cache-Control: "no-cache, no-store, must-revalidate"
+          Pragma: "no-cache"
+          Expires: "0"
+
+    # Цепочка для AdGuard
+    adguard-chain:
+      chain:
+        middlewares:
+          - adguard-headers@file
+          - strip-adguard-prefix@file
+          - redirect-adguard-panel@file
+          - compress@file
+
+  routers:
+    adguard-panel:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_PANEL}`)"
+      service: "adguard-panel"
+      entryPoints:
+        - "websecure"
+      middlewares:
+        - adguard-chain@file
+      tls:
+        certResolver: le
+      priority: 1000

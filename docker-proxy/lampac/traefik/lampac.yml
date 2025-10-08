@@ -1,191 +1,274 @@
+# /dynamic/lampac.yml (оптимизированная версия)
+
 http:
   routers:
+    # CORS preflight - оптимизированный
     lampac-preflight:
       rule: "Host(`${WEBDOMAIN}`) && Method(`OPTIONS`)"
       entryPoints:
         - websecure
       middlewares:
-        - lampac-cors-response
+        - lampac-unified-headers@file
       service: noop@internal
-      priority: 100
+      priority: 1000
 
+    # API proxy endpoints
     lampac-proxy:
       rule: "Host(`${WEBDOMAIN}`) && (PathPrefix(`/proxy/`) || PathPrefix(`/proxy-dash/`))"
-      service: lampac-service-failover
+      service: lampac-service@file
       entryPoints:
         - websecure
       tls:
         certResolver: le
       middlewares:
-        - lampac-headers
-        - lampac-buffering
-        - lampac-cors-response   # CORS для реальных запросов
-        - lampac-proxy-headers   # если нужны доп. request-заголовки
-        - lampac-security
-      priority: 90
+        - lampac-unified-chain@file
+      priority: 900
 
+    # JavaScript файлы
     lampac-scripts:
       rule: "Host(`${WEBDOMAIN}`) && PathRegexp(`^/(.*)\\.js$`) && !PathRegexp(`^/.+/js/.+$`)"
-      service: lampac-service-failover
+      service: lampac-service@file
       entryPoints:
         - websecure
       tls:
         certResolver: le
       middlewares:
-        - lampac-headers
-        - lampac-scripts-cache   # длинный кэш для версионированных js
-        - lampac-security
-      priority: 80
+        - lampac-unified-chain@file
+      priority: 800
 
+    # Изображения
     lampac-images:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/proxyimg`)"
-      service: lampac-service-failover
+      service: lampac-service@file
       entryPoints:
         - websecure
       tls:
         certResolver: le
       middlewares:
-        - lampac-headers
-        - lampac-image-headers
-        - lampac-security
-      priority: 70
+        - lampac-unified-chain@file
+      priority: 700
 
+    # WebSocket - упрощенный
     lampac-websocket:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/ws`)"
-      service: lampac-service-failover
+      service: lampac-service@file
       entryPoints:
         - websecure
       tls:
         certResolver: le
       middlewares:
-        - lampac-headers
-        - lampac-security
-      priority: 60
+        - lampac-unified-chain@file
+      priority: 600
 
-    lampac-main:
-      rule: "Host(`${WEBDOMAIN}`)"
-      service: lampac-service-failover
+    # Native WebSocket - упрощенный
+    lampac-nws:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/nws`)"
+      service: lampac-service@file
       entryPoints:
         - websecure
       tls:
         certResolver: le
       middlewares:
-        - lampac-headers
-        - lampac-security
-      priority: 50
+        - lampac-unified-chain@file
+      priority: 650
+
+    # SignalR Hub - упрощенный
+    lampac-signalr:
+      rule: "Host(`${WEBDOMAIN}`) && (PathPrefix(`/hub`) || PathPrefix(`/signalr`) || PathPrefix(`/hubs`))"
+      service: lampac-service@file
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - lampac-unified-chain@file
+      priority: 700
+
+    # CUB Proxy
+    lampac-cub:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/cub/`)"
+      service: lampac-service@file
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - lampac-unified-chain@file
+      priority: 750
+
+    # TMDB Proxy
+    lampac-tmdb:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/tmdb/`)"
+      service: lampac-service@file
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - lampac-unified-chain@file
+      priority: 750
+
+    # GitHub Proxy для обхода CORS
+    lampac-github:
+      rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/github/`)"
+      service: github-proxy@file
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - lampac-github-headers@file
+      priority: 750
+
+    # Основное приложение - исключаем пути 3x-ui и xhttp
+    lampac-main:
+      rule: "Host(`${WEBDOMAIN}`) && !PathPrefix(`/${URI_PANEL_PATH}`) && !PathPrefix(`${URI_SUB_PATH}`) && !PathPrefix(`${URI_JSON_PATH}`) && !PathPrefix(`${URI_VLESS_XHTTP}`)"
+      service: lampac-service@file
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - lampac-unified-chain@file
+      priority: 500
 
   services:
+    # Основной сервис Lampac - оптимизированный
     lampac-service:
       loadBalancer:
         passHostHeader: true
         servers:
           - url: "http://lampac:9118"
         healthCheck:
-          path: /ping
-          interval: "10s"
-          timeout: "3s"
+          path: "/ping"
+          interval: "15s"
+          timeout: "5s"
+        # Улучшенная буферизация (интегрирована в middleware)
+        # buffering настройки теперь в lampac-buffering middleware
 
-    lampac-service-failover:
-      failover:
-        service: lampac-service
-        fallback: caddy-error@file
+    # GitHub прокси сервис
+    github-proxy:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "https://api.github.com"
 
   middlewares:
-    lampac-headers:  
-      headers:  
-        # --- TLS / HSTS ---  
-        sslRedirect: true  
-        stsSeconds: 63072000  
-        stsIncludeSubdomains: true  
-        stsPreload: true  
-  
-        # --- MIME & XSS ---  
-        contentTypeNosniff: true  
-        browserXssFilter: true  
-  
-        # --- Clickjacking (более мягкая политика для Lampac) ---  
-        frameDeny: false  
- 
-        # --- Referrer policy (совместимо с Lampac) ---  
-        referrerPolicy: "no-referrer-when-downgrade"  
-  
-        # --- Отключаем встроенные CORS (полагаемся на Lampac) ---  
-        # accessControlAllowOriginList: []  
-        # accessControlAllowMethods: []  
-        # accessControlAllowHeaders: []  
-  
-        customResponseHeaders:  
+    # Оптимизированные цепочки middleware для разных типов контента
+    
+    # Единая цепочка для всех типов контента
+    lampac-unified-chain:
+      chain:
+        middlewares:
+          - lampac-unified-headers@file
+          - lampac-circuit-breaker@file
+          - lampac-rate-limit@file
+          - compress@file
+
+    # Единый middleware для всех заголовков
+    lampac-unified-headers:
+      headers:
+        # TLS / HSTS
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+
+        # MIME & XSS
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: false
+        referrerPolicy: "no-referrer-when-downgrade"
+
+        # Единые заголовки для всех типов контента
+        customResponseHeaders:
+          # Безопасность
           X-Frame-Options: "SAMEORIGIN"
-          # Безопасность  
-          Cross-Origin-Opener-Policy: "same-origin"  
-          Cross-Origin-Resource-Policy: "same-origin"  
-          Permissions-Policy: "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"  
-            
-          # Убираем server header  
-          server: ""  
-            
-          # Дополнительная защита  
-          X-Content-Type-Options: "nosniff"  
+          X-Content-Type-Options: "nosniff"
           X-XSS-Protection: "1; mode=block"
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          
+          # CORS для всех запросов
+          Access-Control-Allow-Origin: "*"
+          Access-Control-Allow-Methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"
+          Access-Control-Allow-Headers: "Accept, Origin, Content-Type, Authorization, X-Requested-With, X-Signalr-User-Agent, Cache-Control, DNT, If-Modified-Since, Keep-Alive, User-Agent, Token, Profile, X-Forwarded-For, X-Forwarded-Proto, X-Real-IP, CF-Connecting-IP, Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Protocol, Sec-WebSocket-Accept, Connection, Upgrade"
+          Access-Control-Allow-Credentials: "true"
+          Access-Control-Allow-Private-Network: "true"
+          Access-Control-Max-Age: "86400"
+          Access-Control-Expose-Headers: "Content-Length, Content-Type, Date, Server, X-Request-ID"
+          
+          # Отключение CSP для полной совместимости
+          # Content-Security-Policy: "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; worker-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *; img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; frame-src *; object-src *; media-src *;"
+          
+          # Принудительное отключение кэширования для CSP
+          Cache-Control: "no-cache, no-store, must-revalidate"
+          Pragma: "no-cache"
+          Expires: "0"
+          Vary: "Accept-Encoding, Origin"
+          
+          # Скрытие информации о сервере
+          server: ""
+          X-Powered-By: ""
 
-    # Для старых/неверсионированных скриптов оставь no-cache, иначе используй это
-    lampac-scripts-cache:
-      headers:
-        customResponseHeaders:
-          Cache-Control: "no-store, must-revalidate, no-cache"
+    # Rate limiting (упрощенный)
+    lampac-rate-limit:
+      rateLimit:
+        burst: 100
+        average: 50
+        period: "1m"
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+            excludedIPs:
+              - "127.0.0.1/32"
+              - "172.16.0.0/12"
+              - "172.18.0.0/16"
+              - "172.20.0.0/16"
 
-    lampac-cache-control:
+    # Circuit breaker - защита от каскадных сбоев
+    lampac-circuit-breaker:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.3 || ResponseCodeRatio(500, 600, 0, 600) > 0.3"
+        checkPeriod: "10s"
+        fallbackDuration: "30s"
+        recoveryDuration: "10s"
+
+    # Специальные заголовки для WebSocket
+    lampac-websocket-headers:
       headers:
+        # Минимальные заголовки для WebSocket
         customResponseHeaders:
+          # CORS для WebSocket
+          Access-Control-Allow-Origin: "*"
+          Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+          Access-Control-Allow-Headers: "Accept, Origin, Content-Type, Authorization, X-Requested-With, Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Protocol, Sec-WebSocket-Accept, Connection, Upgrade"
+          Access-Control-Allow-Credentials: "true"
+          Access-Control-Max-Age: "86400"
+          
+          # WebSocket специфичные заголовки (убраны неправильные заголовки)
+          
+          # Отключение кэширования для WebSocket
           Cache-Control: "no-cache, no-store, must-revalidate"
           Pragma: "no-cache"
           Expires: "0"
 
-    lampac-proxy-headers:
-      headers:
-        customRequestHeaders:
-          X-Forwarded-Proto: "https"
-          X-Forwarded-Timeout: "30s"
-
-    lampac-image-headers:
+    # GitHub прокси заголовки
+    lampac-github-headers:
       headers:
         customResponseHeaders:
-          Cache-Control: "no-store, must-revalidate, no-cache"
-
-    lampac-cors-response:
-      headers:
-        customResponseHeaders:
-          Access-Control-Allow-Origin: "*"  
-          Access-Control-Allow-Methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"  
-          Access-Control-Allow-Headers: "Accept, Origin, Content-Type, Authorization, X-Requested-With, X-Signalr-User-Agent, Cache-Control, DNT, If-Modified-Since, Keep-Alive, User-Agent, Token, Profile"
+          # CORS для GitHub API
+          Access-Control-Allow-Origin: "*"
+          Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+          Access-Control-Allow-Headers: "Accept, Origin, Content-Type, Authorization, X-Requested-With, User-Agent"
           Access-Control-Allow-Credentials: "true"
-          Access-Control-Allow-Private-Network: "true"  
           Access-Control-Max-Age: "86400"
           
+          # GitHub API заголовки
+          X-GitHub-Request-Id: ""
+          X-RateLimit-Limit: ""
+          X-RateLimit-Remaining: ""
+          
+          # Кэширование для GitHub API
+          Cache-Control: "public, max-age=300"
+          Vary: "Accept-Encoding, Origin"
 
-    lampac-security:  
-      headers:  
-        stsSeconds: 31536000  
-        stsIncludeSubdomains: true  
-        stsPreload: true  
-        browserXssFilter: true  
-        contentTypeNosniff: true  
-        frameDeny: false  
-        referrerPolicy: "no-referrer-when-downgrade"
-
-    lampac-buffering:  
-      buffering:  
-        maxRequestBodyBytes: 0  # без ограничений  
-        memRequestBodyBytes: 1048576  # 1MB в памяти  
-        retryExpression: "IsNetworkError() && Attempts() < 3"  
-
-
-# (необязательно) В static config Traefik:
-# tls:
-#   options:
-#     modern:
-#       minVersion: VersionTLS12
-#       sniStrict: true
-# и затем в каждом роутере:
-#   tls:
-#     options: modern@file

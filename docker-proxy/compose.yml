@@ -58,6 +58,7 @@ services:
       - /opt/docker-proxy/_logs:/logs:rw
       - logrotate-status:/logrotate-status
 
+
   crowdsec:
     image: crowdsecurity/crowdsec
     container_name: crowdsec
@@ -65,6 +66,8 @@ services:
     networks:
       - traefik-proxy
       - dns-net
+    # dns:
+    #   - 172.31.0.53
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:7422:7422"
@@ -86,19 +89,19 @@ services:
       BOUNCER_KEY_TRAEFIK: ${CROWDSEC_API_KEY_TRAEFIK}
       BOUNCER_KEY_FIREWALL: ${CROWDSEC_API_KEY_FIREWALL}
     volumes:
-      - crowdsec_config:/etc/crowdsec
-      - crowdsec_data:/var/lib/crowdsec/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/docker-proxy/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml
+      - crowdsec_data:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
       - /var/log:/var/log:ro
       - /opt/docker-proxy/_logs:/var/logs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     security_opt:
       - no-new-privileges=true
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=5 http://localhost:8080/health > /dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 30s
-      retries: 12
+      interval: 30s
+      timeout: 10s
+      retries: 10
       start_period: 10s
 
   crowdsec-firewall-bouncer:
@@ -117,9 +120,9 @@ services:
       API_KEY: ${CROWDSEC_API_KEY_FIREWALL}
       CROWDSEC_API: 127.0.0.1:8080
     volumes:
-      - /etc/localtime:/etc/localtime:ro
-      - /opt/docker-proxy/crowdsec/crowdsec-firewall-bouncer.yaml:/config/crowdsec-firewall-bouncer.yaml:ro
       - /opt/docker-proxy/_logs/crowdsec/firewall-bouncer.log:/var/log/crowdsec-firewall-bouncer.log
+      - /opt/docker-proxy/crowdsec/crowdsec-firewall-bouncer.yaml:/config/crowdsec-firewall-bouncer.yaml:ro
+      - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "pgrep", "-f", "crowdsec-firewall-bouncer"]
@@ -311,7 +314,7 @@ services:
   docker-warp-socks:
     image: ghcr.io/mon-ius/docker-warp-socks:v5
     container_name: warp_socks_v5
-    restart: always
+    restart: unless-stopped
     networks:
       - traefik-proxy
       - dns-net
@@ -385,7 +388,7 @@ services:
     #   - 172.31.0.53
     security_opt:
       - no-new-privileges=true
-
+      
   sub2sing:
     image: ghcr.io/legiz-ru/sub2sing-box:latest
     container_name: sub2sing

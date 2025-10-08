@@ -1,14 +1,24 @@
-# /dynamic/disable-logs.yml
+# /dynamic/disable-logs.yml (оптимизированная версия)
 http:
   middlewares:
+    # No-op middleware для отключения логирования
     disable-logs:
       plugin:
         # no-op middleware, используется только как маркер
         noop: {}
 
-# traefik.yml
-accessLog:
-  filters:
-    # исключить роутер по имени
-    routers:
-      - "!xhttp3xui-l4"
+    # Middleware для отключения access logs
+    no-access-logs:
+      headers:
+        customResponseHeaders:
+          X-Log-Disabled: "true"
+
+# Настройки логирования перенесены в основной traefik.yml
+# accessLog:
+#   filters:
+#     routers:
+#       - "!xhttp3xui-l4"
+#       - "!health-check"
+#       - "!traefik-health"
+#       - "!traefik-ping"
+#       - "!traefik-metrics"

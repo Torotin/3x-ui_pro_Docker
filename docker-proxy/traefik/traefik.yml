@@ -1,4 +1,4 @@
-# traefik.yml — статическая конфигурация
+# traefik.yml — оптимизированная статическая конфигурация
 
 # -------------------
 # Основные секции
@@ -8,14 +8,23 @@ log:
   # filePath: /logs/traefik.log
 
 accessLog:
-  format: "common"
+  format: "json"
   filePath: /logs/access.log
+  filters:
+    statusCodes:
+      - "200-299"
+      - "300-399"
+      - "400-499"
+      - "500-599"
+    retryAttempts: true
+    minDuration: "10ms"
 
 api:
   dashboard: true
+  insecure: false
 
 # -------------------
-# EntryPoints
+# EntryPoints (оптимизированные)
 # -------------------
 entryPoints:
   web:
@@ -24,41 +33,73 @@ entryPoints:
       redirections:
         entryPoint:
           to: websecure
+          scheme: https
           permanent: true
+    transport:
+      respondingTimeouts:
+        readTimeout: 30s
+        writeTimeout: 30s
+        idleTimeout: 180s
 
   websecure:
     address: ":4443"
     http:
       middlewares:
-        - secured-chain@file 
+        - secured-chain@file
+        - rate-limit@file
     transport:
       respondingTimeouts:
-        idleTimeout: 90s
+        readTimeout: 30s
+        writeTimeout: 30s
+        idleTimeout: 180s
     proxyProtocol:
       trustedIPs:
+        - "172.16.0.0/12"
         - "172.18.0.0/16"
-    http3: {}
+        - "172.20.0.0/16"
+    forwardedHeaders:
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "172.16.0.0/12"
+        - "172.18.0.0/16"
+        - "172.20.0.0/16"
+    http3:
+      advertisedPort: 4443
 
   l4tcp:
     address: ":443"
-  l4udp:
+    transport:
+      respondingTimeouts:
+        readTimeout: 30s
+        writeTimeout: 30s
+        idleTimeout: 300s
+
+  l4udp:  
     address: ":443/udp"
+    transport:
+      respondingTimeouts:
+        readTimeout: 30s
+        writeTimeout: 30s
+        idleTimeout: 300s
+
 
 # -------------------
-# Провайдеры
+# Провайдеры (оптимизированные)
 # -------------------
 providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
     network: traefik-proxy
+    watch: true
+    constraints: "tag==traefik"
 
   file:
     directory: /dynamic
     watch: true
 
 # -------------------
-# ACME / Let’s Encrypt
+# ACME / Let's Encrypt (оптимизированный)
 # -------------------
 certificatesResolvers:
   le:
@@ -66,9 +107,11 @@ certificatesResolvers:
       storage: /acme.json
       httpChallenge:
         entryPoint: web
+      keyType: "EC256"
+      preferredChain: "ISRG Root X1"
 
 # -------------------
-# Плагины
+# Плагины (обновленные версии)
 # -------------------
 experimental:
   plugins:

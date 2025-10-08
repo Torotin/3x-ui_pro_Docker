@@ -1,4 +1,4 @@
-# dynamic/caddy.yml
+# dynamic/caddy.yml (оптимизированная версия)
 
 http:
   services:
@@ -12,6 +12,7 @@ http:
           timeout: "2s"
 
   middlewares:
+    # Оптимизированная обработка ошибок
     error-pages:
       errors:
         status:
@@ -19,35 +20,61 @@ http:
         service: caddy-error
         query: "/index.html"
 
+    # Оптимизированный редирект
     redirect-to-caddy:
       plugin:
         traefik-plugin-rewrite-headers:
           rewrites:
-            # https://example.com/foo -> /foo
             - header: "Location"
               regex: "^https?://(${WEBDOMAIN})(/.*)?$"
               replacement: "$2"
-            # На всякий: //example.com/foo -> /foo
             - header: "Location"
               regex: "^//(${WEBDOMAIN})(/.*)?$"
               replacement: "$2"
+
+    # Специальные заголовки для Caddy
+    caddy-headers:
+      headers:
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: false
+        referrerPolicy: "no-referrer-when-downgrade"
+        customResponseHeaders:
+          X-Frame-Options: "SAMEORIGIN"
+          Cross-Origin-Opener-Policy: "same-origin"
+          Cross-Origin-Resource-Policy: "same-origin"
+          server: ""
+          X-Powered-By: ""
+          Cache-Control: "public, max-age=3600"
+
+    # Цепочка для Caddy
+    caddy-chain:
+      chain:
+        middlewares:
+          - caddy-headers@file
+          - error-pages@file
+          - redirect-to-caddy@file
+          - compress@file
               
   routers:
+    # Favicon - оптимизированный
     favicon:
       rule: "Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)"
       entryPoints: [websecure]
+      middlewares:
+        - static-headers@file
       tls:
         certResolver: le
       priority: 1
       service: caddy-error
 
+    # Catch-all роутер - оптимизированный
     catchall:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/`)"
       entryPoints: [websecure]
+      middlewares:
+        - caddy-chain@file
       tls:
         certResolver: le
       priority: -1
-      middlewares:
-        - error-pages
-        - redirect-to-caddy
       service: caddy-error

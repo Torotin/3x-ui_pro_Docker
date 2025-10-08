@@ -13,9 +13,9 @@
         {
           "id": "",
           "title": "Он",
-          "icon": "/profileIcons/id1.png", // иконки для примера
+          "icon": "/profileIcons/id1.png",
           "params": {
-            "surs": true // у этого профиля автоматически будет включен основной источник.
+            "surs": true
           }
         },
         {
@@ -23,8 +23,7 @@
           "title": "Она",
           "icon": "/profileIcons/id2.png",
           "params": {
-            "surs": true // у этого профиля автоматически будет включен основной источник. 
-            // Этот флаг отвечает в целом за автоматическое переключение источника.
+            "surs": true
           }
         },
         {
@@ -32,8 +31,8 @@
           "title": "Ребенок",
           "icon": "/profileIcons/id3.png",
           "params": {
-            "surs": true, // даем понять, что нужно переключать источники.
-            "forKids": true // даем понять, что переключать необходимо на детский вариант.
+            "surs": true,
+            "forKids": true
           }
         },
         {
@@ -42,7 +41,7 @@
           "icon": "/profileIcons/id4.png",
           "params": {
             "surs": true,
-            "forKids": true // даем понять, что переключать необходимо на детский вариант.
+            "forKids": true
           }
         },
         {
@@ -51,7 +50,7 @@
           "icon": "/profileIcons/id5.png",
           "params": {
             "surs": true,
-            "onlyRus": true // даем понять, что переключать необходимо на российские подборки.
+            "onlyRus": true
           }
         }
       ]

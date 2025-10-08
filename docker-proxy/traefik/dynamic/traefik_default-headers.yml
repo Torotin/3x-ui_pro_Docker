@@ -1,25 +1,20 @@
-# /templates/default-headers.yml
+# /templates/traefik_default-headers.yml (DEPRECATED - используйте traefik_optimized-middlewares.yml)
+# Этот файл оставлен для обратной совместимости
+# Новые конфигурации должны использовать middleware из traefik_optimized-middlewares.yml
+
 http:
   middlewares:
+    # Устаревший middleware - используйте security-headers@file
     default-headers:
       headers:
-        # --- TLS / HSTS ---
-        sslRedirect: true                 # redundant if you already redirect web->websecure, but harmless
-        stsSeconds: 63072000              # 2 years
-        stsIncludeSubdomains: true        # be sure ALL subdomains are HTTPS before enabling
+        sslRedirect: true
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
         stsPreload: true
-
-        # --- MIME & XSS ---
         contentTypeNosniff: true
         browserXssFilter: true
-
-        # --- Clickjacking ---
-        frameDeny: true                   # X-Frame-Options: DENY
-
-        # --- Referrer policy ---
+        frameDeny: true
         referrerPolicy: "no-referrer"
-
-        # --- CORS ---
         accessControlAllowOriginList:
           - "https://${WEBDOMAIN}"
         accessControlAllowMethods:
@@ -33,14 +28,8 @@ http:
         accessControlAllowCredentials: true
         addVaryHeader: true
         accessControlMaxAge: 600
-
-        # --- Extra hardening via raw headers (supported through customResponseHeaders) ---
         customResponseHeaders:
-          # COOP / CORP (not exposed as dedicated fields in v3.5.0)
-          Cross-Origin-Opener-Policy: "same-origin"
-          Cross-Origin-Resource-Policy: "same-origin"
-          # Permissions-Policy: disable powerful features by default
+          # Cross-Origin-Opener-Policy: "same-origin"
+          # Cross-Origin-Resource-Policy: "same-origin"
           server: ""
           Permissions-Policy: "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
-          # (Optional) CSP in report-only to avoid breakage while testing
-          # Content-Security-Policy-Report-Only: "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
