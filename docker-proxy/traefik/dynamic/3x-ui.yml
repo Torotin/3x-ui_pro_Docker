@@ -122,7 +122,7 @@ http:
     # XHTTP (plain HTTP) - оптимизированный
     xhttp3xui-l4:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)"
-      entryPoints: [l4tcp, l4udp]
+      entryPoints: [l4tcp]
       # middlewares:
       #   - xhttp-headers@file
       service: xhttp3xui-svc
