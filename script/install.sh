@@ -20,6 +20,38 @@ GITHUB_REPO_OWNER="${REPO_OWNER:-Torotin}"
 GITHUB_REPO_NAME="${REPO_OWNER:-3x-ui_pro_Docker}"
 LOADED_MODULES=()
 
+# Detect which branch the installer was fetched from; fall back to env or main
+detect_github_branch() {
+  local branch candidate src_path
+
+  branch="${REPO_BRANCH:-}"
+  [[ -n "$branch" ]] && { echo "$branch"; return; }
+
+  # Try to parse branch out of the source path (works for raw.githubusercontent.com URLs)
+  src_path="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  if [[ "$src_path" =~ raw\.githubusercontent\.com/[^/]+/[^/]+/([^/]+)/ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return
+  fi
+
+  # If we're inside a git clone, use the current branch; fall back to commit short hash
+  if command -v git >/dev/null 2>&1; then
+    local git_root
+    git_root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$git_root" ]]; then
+      candidate="$(git -C "$git_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+      if [[ -n "$candidate" && "$candidate" != "HEAD" ]]; then
+        echo "$candidate"
+        return
+      fi
+      candidate="$(git -C "$git_root" rev-parse --short HEAD 2>/dev/null || true)"
+      [[ -n "$candidate" ]] && { echo "$candidate"; return; }
+    fi
+  fi
+
+  echo "main"
+}
+
 declare -A required_commands=(
     ["mc"]="mc"
     ["perl"]="perl"
@@ -252,7 +284,7 @@ download_repo_dir() {
   local target="${2:?Local destination path is required}"
   local repo_owner="${GITHUB_REPO_OWNER:?GITHUB_REPO_OWNER is required}"
   local repo_name="${GITHUB_REPO_NAME:?GITHUB_REPO_NAME is required}"
-  local branch="${GITHUB_BRANCH:-main}"
+  local branch="${GITHUB_BRANCH:-$(detect_github_branch)}"
   local auth_token="${GITHUB_TOKEN:-}"
   local repo_url="https://github.com/${repo_owner}/${repo_name}.git"
 
