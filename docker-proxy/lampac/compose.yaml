@@ -60,3 +60,7 @@ networks:
 volumes:
   Lampac_cache:
     driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=5g
