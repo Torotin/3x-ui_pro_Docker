@@ -20,6 +20,26 @@ update_panel_settings() {
         exit 1
     fi
 
+    # Normalize subscription-related values (strip quotes, expand templates)
+    normalize_sub_value() {
+        local name=$1 raw expanded
+        raw=$(eval "printf '%s' \"\${$name:-}\"")
+        case "$raw" in
+            \"*\" ) raw=${raw#\"}; raw=${raw%\"};;
+            \'*\' ) raw=${raw#\'}; raw=${raw%\'};;
+        esac
+        if [ -n "$raw" ]; then
+            expanded=$(eval "printf '%s' \"$raw\"")
+            raw=$expanded
+        fi
+        eval "$name=\$raw"
+    }
+
+    normalize_sub_value subPath
+    normalize_sub_value subJsonPath
+    normalize_sub_value subURI
+    normalize_sub_value subJsonURI
+
     url="$URL_BASE_RESOLVED/panel/setting/update"
     # Собираем параметры --data-urlencode в позиционные параметры через set --
     set --
@@ -39,6 +59,10 @@ update_panel_settings() {
             set -- "$@" "--data-urlencode" "$var=$val"
         fi
     done
+
+    # Логируем, что именно отправляем
+    log INFO "Отправляем запрос на обновление панели: $url"
+    log INFO "Параметры: $(printf '%s ' "$@")"
 
     # Выполняем запрос с накопленными параметрами
     http_request POST "$url" \
@@ -86,4 +110,3 @@ update_admin_credentials() {
         log INFO "NEW_ADMIN_USERNAME/NEW_ADMIN_PASSWORD не заданы. Шаг пропущен."
     fi
 }
-
