@@ -1,0 +1,29 @@
+services:
+  warp:
+    image: caomingjun/warp
+    container_name: warp
+    restart: always
+    networks:
+      - traefik-proxy
+      - dns-net
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+      net.ipv4.conf.all.src_valid_mark: 1
+    environment:
+      - WARP_SLEEP=5
+    # volumes:
+    #   - /opt/docker-proxy/warp/data:/var/lib/cloudflare-warp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    # security_opt:
+    #   - no-new-privileges=true

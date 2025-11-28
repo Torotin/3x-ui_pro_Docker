@@ -1,0 +1,41 @@
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+    depends_on:
+      crowdsec:
+        condition: service_healthy
+      caddy:
+        condition: service_healthy
+      dozzle:
+        condition: service_healthy
+    env_file:
+      - /opt/docker-proxy/.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/docker-proxy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /opt/docker-proxy/traefik/entrypoint.sh:/entrypoint.sh:ro
+      - /opt/docker-proxy/traefik/acme.json:/acme.json
+      - /opt/docker-proxy/traefik/dynamic:/templates:ro
+      - /opt/docker-proxy/_logs/traefik:/logs
+    ports:
+      - "80:80"
+      - "443:443/tcp"
+      - "443:443/udp"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        exec /entrypoint.sh "$@"
+    networks:
+      - traefik-proxy
+      - dns-net
+    # dns:
+    #   - 172.31.0.53
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x traefik >/dev/null && nc -z 127.0.0.1 80 && nc -z 127.0.0.1 443"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

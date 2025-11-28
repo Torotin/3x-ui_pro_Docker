@@ -1,0 +1,16 @@
+services:
+  docker-warp-socks:
+    image: ghcr.io/mon-ius/docker-warp-socks:v5
+    container_name: warp_socks_v5
+    restart: unless-stopped
+    networks:
+      - traefik-proxy
+      - dns-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -x socks5h://127.0.0.1:9091 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges=true
