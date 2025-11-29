@@ -2,29 +2,40 @@
 # Запускает docker compose для всех *.yml/*.yaml в каталоге compose.d (если он есть) или рядом со скриптом (по алфавиту).
 # Логика: 
 # 1) выбираем каталог с файлами (compose.d или текущий);
-# 2) собираем и сортируем файлы compose;
-# 3) выбираем доступную CLI (docker compose или docker-compose);
-# 4) формируем цепочку -f;
-# 5) если аргументы не заданы, используем up -d;
-# 6) перед запуском останавливаем текущий стек (down);
-# 7) делаем до 3 попыток запуска (параметры RETRY_COUNT/RETRY_DELAY);
-# 8) исполняем получившуюся команду.
+# 2) выбираем env-файл (ENV_FILE или .env рядом со скриптом);
+# 3) собираем и сортируем файлы compose;
+# 4) выбираем доступную CLI (docker compose или docker-compose);
+# 5) формируем цепочку --env-file/-f;
+# 6) если аргументы не заданы, используем up -d;
+# 7) поддерживаем перезапуск одного сервиса: restart <service>;
+# 8) перед запуском up останавливаем текущий стек (down);
+# 9) делаем до 3 попыток up (параметры RETRY_COUNT/RETRY_DELAY);
+# 10) исполняем получившуюся команду.
 # Пример итоговой команды:
-#   docker compose -f "/path/compose.d/00 - base.yml" -f "/path/compose.d/01 - watchtower.yml" up -d
+#   docker compose -f "/path/compose.d/00-base.yml" -f "/path/compose.d/01-watchtower.yml" up -d
 # Пример с docker-compose и пользовательскими аргументами:
-#   docker-compose -f "/path/compose.d/00 - base.yml" -f "/path/compose.d/01 - watchtower.yml" ps
+#   docker-compose -f "/path/compose.d/00-base.yml" -f "/path/compose.d/01-watchtower.yml" ps
 # Примеры запуска:
 #   ./run-compose.sh               # up -d с тремя попытками, перед этим down
 #   RETRY_COUNT=5 ./run-compose.sh # up -d с 5 попытками
 #   ./run-compose.sh ps            # любая другая команда выполняется один раз
+#   ENV_FILE=/opt/docker-proxy/.env ./run-compose.sh # указать общий env-файл
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_DIR="$SCRIPT_DIR/compose.d"
 ACTIVE_COMPOSE_DIR="$SCRIPT_DIR"
+ENV_FILE_DEFAULT="$SCRIPT_DIR/.env"
+ENV_FILE_USER_SET=false
+if [[ -n "${ENV_FILE+set}" ]]; then
+  ENV_FILE_USER_SET=true
+fi
+ENV_FILE="${ENV_FILE:-$ENV_FILE_DEFAULT}"
 RETRY_COUNT="${RETRY_COUNT:-3}"
 RETRY_DELAY="${RETRY_DELAY:-5}"
+ENV_ARGS=()
+COMPOSE_BASE_ARGS=()
 
 # Единообразный вывод сообщений в stderr.
 log() {
@@ -68,16 +79,33 @@ build_compose_args() {
   done
 }
 
-# Если запускаем up, предварительно останавливаем стек.
+# Конфигурируем env-файл (ENV_FILE или .env рядом со скриптом).
+configure_env_args() {
+  ENV_ARGS=()
+
+  if [[ -f "$ENV_FILE" ]]; then
+    ENV_ARGS=(--env-file "$ENV_FILE")
+    log "Используем env-файл: $ENV_FILE"
+  elif [[ "$ENV_FILE_USER_SET" == "true" ]]; then
+    log "Указанный env-файл не найден: $ENV_FILE (пропускаем)"
+  fi
+}
+
+# Собираем итоговый набор аргументов (env + compose-файлы).
+build_base_args() {
+  COMPOSE_BASE_ARGS=("${ENV_ARGS[@]}" "${COMPOSE_ARGS[@]}")
+}
+
+# Если запускаем up, предварительно удаляем старые контейнеры (rm --stop --force).
 stop_existing_stack() {
   local primary_cmd="$1"
   if [[ "$primary_cmd" != "up" ]]; then
     return
   fi
 
-  log "Останавливаем стек перед запуском: ${COMPOSE_CMD[*]} ${COMPOSE_ARGS[*]} down"
-  if ! "${COMPOSE_CMD[@]}" "${COMPOSE_ARGS[@]}" down; then
-    log "Предварительный down завершился с ошибкой, продолжаем выполнение"
+  log "Удаляем контейнеры перед запуском (force stop): ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} rm --stop --force"
+  if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" rm --stop --force; then
+    log "Предварительный rm завершился с ошибкой, продолжаем выполнение"
   fi
 }
 
@@ -88,8 +116,8 @@ run_with_retries() {
 
   local attempt
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    log "Попытка ${attempt}/${attempts}: ${COMPOSE_CMD[*]} ${COMPOSE_ARGS[*]} $*"
-    if "${COMPOSE_CMD[@]}" "${COMPOSE_ARGS[@]}" "$@"; then
+    log "Попытка ${attempt}/${attempts}: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} $*"
+    if "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"; then
       return 0
     fi
 
@@ -114,10 +142,36 @@ main() {
 
   pick_compose_command
   build_compose_args
+  configure_env_args
+  build_base_args
 
   # По умолчанию выполняем up -d, если пользователь не передал аргументы.
   if [[ $# -eq 0 ]]; then
     set -- up -d
+  fi
+
+  # Явный down: прокидываем как есть.
+  if [[ "$1" == "down" ]]; then
+    log "Остановка стека: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} $*"
+    exec "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"
+  fi
+
+  # Точный перезапуск одного сервиса без остановки всего стека.
+  if [[ "$1" == "restart" ]]; then
+    if [[ $# -lt 2 ]]; then
+      log "ERROR" "Для restart нужно указать имя сервиса"
+      exit 1
+    fi
+    local svc="$2"
+    log "Перезапуск сервиса через down/up: $svc"
+    if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" down "$svc"; then
+      log "WARN" "Не удалось выполнить down для $svc, продолжаем"
+    fi
+    if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" up -d "$svc"; then
+      exit 1
+    fi
+    log "Показываем логи сервиса $svc (Ctrl+C для выхода)"
+    exec docker logs -f "$svc"
   fi
 
   stop_existing_stack "$1"
@@ -127,8 +181,8 @@ main() {
     exit 0
   fi
 
-  log "Запуск: ${COMPOSE_CMD[*]} ${COMPOSE_ARGS[*]} $*"
-  exec "${COMPOSE_CMD[@]}" "${COMPOSE_ARGS[@]}" "$@"
+  log "Запуск: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} $*"
+  exec "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"
 }
 
 main "$@"

@@ -20,3 +20,5 @@ volumes:
       type: tmpfs
       device: tmpfs
       o: size=5g
+
+# 172.16.0.0/12 172.18.0.0/16 172.20.0.0/16

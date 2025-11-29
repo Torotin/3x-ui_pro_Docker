@@ -37,21 +37,21 @@ entryPoints:
           permanent: true
     transport:
       respondingTimeouts:
-        readTimeout: 30s
-        writeTimeout: 30s
-        idleTimeout: 180s
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 0s
 
   websecure:
     address: ":4443"
-    http:
-      middlewares:
-        - secured-chain@file
-        - rate-limit@file
     transport:
+      # respondingTimeouts:
+      #   readTimeout: 30s
+      #   writeTimeout: 30s
+      #   idleTimeout: 180s
       respondingTimeouts:
-        readTimeout: 30s
-        writeTimeout: 30s
-        idleTimeout: 180s
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 0s
     proxyProtocol:
       trustedIPs:
         - "172.16.0.0/12"
@@ -70,18 +70,17 @@ entryPoints:
     address: ":443"
     transport:
       respondingTimeouts:
-        readTimeout: 30s
-        writeTimeout: 30s
-        idleTimeout: 300s
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 0s
 
   l4udp:  
     address: ":443/udp"
     transport:
       respondingTimeouts:
-        readTimeout: 30s
-        writeTimeout: 30s
-        idleTimeout: 300s
-
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 0s
 
 # -------------------
 # Провайдеры (оптимизированные)
@@ -92,11 +91,7 @@ providers:
     exposedByDefault: false
     network: traefik-proxy
     watch: true
-    constraints: "tag==traefik"
-
-  file:
-    directory: /dynamic
-    watch: true
+    constraints: "Label(`traefik.tags`,`traefik`)"
 
 # -------------------
 # ACME / Let's Encrypt (оптимизированный)

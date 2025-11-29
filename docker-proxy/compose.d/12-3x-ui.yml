@@ -1,0 +1,126 @@
+services:
+  3x-ui:
+    image: torotin/3x-ui:latest
+    container_name: 3x-ui
+    hostname: ${WEBDOMAIN}
+    restart: always
+    depends_on:
+      traefik:
+        condition: service_healthy
+      warp:
+        condition: service_healthy
+      adguard:
+        condition: service_healthy
+      tor-proxy:
+        condition: service_healthy
+    tty: true
+    security_opt:
+      - no-new-privileges=true
+    networks:
+      traefik-proxy:
+      dns-net:
+    dns:
+      - 172.31.0.53
+    volumes:
+      - /opt/docker-proxy/3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart
+      - /opt/docker-proxy/3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart
+      - /opt/docker-proxy/3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
+      - /opt/docker-proxy/3x-ui/configs/config.json:/app/bin/config.json:rw
+      - /opt/docker-proxy/_logs/xray/access.log:/app/access.log
+      - /opt/docker-proxy/_logs/xray/error.log:/app/error.log
+      - /opt/docker-proxy/_logs:/var/log:rw
+    env_file:
+      - /opt/docker-proxy/.env
+      - /opt/docker-proxy/3x-ui/3x-ui.env
+    environment:
+      # - XUI_LOG_LEVEL=debug
+      - XUI_LOG_FOLDER=/var/log/3x-ui
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    healthcheck:
+      # 1) проверяем, что панель жива по admin-порту (PORT_LOCAL_VLESS_PANEL или 2053 по умолчанию)
+      # 2) если панель отключена, хотя бы убедимся, что процесс жив (pgrep)
+      test: ["CMD-SHELL", "curl -fsS 127.0.0.1:$PORT_LOCAL_VLESS_PANEL/$URI_PANEL_PATH/ >/dev/null || nc -z 127.0.0.1 ${PORT_LOCAL_VISION} || pgrep -f 'x-ui|xray|sing-box' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      # Services
+      - traefik.http.services.3xui-panel-svc.loadbalancer.server.port=${PORT_LOCAL_VLESS_PANEL}
+      - traefik.http.services.3xui-panel-svc.loadbalancer.healthcheck.path=/${URI_PANEL_PATH}/
+      - traefik.http.services.3xui-panel-svc.loadbalancer.healthcheck.interval=30s
+      - traefik.http.services.3xui-panel-svc.loadbalancer.healthcheck.timeout=5s
+
+      - traefik.http.services.3xui-sub-svc.loadbalancer.server.url=http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}${URI_SUB_PATH}
+
+      - traefik.http.services.xhttp33xui-svc.loadbalancer.server.port=${PORT_LOCAL_XHTTP}
+
+      # Middlewares
+      - traefik.http.middlewares.compress.compress=true
+      - traefik.http.middlewares.rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.rate-limit.ratelimit.burst=100
+
+      - traefik.http.middlewares.3xui-assets.plugin.fullUrlRewrite.regex=^assets/(.*)
+      - traefik.http.middlewares.3xui-assets.plugin.fullUrlRewrite.replacement=${URI_SUB_PATH}$1
+
+      - traefik.http.middlewares.3xui-sub-chain.chain.middlewares=static-chain
+      - traefik.http.middlewares.3xui-panel-chain.chain.middlewares=api-chain
+      - traefik.http.middlewares.static-chain.chain.middlewares=compress
+      - traefik.http.middlewares.api-chain.chain.middlewares=rate-limit,compress
+
+      # Routers
+
+      - traefik.http.routers.3xui-assets.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/assets/`)
+      - traefik.http.routers.3xui-assets.entrypoints=websecure
+      - traefik.http.routers.3xui-assets.middlewares=static-chain,3xui-assets
+      - traefik.http.routers.3xui-assets.tls.certresolver=le
+      - traefik.http.routers.3xui-assets.service=3xui-sub-svc
+      - traefik.http.routers.3xui-assets.priority=9996
+
+      - traefik.http.routers.3xui-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)
+      - traefik.http.routers.3xui-panel.entrypoints=websecure
+      - traefik.http.routers.3xui-panel.middlewares=3xui-panel-chain
+      - traefik.http.routers.3xui-panel.tls.certresolver=le
+      - traefik.http.routers.3xui-panel.service=3xui-panel-svc
+      - traefik.http.routers.3xui-panel.priority=9997
+
+      - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
+      - traefik.http.routers.3xui-sub.entrypoints=websecure
+      - traefik.http.routers.3xui-sub.middlewares=3xui-sub-chain
+      - traefik.http.routers.3xui-sub.tls.certresolver=le
+      - traefik.http.routers.3xui-sub.service=3xui-sub-svc
+      - traefik.http.routers.3xui-sub.priority=9998
+
+      - traefik.http.routers.xhttp33xui-l4.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)
+      - traefik.http.routers.xhttp33xui-l4.entrypoints=l4tcp
+      - traefik.http.routers.xhttp33xui-l4.service=xhttp33xui-svc
+      - traefik.http.routers.xhttp33xui-l4.priority=9999
+      - traefik.http.routers.xhttp33xui-l4.observability.accessLogs=false
+
+      - traefik.http.routers.3xui-health.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_PANEL_PATH}/health`)
+      - traefik.http.routers.3xui-health.entrypoints=websecure
+      - traefik.http.routers.3xui-health.tls.certresolver=le
+      - traefik.http.routers.3xui-health.service=3xui-panel-svc
+      - traefik.http.routers.3xui-health.priority=10000
+
+      # L4 VLESS (TCP passthrough) and UDP forward
+      - traefik.tcp.routers.vless-reality.entrypoints=l4tcp
+      - traefik.tcp.routers.vless-reality.rule=HostSNI(`${WEBDOMAIN}`)
+      - traefik.tcp.routers.vless-reality.tls.passthrough=true
+      - traefik.tcp.routers.vless-reality.service=vless-reality-svc
+      - traefik.tcp.routers.vless-reality.priority=50
+      - traefik.tcp.services.vless-reality-svc.loadbalancer.server.port=${PORT_LOCAL_VISION}
+
+      - traefik.udp.routers.vless-xhttp.entrypoints=l4udp
+      - traefik.udp.routers.vless-xhttp.service=vless-xhttp-svc
+      - traefik.udp.services.vless-xhttp-svc.loadbalancer.server.port=${PORT_LOCAL_XHTTP}

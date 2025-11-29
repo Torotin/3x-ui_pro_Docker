@@ -1,0 +1,67 @@
+services:
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard
+    restart: unless-stopped
+    networks:
+      traefik-proxy:
+      dns-net:
+        ipv4_address: 172.31.0.53
+    # DNS service ports (uncomment if 53 is free on host)
+    # ports:
+    #   - "53:53/udp"
+    #   - "53:53/tcp"
+    volumes:
+      - /opt/docker-proxy/adguard/work:/opt/adguardhome/work
+      - /opt/docker-proxy/adguard/conf:/opt/adguardhome/conf
+      - /opt/docker-proxy/adguard/update-pass.sh:/opt/adguardhome/update-pass.sh:ro
+    env_file:
+      - /opt/docker-proxy/.env
+    security_opt:
+      - no-new-privileges=true
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache bind-tools curl
+        if [ -f /opt/adguardhome/update-pass.sh ]; then
+          sh /opt/adguardhome/update-pass.sh || echo "[adguard-entrypoint] password update skipped"
+        fi
+        exec /opt/adguardhome/AdGuardHome -s run --config /opt/adguardhome/conf/AdGuardHome.yaml --work-dir /opt/adguardhome/work
+    healthcheck:
+      test: ["CMD-SHELL", "dig @127.0.0.1 -p 53 example.com +short | grep -q '.'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      # Service
+      - traefik.http.services.adguard-panel.loadbalancer.server.port=80
+      - traefik.http.services.adguard-panel.loadbalancer.healthcheck.path=/
+      - traefik.http.services.adguard-panel.loadbalancer.healthcheck.interval=30s
+      - traefik.http.services.adguard-panel.loadbalancer.healthcheck.timeout=5s
+
+      # Middlewares
+      - traefik.http.middlewares.rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.rate-limit.ratelimit.burst=100
+      - traefik.http.middlewares.compress.compress=true
+      - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
+      - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
+      - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_ADGUARD_PANEL}/$1
+
+      - traefik.http.middlewares.strip-adguard-prefix.stripPrefix.prefixes=/${URI_ADGUARD_PANEL}
+
+      - traefik.http.middlewares.adguard-chain.chain.middlewares=strip-adguard-prefix,redirect-adguard-panel,compress
+
+      # Router
+      - traefik.http.routers.adguard-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_PANEL}`)
+      - traefik.http.routers.adguard-panel.entrypoints=websecure
+      - traefik.http.routers.adguard-panel.middlewares=adguard-chain
+      - traefik.http.routers.adguard-panel.tls.certresolver=le
+      - traefik.http.routers.adguard-panel.service=adguard-panel
+      - traefik.http.routers.adguard-panel.priority=1000

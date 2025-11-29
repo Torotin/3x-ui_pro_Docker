@@ -17,7 +17,7 @@ DOCKER_COMPOSE_FILE="$DOCKER_DIR/compose.yml"
 DOCKER_ENV_FILE="$DOCKER_DIR/.env"
 DOCKER_ENV_TEMPLATE="$TEMPLATE_DIR/docker.env.template"
 GITHUB_REPO_OWNER="${REPO_OWNER:-Torotin}"
-GITHUB_REPO_NAME="${REPO_OWNER:-3x-ui_pro_Docker}"
+GITHUB_REPO_NAME="${REPO_NAME:-3x-ui_pro_Docker}"
 LOADED_MODULES=()
 
 # Detect which branch the installer was fetched from; fall back to env or main
