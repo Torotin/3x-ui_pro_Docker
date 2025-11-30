@@ -15,7 +15,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/docker-proxy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      # - /opt/docker-proxy/traefik/entrypoint.sh:/entrypoint.sh:ro
       - /opt/docker-proxy/traefik/acme.json:/acme.json
       - /opt/docker-proxy/traefik/dynamic:/templates:ro
       - /opt/docker-proxy/_logs/traefik:/logs
@@ -24,11 +23,6 @@ services:
       - "443:443/tcp"
       - "443:443/udp"
       - "4443:4443/tcp"
-    # entrypoint:
-    #   - /bin/sh
-    #   - -c
-    #   - |
-    #     exec /entrypoint.sh "$@"
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.6
