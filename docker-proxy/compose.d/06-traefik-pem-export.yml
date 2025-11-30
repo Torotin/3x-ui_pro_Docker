@@ -17,7 +17,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "jq -e '.process == \"running\" and .status != \"ERROR\"' /export/health.json >/dev/null 2>&1"
+          "jq -e '.process == \"running\" and .status != \"ERROR\"' /health.json >/dev/null 2>&1"
         ]
       interval: 5m
       timeout: 5s

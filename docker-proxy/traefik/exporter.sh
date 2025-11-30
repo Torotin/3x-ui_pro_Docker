@@ -47,7 +47,7 @@ while [ ! -d /export ]; do
 done
 
 # PID основного shell-процесса контейнера
-echo $$ > /export/exporter.pid
+echo $$ > /exporter.pid
 
 last_update=0
 debounce=3
@@ -63,7 +63,7 @@ sanitize_domain() {
 
 # Проверка "жив ли" основной процесс (BusyBox-safe)
 check_process() {
-    pid=$(cat /export/exporter.pid 2>/dev/null)
+    pid=$(cat /exporter.pid 2>/dev/null)
     if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
         echo "running"
     else
@@ -77,7 +77,7 @@ write_health() {
     msg="$2"
     process_status=$(check_process)
 
-    cat > /export/health.json <<EOF
+    cat > /health.json <<EOF
 {
   "status": "$status",
   "process": "$process_status",
@@ -93,7 +93,7 @@ EOF
 write_health_init() {
     process_status=$(check_process)
 
-    cat > /export/health.json <<EOF
+    cat > /health.json <<EOF
 {
   "status": "INIT",
   "process": "$process_status",
