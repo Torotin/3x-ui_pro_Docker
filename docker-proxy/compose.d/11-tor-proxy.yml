@@ -17,9 +17,9 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - traefik-proxy
-      - dns-net
-    # dns:
-    #   - 172.31.0.53
+      traefik-proxy:
+        ipv4_address: 172.18.0.11
+      dns-net:
+        ipv4_address: 172.19.0.11
     security_opt:
       - no-new-privileges=true

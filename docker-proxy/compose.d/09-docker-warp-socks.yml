@@ -4,8 +4,10 @@ services:
     container_name: warp_socks_v5
     restart: unless-stopped
     networks:
-      - traefik-proxy
-      - dns-net
+      traefik-proxy:
+        ipv4_address: 172.18.0.9
+      dns-net:
+        ipv4_address: 172.19.0.9
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -x socks5h://127.0.0.1:9091 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
       interval: 30s

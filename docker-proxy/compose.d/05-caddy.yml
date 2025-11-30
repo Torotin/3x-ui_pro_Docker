@@ -10,10 +10,12 @@ services:
     cpus: "0.5"
     hostname: ${WEBDOMAIN}
     networks:
-      - traefik-proxy
-      - dns-net
+      traefik-proxy:
+        ipv4_address: 172.18.0.5
+      dns-net:
+        ipv4_address: 172.19.0.5
     # dns:
-    #   - 172.31.0.53
+    #   - 172.19.0.10
     volumes:
       - /opt/docker-proxy/_logs/caddy:/var/log/caddy
       - /opt/docker-proxy/caddy/config:/etc/caddy

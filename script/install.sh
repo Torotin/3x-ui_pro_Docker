@@ -202,9 +202,22 @@ reset_permissions() {
   return $rc
 }
 
+# Нормализация USER_SSH: убираем управляющие символы/пробелы
+sanitize_user_ssh() {
+  local target_user="${1:-$USER_SSH}"
+  if [[ -n "${target_user:-}" ]]; then
+    target_user="${target_user//$'\r'/}"
+    target_user="${target_user//$'\n'/}"
+    target_user="${target_user//$'\t'/}"
+    target_user="${target_user//[[:space:]]/}"
+  fi
+  echo "$target_user"
+}
+
 # Обёртка для применения к двум каталогам
 reset_all_permissions() {
-  local target_user="${1:-$USER_SSH}"
+  local target_user
+  target_user=$(sanitize_user_ssh "${1:-$USER_SSH}")
   local rc=0
 
   reset_permissions "$SCRIPT_DIR" "$target_user" || rc=1

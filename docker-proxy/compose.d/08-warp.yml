@@ -4,8 +4,10 @@ services:
     container_name: warp
     restart: always
     networks:
-      - traefik-proxy
-      - dns-net
+      traefik-proxy:
+        ipv4_address: 172.18.0.8
+      dns-net:
+        ipv4_address: 172.19.0.8
     devices:
       - /dev/net/tun:/dev/net/tun
     device_cgroup_rules:

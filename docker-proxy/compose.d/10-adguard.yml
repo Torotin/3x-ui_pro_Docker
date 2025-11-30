@@ -5,8 +5,9 @@ services:
     restart: unless-stopped
     networks:
       traefik-proxy:
+        ipv4_address: 172.18.0.10
       dns-net:
-        ipv4_address: 172.31.0.53
+        ipv4_address: 172.19.0.10
     # DNS service ports (uncomment if 53 is free on host)
     # ports:
     #   - "53:53/udp"

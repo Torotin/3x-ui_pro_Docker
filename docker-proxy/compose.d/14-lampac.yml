@@ -38,7 +38,9 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - traefik-proxy
-      - dns-net
+      traefik-proxy:
+        ipv4_address: 172.18.0.14
+      dns-net:
+        ipv4_address: 172.19.0.14
     dns:
-      - 172.31.0.53
+      - 172.19.0.10

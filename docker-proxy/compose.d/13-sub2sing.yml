@@ -6,7 +6,7 @@ services:
     extra_hosts:
       - ${WEBDOMAIN}:${PUBLIC_IPV4}
     networks:
-      - traefik-proxy
-      - dns-net
-    # dns:
-    #   - 172.31.0.53
+      traefik-proxy:
+        ipv4_address: 172.18.0.13
+      dns-net:
+        ipv4_address: 172.19.0.13

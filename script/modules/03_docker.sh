@@ -267,24 +267,42 @@ docker_create_network() {
         return 0
     fi
 
-    # Если external — просто создаём «пустую» сеть под этим именем
+    # Если external — создаём сеть, учитывая подсеть/IPv6, если заданы
     if [[ "$is_external" == true ]]; then
-        log "INFO" "Creating external network '$name'..."
-        docker network create "$name" \
-            && log "INFO" "External network '$name' created." \
-            || { log "ERROR" "Failed to create external network '$name'"; exit 1; }
+        local args=()
+        local ipv6_label=""
+        $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+        [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+
+        log "INFO" "Creating external network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
+        if docker network create "${args[@]}" "$name"; then
+            log "INFO" "External network '$name' created."
+            local inspect
+            inspect=$(docker network inspect "$name" 2>/dev/null)
+            log "INFO" "Network '$name' inspect: $inspect"
+        else
+            log "ERROR" "Failed to create external network '$name'"
+            exit 1
+        fi
         return 0
     fi
 
     # Для остального собираем аргументы
     local args=()
-    $is_ipv6    && args+=(--ipv6)
+    local ipv6_label=""
+    $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
     [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
 
-    log "INFO" "Creating network '$name' ${is_ipv6:+(with IPv6)} ${subnet:+subnet $subnet}..."
-    docker network create "${args[@]}" "$name" \
-        && log "INFO" "Network '$name' created." \
-        || { log "ERROR" "Failed to create network '$name'"; exit 1; }
+    log "INFO" "Creating network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
+    if docker network create "${args[@]}" "$name"; then
+        log "INFO" "Network '$name' created."
+        local inspect
+        inspect=$(docker network inspect "$name" 2>/dev/null)
+        log "INFO" "Network '$name' inspect: $inspect"
+    else
+        log "ERROR" "Failed to create network '$name'"
+        exit 1
+    fi
 }
 
 docker_compose_restart() {
