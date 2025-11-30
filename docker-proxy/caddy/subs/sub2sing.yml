@@ -1,0 +1,71 @@
+# sing2box.yml - Traefik dynamic config (file provider)
+
+http:
+  services:
+    # sub2sing-box upstream on port 8080
+    sub2singbox-svc:
+      loadBalancer:
+        servers:
+          - url: "http://sub2sing:8080"
+
+    # Caddy web frontend (serves subscription UI)
+    caddy-sub2singbox:
+      loadBalancer:
+        servers:
+          - url: "http://caddy:${PORT_LOCAL_SUB2SING}"
+
+  middlewares:
+    # Strip leading prefixes before forwarding to sub2sing-box
+    strip-sub2sing-prefix:
+      stripPrefix:
+        prefixes:
+          - "/${URI_SUB2SING}"
+          - "${URI_JSON_PATH}"
+
+    # Basic security headers
+    security-headers:
+      headers:
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXSSFilter: true
+        frameDeny: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # contentSecurityPolicy: "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';"
+
+  routers:
+    # ---- Browser-friendly HTML for ${URI_JSON_PATH} ----
+    sub2singbox-json-html:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
+      priority: 100
+      entryPoints: [websecure]
+      service: caddy-sub2singbox
+      middlewares:
+        - security-headers
+      tls:
+        certResolver: le
+
+    # ---- sub2sing-box (base64/API subscribers) ----
+    sub2singbox-router:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_SUB2SING}/`)
+      entryPoints: [websecure]
+      service: sub2singbox-svc
+      middlewares:
+        - strip-sub2sing-prefix
+        - security-headers
+      tls:
+        certResolver: le
+      priority: 98
+
+    # ---- Web frontend on Caddy:${PORT_TEST} ----
+    clashmeta-router:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_SUB2SING}/clashmeta/`)
+      entryPoints: [websecure]
+      service: caddy-sub2singbox
+      middlewares:
+        - security-headers
+      tls:
+        certResolver: le
+      priority: 99

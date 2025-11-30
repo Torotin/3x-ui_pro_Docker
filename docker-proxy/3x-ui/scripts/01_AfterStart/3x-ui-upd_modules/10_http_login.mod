@@ -1,3 +1,4 @@
+#!/bin/bash
 resolve_and_login() {
     # $1 = базовый адрес (например, http://localhost:2053)
     try_url() {
@@ -65,6 +66,7 @@ resolve_and_login() {
     mkdir -p "$tmpdir"
 
     i=0
+    pids=""
     for base in $(echo "$bases"); do
         [ -z "$base" ] && continue
         norm_base=$(printf '%s' "$base" | sed 's|\([^:]\)//*|\1/|g')
@@ -88,6 +90,7 @@ resolve_and_login() {
                 cp "$COOKIE_JAR_LOCAL" "$tmpdir/cookies_ok.txt"
             fi
         ) &
+        pids="$pids $!"
         i=$((i + 1))
     done
 
@@ -108,9 +111,17 @@ resolve_and_login() {
 
     # Дожидаемся завершения всех (kill только если найден успех)
     if [ -n "$found" ]; then
-        kill $(jobs -p) 2>/dev/null
+        if [ -n "$pids" ]; then
+            set -- $pids
+            kill "$@" 2>/dev/null
+            # Подчищаем завершения наших фоновых задач
+            wait "$@" 2>/dev/null || true
+        fi
     else
-        wait
+        if [ -n "$pids" ]; then
+            set -- $pids
+            wait "$@" || true
+        fi
     fi
 
     # --- ВОССТАНАВЛИВАЕМ ВСЁ В ОСНОВНОМ ПРОЦЕССЕ ---
@@ -169,4 +180,3 @@ http_request() {
         fi
     done
 }
-

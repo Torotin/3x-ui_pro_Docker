@@ -1,12 +1,27 @@
 # /templates/traefik_secured-chain.yml
 http:
   middlewares:
-    # Chain middleware applied to protected routers
+    # Оптимизированная цепочка middleware для защищенных роутеров
     secured-chain:
       chain:
         middlewares:
-          # - default-whitelist@file      # 1) allowlist first
-          - crowdsec-bouncer@file         # 3) crowdsec (from file provider)
-          - default-headers@file          # 2) security/CORS/HSTS headers
-          # - default-compress@file       # 4) gzip/deflate (optional)
-          # - error-pages@file            # 5) pretty error pages last
+          - security-headers@file          # 1) заголовки безопасности
+          - crowdsec-bouncer@file          # 2) защита от атак
+          - compress@file                  # 3) сжатие контента
+          - cache-static@file              # 4) кэширование (где применимо)
+
+    # Легкая цепочка для API
+    api-chain:
+      chain:
+        middlewares:
+          - api-headers@file               # 1) базовые заголовки безопасности
+          - crowdsec-bouncer@file          # 2) защита от атак
+          - compress@file                  # 3) сжатие
+
+    # Цепочка для статических файлов
+    static-chain:
+      chain:
+        middlewares:
+          - static-headers@file            # 1) заголовки для статики
+          - cache-static@file              # 2) кэширование
+          - compress@file                  # 3) сжатие

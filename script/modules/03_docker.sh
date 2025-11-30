@@ -267,24 +267,84 @@ docker_create_network() {
         return 0
     fi
 
-    # Если external — просто создаём «пустую» сеть под этим именем
+    # Если external — создаём сеть, учитывая подсеть/IPv6, если заданы
     if [[ "$is_external" == true ]]; then
-        log "INFO" "Creating external network '$name'..."
-        docker network create "$name" \
-            && log "INFO" "External network '$name' created." \
-            || { log "ERROR" "Failed to create external network '$name'"; exit 1; }
+        local args=()
+        local ipv6_label=""
+        $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+        [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+
+        log "INFO" "Creating external network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
+        if docker network create "${args[@]}" "$name"; then
+            log "INFO" "External network '$name' created."
+            local inspect
+            inspect=$(docker network inspect "$name" 2>/dev/null)
+            log "INFO" "Network '$name' inspect: $inspect"
+        else
+            log "ERROR" "Failed to create external network '$name'"
+            exit 1
+        fi
         return 0
     fi
 
     # Для остального собираем аргументы
     local args=()
-    $is_ipv6    && args+=(--ipv6)
+    local ipv6_label=""
+    $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
     [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
 
-    log "INFO" "Creating network '$name' ${is_ipv6:+(with IPv6)} ${subnet:+subnet $subnet}..."
-    docker network create "${args[@]}" "$name" \
-        && log "INFO" "Network '$name' created." \
-        || { log "ERROR" "Failed to create network '$name'"; exit 1; }
+    log "INFO" "Creating network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
+    if docker network create "${args[@]}" "$name"; then
+        log "INFO" "Network '$name' created."
+        local inspect
+        inspect=$(docker network inspect "$name" 2>/dev/null)
+        log "INFO" "Network '$name' inspect: $inspect"
+    else
+        log "ERROR" "Failed to create network '$name'"
+        exit 1
+    fi
+}
+
+docker_compose_restart() {
+  local env_file="${DOCKER_ENV_FILE:?DOCKER_ENV_FILE is not set}"
+  local compose_file="${DOCKER_COMPOSE_FILE:?DOCKER_COMPOSE_FILE is not set}"
+
+  log "INFO" "Restarting Docker stack using compose file '$compose_file' and env '$env_file'"
+
+  if [[ ! -f "$compose_file" ]]; then
+    log "ERROR" "Compose file not found: $compose_file"
+    return 1
+  fi
+  if ! command -v docker &>/dev/null; then
+    log "ERROR" "docker not found in PATH"
+    return 1
+  fi
+
+  # Корректно останавливаем и чистим orphans
+  if ! docker compose --env-file "$env_file" -f "$compose_file" down --remove-orphans; then
+    log "ERROR" "docker compose down failed"
+    return 1
+  else
+    log "INFO" "docker compose down succeeded"
+  fi
+
+  # Не обязательно, но полезно: подтянуть обновления образов (можно убрать, если не нужно)
+  log "INFO" "Pulling latest images..."
+  if ! docker compose --env-file "$env_file" -f "$compose_file" pull --quiet; then
+    log "WARN" "docker compose pull failed — продолжаю без обновления образов"
+  else
+    log "INFO" "docker compose pull succeeded"
+  fi
+
+  # Поднимаем стек заново
+  log "INFO" "Starting Docker stack using compose file '$compose_file' and env '$env_file'"
+  if docker compose --env-file "$env_file" -f "$compose_file" up -d --force-recreate; then
+    log "OK" "Docker stack restarted"
+    return 0
+  else
+    log "ERROR" "docker compose up failed"
+    return 1
+  fi
 }
 
 # --- Docker Compose Helpers ---

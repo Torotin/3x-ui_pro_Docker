@@ -1,3 +1,4 @@
+#!/bin/bash
 # -----------------------------
 # API endpoints (resolved base)
 # -----------------------------
@@ -69,14 +70,23 @@ create_inbound_tcp_reality() {
     #     ]
     #     '
     # )
+    # fallbacks_json=$(
+    #   jq -nc \
+    #     --arg port_xhttp "$PORT_LOCAL_XHTTP" \
+    #     --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
+    #     []
+    #     '
+    # )
+
     fallbacks_json=$(
       jq -nc \
-        --arg port_xhttp "$PORT_LOCAL_XHTTP" \
         --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
-        []
+        [
+          { alpn: "h1 h2 h3", path: "", dest: ("traefik:" + $port_traefik), xver: 2 }
+        ]
         '
     )
-
+    log DEBUG "Fallbacks JSON: $fallbacks_json"
 
     # Ensure valid JSON defaults for args passed via --argjson
     # short_ids: JSON array; sockopt_json: JSON object; external_proxy_json: JSON array
@@ -196,27 +206,44 @@ create_xhttp_inbound() {
         '[{forceTls: "same", dest: $dest, port: $port, remark: ""}]'
     )
     stream_json=$(
-        jq -nc --arg path "$xhttp_path" \
-               --argjson sockopt "$sockopt_json" \
-               --argjson externalProxy "$external_proxy_json" '
-        {
-          network: "xhttp",
-          security: "none",
-          externalProxy: $externalProxy,
-          sockopt: $sockopt,
-          xhttpSettings: {
-            path: $path,
-            host: "",
-            headers: {},
-            scMaxBufferedPosts: 30,
-            scMaxEachPostBytes: "1000000",
-            scStreamUpServerSecs: "20-80",
-            noSSEHeader: false,
-            xPaddingBytes: "100-1000",
-            mode: "packet-up"
-          }
-        }'
+      jq -nc --arg path "$xhttp_path" \
+             --arg host "$WEBDOMAIN" \
+             --argjson sockopt "$sockopt_json" \
+             --argjson externalProxy "$external_proxy_json" '
+      {
+        network: "xhttp",
+        security: "none",
+        externalProxy: $externalProxy,
+        sockopt: $sockopt,
+        xhttpSettings: {
+          path: $path,
+          host: $host,
+          headers: {
+              "Access-Control-Allow-Origin": ("https://" + $host),
+              "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+              "Access-Control-Allow-Headers": "Origin, Content-Type, Accept",
+              "Access-Control-Allow-Credentials": "true",
+              "Vary": "Origin",
+              "Access-Control-Max-Age": "600",
+              "Cross-Origin-Opener-Policy": "same-origin",
+              "Cross-Origin-Resource-Policy": "same-origin",
+              "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
+              "Referrer-Policy": "no-referrer",
+              "X-Content-Type-Options": "nosniff",
+              "X-XSS-Protection": "1; mode=block",
+              "X-Frame-Options": "DENY",
+              "Server": ""
+          },
+          scMaxBufferedPosts: 30,
+          scMaxEachPostBytes: "1000000",
+          scStreamUpServerSecs: "20-80",
+          noSSEHeader: false,
+          xPaddingBytes: "100-1000",
+          mode: "packet-up"
+        }
+      }'
     )
+
     sniffing_json='{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
     allocate_json='{"strategy":"always","refresh":5,"concurrency":3}'
 
@@ -245,7 +272,6 @@ create_xhttp_inbound() {
         return 1
     fi
 }
-
 
 generate_client_meta() {
     CLIENT_ID=$(cat /proc/sys/kernel/random/uuid)
@@ -480,3 +506,4 @@ check_inbound_exists() {
         printf ''
     fi
 }
+

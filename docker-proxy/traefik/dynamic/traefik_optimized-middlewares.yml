@@ -1,0 +1,133 @@
+# /templates/traefik_optimized-middlewares.yml
+http:
+  middlewares:
+    # Rate limiting для защиты от DDoS
+    rate-limit:
+      rateLimit:
+        burst: 100
+        average: 50
+        period: "1m"
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+            excludedIPs:
+              - "127.0.0.1/32"
+              - "172.16.0.0/12"
+              - "172.18.0.0/16"
+              - "172.20.0.0/16"
+
+    # Кэширование для статических ресурсов
+    cache-static:
+      buffering:
+        maxRequestBodyBytes: 10485760  # 10MB
+        memRequestBodyBytes: 2097152   # 2MB
+        maxResponseBodyBytes: 10485760 # 10MB
+        memResponseBodyBytes: 2097152  # 2MB
+        retryExpression: "IsNetworkError() && Attempts() <= 2"
+
+    # Сжатие для текстовых ресурсов
+    compress:
+      compress:
+        excludedContentTypes:
+          - "text/event-stream"
+          - "application/octet-stream"
+          - "image/jpeg"
+          - "image/png"
+          - "image/gif"
+          - "image/webp"
+          - "video/mp4"
+          - "video/webm"
+          - "audio/mpeg"
+          - "audio/ogg"
+
+    # Улучшенные заголовки безопасности
+    security-headers:
+      headers:
+        # TLS / HSTS
+        sslRedirect: true
+        stsSeconds: 31536000  # 1 год
+        stsIncludeSubdomains: true
+        stsPreload: true
+
+        # MIME & XSS
+        contentTypeNosniff: true
+        browserXssFilter: true
+
+        # Clickjacking
+        frameDeny: true
+
+        # Referrer policy
+        referrerPolicy: "strict-origin-when-cross-origin"
+
+        # CORS (более строгие настройки)
+        accessControlAllowOriginList:
+          - "https://${WEBDOMAIN}"
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Origin
+          - Content-Type
+          - Accept
+          - Authorization
+          - X-Requested-With
+        accessControlAllowCredentials: true
+        addVaryHeader: true
+        accessControlMaxAge: 86400  # 24 часа
+
+        # Дополнительные заголовки безопасности
+        customResponseHeaders:
+          # Cross-Origin-Opener-Policy: "same-origin"
+          # Cross-Origin-Resource-Policy: "same-origin"
+          # Cross-Origin-Embedder-Policy: "require-corp"
+          Permissions-Policy: "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), bluetooth=(), display-capture=(), fullscreen=(self), picture-in-picture=()"
+          server: ""
+          X-Powered-By: ""
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          X-XSS-Protection: "1; mode=block"
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+          # Content-Security-Policy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
+    # Оптимизированная цепочка безопасности
+    secured-chain-optimized:
+      chain:
+        middlewares:
+          - security-headers@file
+          - crowdsec-bouncer@file
+          - compress@file
+          - cache-static@file
+
+    # Middleware для API endpoints
+    api-headers:
+      headers:
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+        referrerPolicy: "no-referrer"
+        customResponseHeaders:
+          X-Content-Type-Options: "nosniff"
+          X-Frame-Options: "DENY"
+          X-XSS-Protection: "1; mode=block"
+          server: ""
+          X-Powered-By: ""
+
+    # Middleware для статических файлов
+    static-headers:
+      headers:
+        contentTypeNosniff: true
+        frameDeny: false
+        referrerPolicy: "no-referrer-when-downgrade"
+        customResponseHeaders:
+          Cache-Control: "public, max-age=31536000, immutable"
+          X-Content-Type-Options: "nosniff"
+          server: ""
+
+    # Health check middleware
+    health-check:
+      headers:
+        customResponseHeaders:
+          Cache-Control: "no-cache, no-store, must-revalidate"
+          Pragma: "no-cache"
+          Expires: "0"

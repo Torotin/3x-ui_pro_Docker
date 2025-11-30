@@ -1,3 +1,4 @@
+#!/bin/bash
 # === Global SSH configuration ===
 
 # Disable printing the message of the day (motd) / Отключает отображение сообщения дня при входе
