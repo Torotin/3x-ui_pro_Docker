@@ -13,8 +13,7 @@ install_steps_init() {
     ["6"]='firewall_config:Configure firewall'
     ["7"]='sshd_config:Configure SSH'
     ["8"]='network_config_modify:Network optimization'
-    ["9"]='docker_compose_restart:Docker. Compose (re)start'
-    ["10"]='msg_final:Final message'
+    ["9"]='msg_final:Final message'
     ["x"]='exit_script:Exit'
     ["r"]='reboot_system:Reboot'
   )
