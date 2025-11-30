@@ -13,7 +13,7 @@ LOG_FILE="$LOGS_DIR/$LOG_NAME.log"
 ENV_FILE="$PROJECT_ROOT/$LOG_NAME.env"
 ENV_TEMPLATE_FILE="$TEMPLATE_DIR/$LOG_NAME.env.template"
 DOCKER_DIR="/opt/docker-proxy"
-DOCKER_ENV_FILE="$DOCKER_DIR/.env"
+DOCKER_ENV_FILE="$DOCKER_DIR/compose.d/.env"
 DOCKER_ENV_TEMPLATE="$TEMPLATE_DIR/docker.env.template"
 GITHUB_REPO_OWNER="${REPO_OWNER:-Torotin}"
 GITHUB_REPO_NAME="${REPO_NAME:-3x-ui_pro_Docker}"
@@ -185,10 +185,25 @@ reset_permissions() {
   fi
 
   # Права применяем ВСЕГДА, вне зависимости от результата chown
-  if chmod -R u=rwX,go=rX -- "$TARGET_DIR"; then
-    log "INFO" "Permissions reset to u=rwX,go=rX for '$TARGET_DIR'"
+  local perm_rc=0
+
+  if find "$TARGET_DIR" -type d -exec chmod u=rwx,go=rx {} +; then
+    log "DEBUG" "Directory permissions set to u=rwx,go=rx under '$TARGET_DIR'"
   else
-    log "ERROR" "Failed to reset permissions for '$TARGET_DIR'"
+    log "ERROR" "Failed to reset directory permissions under '$TARGET_DIR'"
+    perm_rc=1
+  fi
+
+  if find "$TARGET_DIR" -type f -exec chmod u=rwX,go=rX {} +; then
+    log "DEBUG" "File permissions set to u=rwX,go=rX under '$TARGET_DIR'"
+  else
+    log "ERROR" "Failed to reset file permissions under '$TARGET_DIR'"
+    perm_rc=1
+  fi
+
+  if (( perm_rc == 0 )); then
+    log "INFO" "Permissions reset recursively for '$TARGET_DIR'"
+  else
     rc=1
   fi
 
