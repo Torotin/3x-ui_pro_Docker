@@ -66,6 +66,7 @@ resolve_and_login() {
     mkdir -p "$tmpdir"
 
     i=0
+    pids=()
     for base in $(echo "$bases"); do
         [ -z "$base" ] && continue
         norm_base=$(printf '%s' "$base" | sed 's|\([^:]\)//*|\1/|g')
@@ -89,6 +90,7 @@ resolve_and_login() {
                 cp "$COOKIE_JAR_LOCAL" "$tmpdir/cookies_ok.txt"
             fi
         ) &
+        pids+=("$!")
         i=$((i + 1))
     done
 
@@ -109,9 +111,11 @@ resolve_and_login() {
 
     # Дожидаемся завершения всех (kill только если найден успех)
     if [ -n "$found" ]; then
-        kill $(jobs -p) 2>/dev/null
+        [ "${#pids[@]}" -gt 0 ] && kill "${pids[@]}" 2>/dev/null
+        # Подчищаем завершения наших фоновых задач
+        [ "${#pids[@]}" -gt 0 ] && wait "${pids[@]}" 2>/dev/null || true
     else
-        wait
+        [ "${#pids[@]}" -gt 0 ] && wait "${pids[@]}" || true
     fi
 
     # --- ВОССТАНАВЛИВАЕМ ВСЁ В ОСНОВНОМ ПРОЦЕССЕ ---
@@ -170,4 +174,3 @@ http_request() {
         fi
     done
 }
-

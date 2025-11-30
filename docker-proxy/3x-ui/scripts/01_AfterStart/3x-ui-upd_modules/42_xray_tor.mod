@@ -37,11 +37,12 @@ update_xray_tor() {
         XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --arg tag "$TAG_TOR" --argjson dom "$desired_domains" '
             .xraySetting.routing.rules |= map(
               if .type=="field" and .outboundTag==$tag then
-                .domain = (((.domain // []) + $dom) | unique)
+                .domain = (((.domain // .domains // []) + $dom) | unique)
+                | del(.domains)
               else . end)')
         log INFO "Routing-правило для outboundTag=$TAG_TOR обновлено."
     else
-        new_rule=$(jq -nc --arg tag "$TAG_TOR" --argjson dom "$desired_domains" '{ type:"field", outboundTag:$tag, domains:$dom }')
+        new_rule=$(jq -nc --arg tag "$TAG_TOR" --argjson dom "$desired_domains" '{ type:"field", outboundTag:$tag, domain:$dom }')
         # Препендим правило, чтобы оно имело приоритет
         XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --argjson rule "$new_rule" '
             .xraySetting.routing.rules = [$rule] + (.xraySetting.routing.rules // [])')

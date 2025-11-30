@@ -63,28 +63,25 @@ services:
       - traefik.http.services.3xui-panel-svc.loadbalancer.healthcheck.interval=30s
       - traefik.http.services.3xui-panel-svc.loadbalancer.healthcheck.timeout=5s
 
-      - traefik.http.services.3xui-sub-svc.loadbalancer.server.url=http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}${URI_SUB_PATH}
+      - traefik.http.services.3xui-sub-svc.loadbalancer.server.port=${PORT_LOCAL_VLESS_SUBSCRIBE}
 
-      - traefik.http.services.xhttp33xui-svc.loadbalancer.server.port=${PORT_LOCAL_XHTTP}
+      - traefik.http.services.xhttp3xui-svc.loadbalancer.server.port=${PORT_LOCAL_XHTTP}
 
       # Middlewares
-      - traefik.http.middlewares.compress.compress=true
-      - traefik.http.middlewares.rate-limit.ratelimit.average=50
-      - traefik.http.middlewares.rate-limit.ratelimit.burst=100
+      - traefik.http.middlewares.3xui-compress.compress=true
+      - traefik.http.middlewares.3xui-rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.3xui-rate-limit.ratelimit.burst=100
 
-      - traefik.http.middlewares.3xui-assets.plugin.fullUrlRewrite.regex=^assets/(.*)
-      - traefik.http.middlewares.3xui-assets.plugin.fullUrlRewrite.replacement=${URI_SUB_PATH}$1
-
-      - traefik.http.middlewares.3xui-sub-chain.chain.middlewares=static-chain
-      - traefik.http.middlewares.3xui-panel-chain.chain.middlewares=api-chain
-      - traefik.http.middlewares.static-chain.chain.middlewares=compress
-      - traefik.http.middlewares.api-chain.chain.middlewares=rate-limit,compress
+      - traefik.http.middlewares.3xui-sub-chain.chain.middlewares=3xui-static-chain
+      - traefik.http.middlewares.3xui-panel-chain.chain.middlewares=3xui-api-chain
+      - traefik.http.middlewares.3xui-static-chain.chain.middlewares=3xui-compress
+      - traefik.http.middlewares.3xui-api-chain.chain.middlewares=3xui-rate-limit,3xui-compress
 
       # Routers
 
       - traefik.http.routers.3xui-assets.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/assets/`)
       - traefik.http.routers.3xui-assets.entrypoints=websecure
-      - traefik.http.routers.3xui-assets.middlewares=static-chain,3xui-assets
+      - traefik.http.routers.3xui-assets.middlewares=3xui-static-chain
       - traefik.http.routers.3xui-assets.tls.certresolver=le
       - traefik.http.routers.3xui-assets.service=3xui-sub-svc
       - traefik.http.routers.3xui-assets.priority=9996
@@ -103,11 +100,11 @@ services:
       - traefik.http.routers.3xui-sub.service=3xui-sub-svc
       - traefik.http.routers.3xui-sub.priority=9998
 
-      - traefik.http.routers.xhttp33xui-l4.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)
-      - traefik.http.routers.xhttp33xui-l4.entrypoints=l4tcp
-      - traefik.http.routers.xhttp33xui-l4.service=xhttp33xui-svc
-      - traefik.http.routers.xhttp33xui-l4.priority=9999
-      - traefik.http.routers.xhttp33xui-l4.observability.accessLogs=false
+      - traefik.http.routers.xhttp3xui-l4.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)
+      - traefik.http.routers.xhttp3xui-l4.entrypoints=l4tcp
+      - traefik.http.routers.xhttp3xui-l4.service=xhttp3xui-svc
+      - traefik.http.routers.xhttp3xui-l4.priority=9999
+      - traefik.http.routers.xhttp3xui-l4.observability.accessLogs=false
 
       - traefik.http.routers.3xui-health.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_PANEL_PATH}/health`)
       - traefik.http.routers.3xui-health.entrypoints=websecure
@@ -122,7 +119,3 @@ services:
       - traefik.tcp.routers.vless-reality.service=vless-reality-svc
       - traefik.tcp.routers.vless-reality.priority=50
       - traefik.tcp.services.vless-reality-svc.loadbalancer.server.port=${PORT_LOCAL_VISION}
-
-      - traefik.udp.routers.vless-xhttp.entrypoints=l4udp
-      - traefik.udp.routers.vless-xhttp.service=vless-xhttp-svc
-      - traefik.udp.services.vless-xhttp-svc.loadbalancer.server.port=${PORT_LOCAL_XHTTP}

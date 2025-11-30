@@ -156,22 +156,30 @@ main() {
     exec "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"
   fi
 
-  # Точный перезапуск одного сервиса без остановки всего стека.
+  # Точный перезапуск одного/нескольких сервисов без остановки всего стека.
   if [[ "$1" == "restart" ]]; then
-    if [[ $# -lt 2 ]]; then
-      log "ERROR" "Для restart нужно указать имя сервиса"
+    shift
+    if [[ $# -lt 1 ]]; then
+      log "ERROR: Для restart нужно указать имя сервиса(ов)"
       exit 1
     fi
-    local svc="$2"
-    log "Перезапуск сервиса через down/up: $svc"
-    if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" down "$svc"; then
-      log "WARN" "Не удалось выполнить down для $svc, продолжаем"
-    fi
-    if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" up -d "$svc"; then
-      exit 1
-    fi
-    log "Показываем логи сервиса $svc (Ctrl+C для выхода)"
-    exec docker logs -f "$svc"
+
+    local last_svc=""
+    for svc in "$@"; do
+      last_svc="$svc"
+      log "Перезапуск сервиса (rm --stop --force): $svc"
+      if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" rm --stop --force "$svc"; then
+        log "WARN: Не удалось удалить контейнер $svc, продолжаем"
+      fi
+      log "Запуск сервиса: $svc"
+      if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" up -d "$svc"; then
+        log "ERROR: Не удалось поднять сервис $svc"
+        exit 1
+      fi
+    done
+
+    log "Показываем логи сервиса $last_svc (Ctrl+C для выхода)"
+    exec docker logs -f "$last_svc"
   fi
 
   stop_existing_stack "$1"
