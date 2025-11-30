@@ -46,6 +46,17 @@ while [ ! -d /export ]; do
     sleep 0.2
 done
 
+# Привентивно ограничаем права на acme.json
+if [ -f /acme.json ]; then
+    if chmod 600 /acme.json 2>/dev/null; then
+        echo "[Exporter] Permissions set to 600 for /acme.json"
+    else
+        echo "[Exporter] WARN: Failed to set permissions on /acme.json"
+    fi
+else
+    echo "[Exporter] WARN: /acme.json not found to set permissions"
+fi
+
 # PID основного shell-процесса контейнера
 echo $$ > /exporter.pid
 

@@ -3,9 +3,9 @@ services:
     image: alpine:latest
     container_name: traefik-acme-exporter
     restart: unless-stopped
-    depends_on:
-      - traefik
-
+    security_opt:
+      - no-new-privileges=true
+      
     volumes:
       - /opt/docker-proxy/traefik/acme.json:/acme.json:ro
       - /opt/docker-proxy/traefik/pem:/export
