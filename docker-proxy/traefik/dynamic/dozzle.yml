@@ -1,19 +1,49 @@
-# templates/dozzle.yml
+# templates/dozzle.yml (оптимизированная версия)
 http:
+  services:
+    dozzle-service:
+      loadBalancer:
+        servers:
+          - url: "http://dozzle:8080"
+        healthCheck:
+          path: "/${URI_DOZZLE}"
+          interval: "30s"
+          timeout: "5s"
+
+  middlewares:
+    # Специальные заголовки для Dozzle
+    dozzle-headers:
+      headers:
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: false
+        referrerPolicy: "no-referrer-when-downgrade"
+        customResponseHeaders:
+          X-Frame-Options: "SAMEORIGIN"
+          Cross-Origin-Opener-Policy: "same-origin"
+          Cross-Origin-Resource-Policy: "same-origin"
+          server: ""
+          X-Powered-By: ""
+          Cache-Control: "no-cache, no-store, must-revalidate"
+          Pragma: "no-cache"
+          Expires: "0"
+
+    # Цепочка для Dozzle
+    dozzle-chain:
+      chain:
+        middlewares:
+          - dozzle-headers@file
+          - basic-auth@file
+          - compress@file
+
   routers:
     dozzle-router:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_DOZZLE}`)"
       entryPoints:
         - websecure
       middlewares:
-        - basic-auth
+        - dozzle-chain@file
       tls:
-        certResolver: le 
+        certResolver: le
       service: dozzle-service
       priority: 999
-
-  services:
-    dozzle-service:
-      loadBalancer:
-        servers:
-          - url: "http://dozzle:8080"

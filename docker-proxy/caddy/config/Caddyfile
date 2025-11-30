@@ -1,5 +1,8 @@
 import *.caddy
 
+###############################################################################
+#                          ГЛОБАЛЬНЫЕ НАСТРОЙКИ                               #
+###############################################################################
 {
 	debug
 	order crowdsec before respond
@@ -21,6 +24,21 @@ import *.caddy
 		root * /srv
 		# SPA-фоллбек: если файла нет — отдать /index.html с 200
 		try_files {path} /index.html
+		file_server
+	}
+}
+
+:{$PORT_TEST} {
+	encode gzip zstd
+
+	route {
+		crowdsec
+		appsec
+
+		root * /srv/subs
+		# SPA-фоллбек: если файла нет — отдать /index.html с 200
+		try_files {path} /index.html
+		templates
 		file_server
 	}
 }

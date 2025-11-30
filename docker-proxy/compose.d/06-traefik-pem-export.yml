@@ -1,0 +1,24 @@
+services:
+  traefik-acme-exporter:
+    image: alpine:latest
+    container_name: traefik-acme-exporter
+    restart: unless-stopped
+    depends_on:
+      - traefik
+
+    volumes:
+      - /opt/docker-proxy/traefik/acme.json:/acme.json:ro
+      - /opt/docker-proxy/traefik/pem:/export
+      - /opt/docker-proxy/traefik/exporter.sh:/usr/local/bin/exporter.sh:ro
+
+    entrypoint: ["/bin/sh", "/usr/local/bin/exporter.sh"]
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "jq -e '.process == \"running\" and .status != \"ERROR\"' /export/health.json >/dev/null 2>&1"
+        ]
+      interval: 5m
+      timeout: 5s
+      retries: 2

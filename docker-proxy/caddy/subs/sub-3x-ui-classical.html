@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <title>3x-ui sub page</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script>
+        function getParameterByName(name) {
+            name = name.replace(/[\[\]]/g, "\\$&");
+            var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
+                results = regex.exec(window.location.href);
+            if (!results) return null;
+            if (!results[2]) return '';
+            return decodeURIComponent(results[2].replace(/\+/g, " "));
+        }
+
+        function fillNameInput() {
+            var name = getParameterByName('name');
+            if (name) {
+                document.getElementById('nameInput').value = name;
+            }
+        }
+        function openv2rayng() {
+            var name = document.getElementById("nameInput").value.trim();
+            var baseUrl = "v2rayng://install-config?url=https://${DOMAIN}/${SUB_JSON_PATH}/";
+            var fullUrl = baseUrl + encodeURIComponent(name) + "#" + encodeURIComponent(name);
+            window.open(fullUrl);
+        }
+        function openstreisand() {
+            var name = document.getElementById("nameInput").value.trim();
+            var baseUrl = "streisand://import/https://${DOMAIN}/${SUB_JSON_PATH}/";
+            var fullUrl = baseUrl + encodeURIComponent(name) + "#" + encodeURIComponent(name);
+            window.open(fullUrl);
+        }
+        function openinvisibleman() {
+            var name = document.getElementById("nameInput").value.trim();
+            var baseUrl = "invxray://subscription/https://${DOMAIN}/${SUB_JSON_PATH}/";
+            var fullUrl = baseUrl + encodeURIComponent(name) + "#" + encodeURIComponent(name);
+            window.open(fullUrl);
+        }
+        function opensingbox() {
+            var name = document.getElementById("nameInput").value.trim();
+            var templateSelect = document.getElementById("templateSelect").value;
+            var customTemplateUrl = document.getElementById("customTemplateUrl").value.trim();
+            var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
+            var subUrl = "https://${DOMAIN}/${SUB_PATH}/" + encodeURIComponent(name);
+
+            var jsonData = {
+                "subscription": [subUrl],
+                "proxy": [],
+                "delete": "XHTTP",
+                "template": templateUrl,
+                "rename": {},
+                "group-type": "selector",
+                "sort": "tag",
+                "sort-type": "asc"
+            };
+
+            var sub2sbbase64 = btoa(JSON.stringify(jsonData));
+            var sub2sb = "sing-box://import-remote-profile/?url=https://sub.legiz.ru/convert?data=";
+            var fullUrl = sub2sb + sub2sbbase64 + "#" + encodeURIComponent(name);
+            window.open(fullUrl);
+        }
+
+        function copyXrayJsonLink() {
+            var name = document.getElementById("nameInput").value.trim();
+            var XrayJson = "https://${DOMAIN}/${SUB_JSON_PATH}/" + encodeURIComponent(name);
+
+            navigator.clipboard.writeText(XrayJson).then(function () {
+                alert("Ссылка скопирована в буфер обмена!");
+            }, function (err) {
+                alert("Ошибка копирования: " + err);
+            });
+        }
+
+        function toggleCustomTemplateInput() {
+            var templateSelect = document.getElementById("templateSelect").value;
+            var customTemplateInput = document.getElementById("customTemplateInput");
+            customTemplateInput.style.display = templateSelect === "custom" ? "block" : "none";
+        }
+
+        function copySingboxLink() {
+            var name = document.getElementById("nameInput").value.trim();
+            var templateSelect = document.getElementById("templateSelect").value;
+            var customTemplateUrl = document.getElementById("customTemplateUrl").value.trim();
+            var templateUrl = templateSelect === "custom" ? customTemplateUrl : templateSelect;
+            var subUrl = "https://${DOMAIN}/${SUB_PATH}/" + encodeURIComponent(name);
+
+            var jsonData = {
+                "subscription": [subUrl],
+                "proxy": [],
+                "delete": "XHTTP",
+                "template": templateUrl,
+                "rename": {},
+                "group-type": "selector",
+                "sort": "tag",
+                "sort-type": "asc"
+            };
+
+            var sub2sbbase64 = btoa(JSON.stringify(jsonData));
+            var sub2sb = "https://sub.legiz.ru/convert?data=";
+            var sbUrl = sub2sb + sub2sbbase64;
+
+            navigator.clipboard.writeText(sbUrl).then(function () {
+                alert("Ссылка скопирована в буфер обмена!");
+            }, function (err) {
+                alert("Ошибка копирования: " + err);
+            });
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            fillNameInput();
+            toggleCustomTemplateInput();
+        });
+    </script>
+    <style>
+        body {
+            text-align: center;
+        }
+
+        h2 {
+            font-family: Arial, sans-serif;
+            color: #000000;
+        }
+
+        h3 {
+            font-family: Arial, sans-serif;
+            font-weight: normal;
+            color: #000000;
+            line-height: 0.1em;
+        }
+
+        p {
+            font-family: Arial, sans-serif;
+            font-size: 15px;
+            color: #000000;
+        }
+
+        .button {
+            background-color: rgba(25, 25, 25, 0.1);
+            color: #000000;
+            border: 1px solid black;
+            padding: 5px 10px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+            margin: 8px 4px;
+            cursor: pointer;
+            border-radius: 4px;
+            box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .button:hover {
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+
+        input {
+            padding: 5px 10px;
+            font-size: 14px;
+            border: 1px solid black;
+            border-radius: 4px;
+            width: 230px;
+        }
+
+        input:hover {
+            background-color: rgba(240, 240, 240, 1);
+        }
+    </style>
+</head>
+
+<body>
+    <h2 style="line-height: 2.5em;">1. Скачать приложение</h2>
+    <h3>- sing-box -</h3>
+    <button class="button"
+        onclick="window.open('https://play.google.com/store/apps/details?id=io.nekohasekai.sfa', '_blank')">Android</button>
+    <button class="button"
+        onclick="window.open('https://apps.apple.com/us/app/sing-box-vt/id6673731168', '_blank')">iOS</button>
+    <br><br>
+    <h3>- xray -</h3>
+    <button class="button"
+        onclick="window.open('https://play.google.com/store/apps/details?id=com.v2ray.ang', '_blank')">Android</button>
+    <button class="button"
+        onclick="window.open('https://apps.apple.com/us/app/streisand/id6450534064', '_blank')">iOS</button>
+    <br><br>
+    <h3>- Windows -</h3>
+    <button class="button"
+        onclick="window.open('https://github.com/BLUEBL0B/Secret-Sing-Box/blob/main/Client-Guidelines/Sing-Box-Windows-ru.md', '_blank')">sing-box</button>
+    <button class="button"
+        onclick="window.open('https://github.com/InvisibleManVPN/InvisibleMan-XRayClient/releases/latest', '_blank')">Invisible
+        Man</button>
+    <br><br>
+    <h3>- Linux -</h3>
+    <button class="button"
+        onclick="window.open('https://github.com/BLUEBL0B/Secret-Sing-Box/tree/main?tab=readme-ov-file#%D0%BD%D0%B0%D1%81%D1%82%D1%80%D0%BE%D0%B9%D0%BA%D0%B0-%D0%BA%D0%BB%D0%B8%D0%B5%D0%BD%D1%82%D0%BE%D0%B2', '_blank')">sing-box</button>
+    <button class="button" onclick="window.open('https://github.com/hiddify/hiddify-app/releases/latest', '_blank')">Или
+        скачать Hiddify</button>
+    <br><br>
+    <h2 style="line-height: 1.2em;">2. Подключиться к серверу</h2>
+    <p style="line-height: 2em;"><i>Для Android, iOS и Windows</i></p>
+    <p>
+    <form onsubmit="return false;">
+        <input type="text" placeholder="Введите имя пользователя..." id="nameInput" required><br><br>
+        <button class="button" onclick="openv2rayng()">Добавить в v2rayng</button>
+        <button class="button" onclick="openstreisand()">Добавить в streisand</button>
+        <button class="button" onclick="openinvisibleman()">Добавить в Invisible Man</button>
+        <button class="button" onclick="copyXrayJsonLink()">Скопировать ссылку xray json</button>
+        <p style="line-height: 2em;"><i>Выберите шаблон sing-box:</i></p>
+        <select id="templateSelect" onchange="toggleCustomTemplateInput()" required>
+            <option value="https://github.com/legiz-ru/sb-rule-sets/raw/main/.github/sub2sing-box/ru-bundle.json"
+                selected>ru-bundle</option>
+            <option
+                value="https://github.com/legiz-ru/sb-rule-sets/raw/main/.github/sub2sing-box/ru-bundle-refilter.json">
+                ru-bundle-refilter</option>
+            <option value="https://github.com/legiz-ru/sb-rule-sets/raw/main/.github/sub2sing-box/re-filter.json">
+                re-filter</option>
+            <option value="https://github.com/legiz-ru/sb-rule-sets/raw/main/.github/sub2sing-box/secret-sing-box.json">
+                secret-sing-box</option>
+            <option value="custom">Свой шаблон</option>
+        </select><br>
+        <div id="customTemplateInput">
+            <input type="text" placeholder="Введите ссылку на шаблон..." id="customTemplateUrl"><br>
+        </div>
+        <button class="button" onclick="opensingbox()">Добавить в sing-box</button>
+        <button class="button" onclick="copySingboxLink()">Скопировать ссылку sing-box</button>
+    </form>
+    </p>
+    <br>
+</body>
+
+</html>

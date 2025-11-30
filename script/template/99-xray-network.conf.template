@@ -1,42 +1,43 @@
+#!/bin/bash
 
 ###############################################
-#     СЕТЕВЫЕ НАСТРОЙКИ + TCP BBR + ЗАЩИТА    #
+#     РЎР•РўР•Р’Р«Р• РќРђРЎРўР РћР™РљР + TCP BBR + Р—РђР©РРўРђ    #
 #     NETWORK SETTINGS + TCP BBR + SECURITY    #
 #         Xray Optimized sysctl Config         #
 ###############################################
 
 #############################
-# 1. Ядро сети и производительность
+# 1. РЇРґСЂРѕ СЃРµС‚Рё Рё РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚СЊ
 # 1. Network Core & Performance
 #############################
 
-# Алгоритм очередей по умолчанию / Default queuing discipline (for BBR)
+# РђР»РіРѕСЂРёС‚Рј РѕС‡РµСЂРµРґРµР№ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ / Default queuing discipline (for BBR)
 net.core.default_qdisc = fq
 
-# Алгоритм управления перегрузками TCP / TCP congestion control algorithm
+# РђР»РіРѕСЂРёС‚Рј СѓРїСЂР°РІР»РµРЅРёСЏ РїРµСЂРµРіСЂСѓР·РєР°РјРё TCP / TCP congestion control algorithm
 net.ipv4.tcp_congestion_control = bbr
 
-# Включение маршрутизации (необходимо для проксирования) / Enable IP forwarding (required for proxying)
+# Р’РєР»СЋС‡РµРЅРёРµ РјР°СЂС€СЂСѓС‚РёР·Р°С†РёРё (РЅРµРѕР±С…РѕРґРёРјРѕ РґР»СЏ РїСЂРѕРєСЃРёСЂРѕРІР°РЅРёСЏ) / Enable IP forwarding (required for proxying)
 net.ipv4.ip_forward = 1
 
-# Размеры сокетных буферов / Socket buffer sizes
+# Р Р°Р·РјРµСЂС‹ СЃРѕРєРµС‚РЅС‹С… Р±СѓС„РµСЂРѕРІ / Socket buffer sizes
 net.core.rmem_default = 262144
 net.core.rmem_max     = 134217728
 net.core.wmem_default = 262144
 net.core.wmem_max     = 134217728
 
-# Очередь соединений и backlog / Connection queue and backlog
+# РћС‡РµСЂРµРґСЊ СЃРѕРµРґРёРЅРµРЅРёР№ Рё backlog / Connection queue and backlog
 net.core.somaxconn           = 30000
 net.core.netdev_max_backlog  = 250000
 net.core.netdev_budget       = 600
 net.core.netdev_budget_usecs = 8000
 net.core.busy_poll           = 50
 
-# inotify лимиты (для большого числа наблюдателей) / inotify limits (for many file watchers)
+# inotify Р»РёРјРёС‚С‹ (РґР»СЏ Р±РѕР»СЊС€РѕРіРѕ С‡РёСЃР»Р° РЅР°Р±Р»СЋРґР°С‚РµР»РµР№) / inotify limits (for many file watchers)
 fs.inotify.max_user_instances = 30000
 
 #############################
-# 2. UDP буферы / UDP Buffers
+# 2. UDP Р±СѓС„РµСЂС‹ / UDP Buffers
 #############################
 
 net.ipv4.udp_mem      = 65536 131072 262144
@@ -44,7 +45,7 @@ net.ipv4.udp_rmem_min = 8192
 net.ipv4.udp_wmem_min = 8192
 
 #############################
-# 3. TCP ускорение и оптимизация / TCP Acceleration & Optimization
+# 3. TCP СѓСЃРєРѕСЂРµРЅРёРµ Рё РѕРїС‚РёРјРёР·Р°С†РёСЏ / TCP Acceleration & Optimization
 #############################
 
 net.ipv4.tcp_rfc1337             = 1
@@ -71,7 +72,7 @@ net.ipv4.tcp_rmem                = 4096 87380 16777216
 net.ipv4.tcp_wmem                = 4096 65536 16777216
 
 #############################
-# 4. Conntrack (для NAT и TProxy) / Conntrack (for NAT & TProxy)
+# 4. Conntrack (РґР»СЏ NAT Рё TProxy) / Conntrack (for NAT & TProxy)
 #############################
 
 net.netfilter.nf_conntrack_max                      = 262144
@@ -81,7 +82,7 @@ net.netfilter.nf_conntrack_tcp_timeout_close_wait   = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait     = 60
 
 #############################
-# 5. Защита и фильтрация / Security & Filtering
+# 5. Р—Р°С‰РёС‚Р° Рё С„РёР»СЊС‚СЂР°С†РёСЏ / Security & Filtering
 #############################
 
 net.ipv4.tcp_syncookies              = 1
@@ -98,14 +99,14 @@ net.ipv4.conf.default.secure_redirects    = 0
 net.ipv4.icmp_echo_ignore_all        = 1
 
 #############################
-# 6. ARP фильтрация / ARP Filtering
+# 6. ARP С„РёР»СЊС‚СЂР°С†РёСЏ / ARP Filtering
 #############################
 
 net.ipv4.conf.all.arp_filter     = 1
 net.ipv4.conf.default.arp_filter = 1
 
 #############################
-# 7. Отключение IPv6 (если не требуется)
+# 7. РћС‚РєР»СЋС‡РµРЅРёРµ IPv6 (РµСЃР»Рё РЅРµ С‚СЂРµР±СѓРµС‚СЃСЏ)
 # 7. Disable IPv6 (if not needed)
 #############################
 
@@ -118,7 +119,7 @@ net.ipv6.conf.all.accept_ra         = 0
 net.ipv6.conf.default.accept_ra     = 0
 
 #############################
-# 8. IPv6 (если требуется, раскомментируйте)
+# 8. IPv6 (РµСЃР»Рё С‚СЂРµР±СѓРµС‚СЃСЏ, СЂР°СЃРєРѕРјРјРµРЅС‚РёСЂСѓР№С‚Рµ)
 # 8. IPv6 (if enabled, uncomment as needed)
 #############################
 
@@ -132,6 +133,6 @@ net.ipv6.conf.default.accept_ra     = 0
 # net.ipv6.icmp.ratelimit               = 1
 
 ###############################################
-# Конец оптимизации сети для Xray
+# РљРѕРЅРµС† РѕРїС‚РёРјРёР·Р°С†РёРё СЃРµС‚Рё РґР»СЏ Xray
 # End of Xray sysctl network optimization
 ###############################################

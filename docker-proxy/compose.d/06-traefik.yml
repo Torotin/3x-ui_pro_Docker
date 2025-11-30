@@ -1,0 +1,140 @@
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+    depends_on:
+      crowdsec:
+        condition: service_healthy
+      caddy:
+        condition: service_healthy
+      dozzle:
+        condition: service_healthy
+    env_file:
+      - /opt/docker-proxy/.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/docker-proxy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /opt/docker-proxy/traefik/acme.json:/acme.json
+      - /opt/docker-proxy/traefik/dynamic:/templates:ro
+      - /opt/docker-proxy/_logs/traefik:/logs
+    ports:
+      - "80:80"
+      - "443:443/tcp"
+      - "443:443/udp"
+      - "4443:4443/tcp"
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.6
+      dns-net:
+        ipv4_address: 172.19.0.6
+    # dns:
+    #   - 172.19.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x traefik >/dev/null && nc -z 127.0.0.1 80 && nc -z 127.0.0.1 4443"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      # Basic Auth
+      - traefik.http.middlewares.basic-auth.basicauth.realm=Basic Authentication
+      - traefik.http.middlewares.basic-auth.basicauth.users=${HT_PASS_ENCODED}
+
+      # Базовые middlewares
+      - traefik.http.middlewares.compress.compress=true
+      - traefik.http.middlewares.rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.rate-limit.ratelimit.burst=100
+
+      - traefik.http.middlewares.secured-chain.chain.middlewares=rate-limit,compress
+      - traefik.http.middlewares.api-chain.chain.middlewares=rate-limit,compress
+      - traefik.http.middlewares.static-chain.chain.middlewares=compress
+
+      # Мониторинг Traefik (metrics/health/ping) за basic-auth
+      - traefik.http.routers.traefik-metrics.rule=Host(`${WEBDOMAIN}`) && Path(`/metrics`)
+      - traefik.http.routers.traefik-metrics.entrypoints=websecure
+      - traefik.http.routers.traefik-metrics.middlewares=basic-auth
+      - traefik.http.routers.traefik-metrics.service=api@internal
+      - traefik.http.routers.traefik-metrics.tls.certresolver=le
+
+      - traefik.http.routers.traefik-health.rule=Host(`${WEBDOMAIN}`) && Path(`/health`)
+      - traefik.http.routers.traefik-health.entrypoints=websecure
+      - traefik.http.routers.traefik-health.service=api@internal
+      - traefik.http.routers.traefik-health.tls.certresolver=le
+
+      - traefik.http.routers.traefik-ping.rule=Host(`${WEBDOMAIN}`) && Path(`/ping`)
+      - traefik.http.routers.traefik-ping.entrypoints=websecure
+      - traefik.http.routers.traefik-ping.service=api@internal
+      - traefik.http.routers.traefik-ping.tls.certresolver=le
+
+      # Dashboard: цепочки редиректов, переписывание /api и приоритеты (manifest>prefixed>api>root>redirect)
+      - traefik.http.middlewares.dash-strip-prefix.stripPrefix.prefixes=/${URI_TRAEFIK_DASHBOARD}
+      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.regex=^/dashboard(.*)$
+      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard$1
+      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.permanent=true
+      - traefik.http.middlewares.dash-redirect-root.redirectRegex.regex=^/${URI_TRAEFIK_DASHBOARD}/?$
+      - traefik.http.middlewares.dash-redirect-root.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard/
+      - traefik.http.middlewares.dash-redirect-root.redirectRegex.permanent=true
+
+      - traefik.http.routers.traefik-dashboard-redirect.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/dashboard`)
+      - traefik.http.routers.traefik-dashboard-redirect.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard-redirect.middlewares=dash-redirect-to-prefixed
+      - traefik.http.routers.traefik-dashboard-redirect.service=api@internal
+      - traefik.http.routers.traefik-dashboard-redirect.tls.certresolver=le
+      - traefik.http.routers.traefik-dashboard-redirect.priority=90
+
+      - traefik.http.routers.traefik-dashboard-root-to-ui.rule=Host(`${WEBDOMAIN}`) && (Path(`/${URI_TRAEFIK_DASHBOARD}`) || Path(`/${URI_TRAEFIK_DASHBOARD}/`))
+      - traefik.http.routers.traefik-dashboard-root-to-ui.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard-root-to-ui.middlewares=dash-redirect-root
+      - traefik.http.routers.traefik-dashboard-root-to-ui.service=api@internal
+      - traefik.http.routers.traefik-dashboard-root-to-ui.tls.certresolver=le
+      - traefik.http.routers.traefik-dashboard-root-to-ui.priority=100
+
+      - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.regex=^https?://([^/]+)/api/(.*)
+      - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.replacement=https://$1/${URI_TRAEFIK_DASHBOARD}/api/$2
+      - traefik.http.routers.traefik-dashboard-api-absolute.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.traefik-dashboard-api-absolute.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard-api-absolute.middlewares=dash-api-rewrite,basic-auth
+      - traefik.http.routers.traefik-dashboard-api-absolute.service=api@internal
+      - traefik.http.routers.traefik-dashboard-api-absolute.tls.certresolver=le
+      - traefik.http.routers.traefik-dashboard-api-absolute.priority=120
+      
+      - traefik.http.routers.traefik-dashboard-prefixed.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/${URI_TRAEFIK_DASHBOARD}/dashboard`) || PathPrefix(`/${URI_TRAEFIK_DASHBOARD}/api`))
+      - traefik.http.routers.traefik-dashboard-prefixed.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard-prefixed.middlewares=dash-strip-prefix,basic-auth
+      - traefik.http.routers.traefik-dashboard-prefixed.service=api@internal
+      - traefik.http.routers.traefik-dashboard-prefixed.tls.certresolver=le
+      - traefik.http.routers.traefik-dashboard-prefixed.priority=140
+      
+      - traefik.http.routers.traefik-dashboard-manifest.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_TRAEFIK_DASHBOARD}/dashboard/manifest.json`)
+      - traefik.http.routers.traefik-dashboard-manifest.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard-manifest.service=api@internal
+      - traefik.http.routers.traefik-dashboard-manifest.tls.certresolver=le
+      - traefik.http.routers.traefik-dashboard-manifest.priority=150
+
+      # CROWDSEC BOUNCER
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.enabled=true
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.mode=live
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.logLevel=INFO
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.updateIntervalSeconds=10
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.updateMaxFailure=3
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.defaultDecisionSeconds=10
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.httpTimeoutSeconds=5
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecMode=stream
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecAppsecEnabled=true
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecAppsecFailureBlock=true
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecAppsecUnreachableBlock=false
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecAppsecHost=crowdsec:7422
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecLapiKey=${CROWDSEC_API_KEY_TRAEFIK}
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecLapiHost=crowdsec:8080
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecLapiScheme=http
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.forwardedHeadersTrustedIPs=172.18.0.0/24,172.19.0.0/24
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.clientTrustedIPs=172.18.0.0/24,172.19.0.0/24
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecLapiTimeout=5s
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecLapiRetryInterval=1s
+      - traefik.http.middlewares.crowdsec-bouncer.plugin.bouncer.crowdsecLapiMaxRetries=3

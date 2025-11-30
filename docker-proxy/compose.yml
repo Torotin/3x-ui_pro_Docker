@@ -66,8 +66,8 @@ services:
     networks:
       - traefik-proxy
       - dns-net
-    dns:
-      - 172.31.0.53
+    # dns:
+    #   - 172.19.0.10
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:7422:7422"
@@ -145,10 +145,11 @@ services:
       - traefik-proxy
       - dns-net
     # dns:
-    #   - 172.31.0.53
+    #   - 172.19.0.10
     volumes:
       - /opt/docker-proxy/_logs/caddy:/var/log/caddy
       - /opt/docker-proxy/caddy/config:/etc/caddy
+      - /opt/docker-proxy/caddy/subs:/srv/subs:ro
       # - /opt/docker-proxy/caddy/site:/srv
     env_file:
       - /opt/docker-proxy/.env
@@ -196,7 +197,7 @@ services:
       - traefik-proxy
       - dns-net
     # dns:
-    #   - 172.31.0.53
+    #   - 172.19.0.10
     healthcheck:
       test: ["CMD-SHELL", "pgrep -x traefik >/dev/null && nc -z 127.0.0.1 80 && nc -z 127.0.0.1 443"]
       interval: 30s
@@ -225,7 +226,7 @@ services:
       - traefik-proxy
       - dns-net
     # dns:
-    #   - 172.31.0.53
+    #   - 172.19.0.10
     security_opt:
       - no-new-privileges=true
 
@@ -250,7 +251,7 @@ services:
       traefik-proxy:
       dns-net:
     dns:
-      - 172.31.0.53
+      - 172.19.0.10
     volumes:
       - /opt/docker-proxy/3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart
       - /opt/docker-proxy/3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart
@@ -313,7 +314,7 @@ services:
   docker-warp-socks:
     image: ghcr.io/mon-ius/docker-warp-socks:v5
     container_name: warp_socks_v5
-    restart: always
+    restart: unless-stopped
     networks:
       - traefik-proxy
       - dns-net
@@ -333,7 +334,7 @@ services:
     networks:
       traefik-proxy:
       dns-net:
-        ipv4_address: 172.31.0.53
+        ipv4_address: 172.19.0.10
     # DNS service ports (uncomment if 53 is free on host)
     # ports:
     #   - "53:53/udp"
@@ -384,10 +385,22 @@ services:
       - traefik-proxy
       - dns-net
     # dns:
-    #   - 172.31.0.53
+    #   - 172.19.0.10
     security_opt:
       - no-new-privileges=true
-
+      
+  sub2sing:
+    image: ghcr.io/legiz-ru/sub2sing-box:latest
+    container_name: sub2sing
+    restart: unless-stopped
+    extra_hosts:
+      - ${WEBDOMAIN}:${PUBLIC_IPV4}
+    networks:
+      - traefik-proxy
+      - dns-net
+    # dns:
+    #   - 172.19.0.10
+      
 networks:
   traefik-proxy:
     external: true

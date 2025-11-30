@@ -1,0 +1,66 @@
+# /templates/traefik_monitoring.yml
+http:
+  middlewares:
+    # Middleware для метрик Prometheus
+    prometheus-headers:
+      headers:
+        customResponseHeaders:
+          Cache-Control: "no-cache, no-store, must-revalidate"
+          Pragma: "no-cache"
+          Expires: "0"
+          server: ""
+          X-Powered-By: ""
+
+    # Middleware для health checks
+    health-check-headers:
+      headers:
+        customResponseHeaders:
+          Cache-Control: "no-cache, no-store, must-revalidate"
+          Pragma: "no-cache"
+          Expires: "0"
+          server: ""
+          X-Powered-By: ""
+
+  routers:
+    # Prometheus метрики (если включены)
+    traefik-metrics:
+      rule: "Host(`${WEBDOMAIN}`) && Path(`/metrics`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - prometheus-headers@file
+        - basic-auth@file
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: 1101
+      observability:
+        accessLogs: false
+
+    # Health check endpoint
+    traefik-health:
+      rule: "Host(`${WEBDOMAIN}`) && Path(`/health`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - health-check-headers@file
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: 1102
+      observability:
+        accessLogs: false
+
+    # Ping endpoint для мониторинга
+    traefik-ping:
+      rule: "Host(`${WEBDOMAIN}`) && Path(`/ping`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - health-check-headers@file
+      service: api@internal
+      tls:
+        certResolver: le
+      priority: 1103
+      observability:
+        accessLogs: false

@@ -1,4 +1,4 @@
-# /dynamic/3x-ui.yml
+﻿# /dynamic/3x-ui.yml (оптимизированная версия)
 
 http:
   services:
@@ -6,58 +6,140 @@ http:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_VLESS_PANEL}"
+        healthCheck:
+          path: "http://3x-ui:${PORT_LOCAL_VLESS_PANEL}/${URI_PANEL_PATH}/"
+          interval: "30s"
+          timeout: "5s"
+
     xui-sub-svc:
       loadBalancer:
         servers:
-          - url: "http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}"
+          - url: "http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}${URI_SUB_PATH}"
+        # healthCheck:
+        #   path: "http://3x-ui:${PORT_LOCAL_VLESS_SUBSCRIBE}"
+        #   interval: "30s"
+        #   timeout: "5s"
+
     xhttp3xui-svc:
       loadBalancer:
         servers:
           - url: "http://3x-ui:${PORT_LOCAL_XHTTP}"
+        # healthCheck:
+        #   path: "http://3x-ui:${PORT_LOCAL_XHTTP}"
+        #   interval: "30s"
+        #   timeout: "5s"
 
   middlewares:
+    # Оптимизированный middleware для подписок
     xui-sub-hostheader:
       headers:
         customRequestHeaders:
           Host: "${WEBDOMAIN}"
+        customResponseHeaders:
+          Cache-Control: "public, max-age=3600"
 
+    # Специальные заголовки для XHTTP (более мягкие настройки)
     xhttp-headers:
       headers:
         contentTypeNosniff: true
         browserXssFilter: true
-        frameDeny: true
-        referrerPolicy: "no-referrer"
+        frameDeny: false
+        referrerPolicy: "no-referrer-when-downgrade"
+        customResponseHeaders:
+          X-Frame-Options: "SAMEORIGIN"
+          Cross-Origin-Opener-Policy: "same-origin"
+          Cross-Origin-Resource-Policy: "same-origin"
+          Permissions-Policy: "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+          server: ""
+          x-powered-by: ""
+          Access-Control-Allow-Origin: "*"
+          Access-Control-Allow-Methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+          Access-Control-Allow-Headers: "Accept, Origin, Content-Type, Authorization, X-Requested-With, X-Signalr-User-Agent, Cache-Control, DNT, If-Modified-Since, Keep-Alive, User-Agent, Token, Profile"
+          Access-Control-Allow-Credentials: "true"
+          Access-Control-Allow-Private-Network: "true"
+          Access-Control-Max-Age: "86400"
+
+    # Middleware для статических ресурсов панели
+    xui-assets:
+      plugin:
+        fullUrlRewrite:
+          regex: "^assets/(.*)"
+          replacement: "${URI_SUB_PATH}$1"
+
+    # Цепочка для панели управления
+    xui-panel-chain:
+      chain:
+        middlewares:
+          - api-chain@file
+          - xui-sub-hostheader@file
+
+    # Цепочка для подписок
+    xui-sub-chain:
+      chain:
+        middlewares:
+          - static-chain@file
+          - xui-sub-hostheader@file
 
   routers:
-    # Панель 3x-ui (SPA-путь)
+    # Панель 3x-ui (SPA) - оптимизированная
     xui-panel:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)"
       entryPoints:
         - websecure
+      middlewares:
+        - xui-panel-chain@file
       tls:
         certResolver: le
       service: xui-panel-svc
       priority: 9997
 
-    # Подписки (SUB + JSON)
+    # Подписки (SUB + JSON) - оптимизированные
     xui-sub:
       rule: Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
       entryPoints:
         - websecure
       middlewares:
-        - xui-sub-hostheader
+        - xui-sub-chain@file
       tls:
         certResolver: le
       service: xui-sub-svc
       priority: 9998
 
-    # XHTTP (plain HTTP)
+    # Статические ресурсы - оптимизированные
+    xui-assets:
+      rule: Host(`${WEBDOMAIN}`) && PathPrefix(`/assets/`)
+      entryPoints:
+        - websecure
+      middlewares:
+        - static-chain@file
+        - xui-sub-hostheader@file
+        - xui-assets@file
+      tls:
+        certResolver: le
+      service: xui-sub-svc
+      priority: 9996
+
+    # XHTTP (plain HTTP) - оптимизированный
     xhttp3xui-l4:
       rule: "Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)"
       entryPoints: [l4tcp]
-      middlewares:
-        - xhttp-headers
+      # middlewares:
+      #   - xhttp-headers@file
       service: xhttp3xui-svc
       priority: 9999
       observability:
-        accessLogs: false   # <-- disable access logs for this router only
+        accessLogs: false
+
+    # Health check для мониторинга
+    xui-health:
+      rule: "Host(`${WEBDOMAIN}`) && Path(`/${URI_PANEL_PATH}/health`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - health-check@file
+      tls:
+        certResolver: le
+      service: xui-panel-svc
+      priority: 10000
+      observability:
+        accessLogs: false

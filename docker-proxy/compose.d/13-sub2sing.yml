@@ -1,0 +1,12 @@
+services:
+  sub2sing:
+    image: ghcr.io/legiz-ru/sub2sing-box:latest
+    container_name: sub2sing
+    restart: unless-stopped
+    extra_hosts:
+      - ${WEBDOMAIN}:${PUBLIC_IPV4}
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.13
+      dns-net:
+        ipv4_address: 172.19.0.13

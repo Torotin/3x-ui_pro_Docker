@@ -46,7 +46,7 @@ services:
       - traefik-proxy
       - dns-net
     dns:
-      - 172.31.0.53
+      - 172.19.0.10
 
 networks:
   traefik-proxy:
@@ -60,3 +60,7 @@ networks:
 volumes:
   Lampac_cache:
     driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=5g

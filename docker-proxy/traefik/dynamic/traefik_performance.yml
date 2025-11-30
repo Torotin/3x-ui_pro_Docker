@@ -1,0 +1,55 @@
+# /templates/traefik_performance.yml
+http:
+  middlewares:
+    # Оптимизированное кэширование для API
+    api-cache:
+      buffering:
+        maxRequestBodyBytes: 5242880   # 5MB
+        memRequestBodyBytes: 1048576  # 1MB
+        maxResponseBodyBytes: 5242880 # 5MB
+        memResponseBodyBytes: 1048576  # 1MB
+        retryExpression: "IsNetworkError() && Attempts() <= 2"
+
+    # Оптимизированное кэширование для статики
+    static-cache:
+      buffering:
+        maxRequestBodyBytes: 10485760  # 10MB
+        memRequestBodyBytes: 2097152  # 2MB
+        maxResponseBodyBytes: 10485760 # 10MB
+        memResponseBodyBytes: 2097152  # 2MB
+        retryExpression: "IsNetworkError() && Attempts() <= 2"
+
+    # Circuit breaker для защиты от перегрузки
+    circuit-breaker:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.3 || ResponseCodeRatio(500, 600, 0, 600) > 0.3"
+        checkPeriod: "10s"
+        fallbackDuration: "30s"
+        recoveryDuration: "10s"
+
+    # Retry с экспоненциальным backoff
+    retry-optimized:
+      retry:
+        attempts: 3
+        initialInterval: "100ms"
+
+    # Timeout middleware
+    timeout-optimized:
+      forwardAuth:
+        address: "http://crowdsec:8080/health"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - "X-Forwarded-User"
+        authRequestHeaders:
+          - "X-Forwarded-User"
+
+  services:
+    # Оптимизированный health check service
+    health-check-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080"
+        healthCheck:
+          path: "/health"
+          interval: "10s"
+          timeout: "2s"
