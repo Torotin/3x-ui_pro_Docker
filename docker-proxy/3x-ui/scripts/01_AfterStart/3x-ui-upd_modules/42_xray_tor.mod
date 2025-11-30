@@ -1,3 +1,4 @@
+#!/bin/bash
 update_xray_tor() {
     # Добавляем SOCKS outbound на tor-proxy:9150 и правило маршрутизации для .onion
 

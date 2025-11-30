@@ -1,3 +1,4 @@
+#!/bin/bash
 ensure_socks_outbound() {
     local host="$1"
     local port="$2"

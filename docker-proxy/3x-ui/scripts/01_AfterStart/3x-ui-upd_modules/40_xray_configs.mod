@@ -1,3 +1,4 @@
+#!/bin/bash
 update_xray_settings() {
     log INFO "Получение текущих параметров XRAY."
 

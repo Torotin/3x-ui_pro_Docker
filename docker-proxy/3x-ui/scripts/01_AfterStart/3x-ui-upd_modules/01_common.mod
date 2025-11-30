@@ -1,3 +1,4 @@
+#!/bin/bash
 # Определение флага страны по IP (POSIX совместимо)
 detect_country_flag() {
     log INFO "Определение флага страны по IP."

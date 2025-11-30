@@ -1,3 +1,4 @@
+#!/bin/bash
 resolve_and_login() {
     # $1 = базовый адрес (например, http://localhost:2053)
     try_url() {
