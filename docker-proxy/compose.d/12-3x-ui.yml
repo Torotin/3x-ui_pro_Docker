@@ -81,21 +81,21 @@ services:
 
       - traefik.http.routers.3xui-assets.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/assets/`)
       - traefik.http.routers.3xui-assets.entrypoints=websecure
-      - traefik.http.routers.3xui-assets.middlewares=3xui-static-chain
+      - traefik.http.routers.3xui-assets.middlewares=crowdsec-bouncer,3xui-static-chain
       - traefik.http.routers.3xui-assets.tls.certresolver=le
       - traefik.http.routers.3xui-assets.service=3xui-sub-svc
       - traefik.http.routers.3xui-assets.priority=9996
 
       - traefik.http.routers.3xui-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)
       - traefik.http.routers.3xui-panel.entrypoints=websecure
-      - traefik.http.routers.3xui-panel.middlewares=3xui-panel-chain
+      - traefik.http.routers.3xui-panel.middlewares=crowdsec-bouncer,3xui-panel-chain
       - traefik.http.routers.3xui-panel.tls.certresolver=le
       - traefik.http.routers.3xui-panel.service=3xui-panel-svc
       - traefik.http.routers.3xui-panel.priority=9997
 
       - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
       - traefik.http.routers.3xui-sub.entrypoints=websecure
-      - traefik.http.routers.3xui-sub.middlewares=3xui-sub-chain
+      - traefik.http.routers.3xui-sub.middlewares=crowdsec-bouncer,3xui-sub-chain
       - traefik.http.routers.3xui-sub.tls.certresolver=le
       - traefik.http.routers.3xui-sub.service=3xui-sub-svc
       - traefik.http.routers.3xui-sub.priority=9998

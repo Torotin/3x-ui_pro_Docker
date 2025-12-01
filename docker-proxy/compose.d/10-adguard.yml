@@ -58,7 +58,7 @@ services:
 
       - traefik.http.middlewares.strip-adguard-prefix.stripPrefix.prefixes=/${URI_ADGUARD_PANEL}
 
-      - traefik.http.middlewares.adguard-chain.chain.middlewares=strip-adguard-prefix,redirect-adguard-panel,compress
+      - traefik.http.middlewares.adguard-chain.chain.middlewares=crowdsec-bouncer,strip-adguard-prefix,redirect-adguard-panel,compress
 
       # Router
       - traefik.http.routers.adguard-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_PANEL}`)

@@ -49,11 +49,14 @@ services:
 
       # Базовые middlewares
       - traefik.http.middlewares.compress.compress=true
+
       - traefik.http.middlewares.rate-limit.ratelimit.average=50
       - traefik.http.middlewares.rate-limit.ratelimit.burst=100
 
-      - traefik.http.middlewares.secured-chain.chain.middlewares=rate-limit,compress
+      - traefik.http.middlewares.secured-chain.chain.middlewares=crowdsec-bouncer,rate-limit,compress
+
       - traefik.http.middlewares.api-chain.chain.middlewares=rate-limit,compress
+
       - traefik.http.middlewares.static-chain.chain.middlewares=compress
 
       # Мониторинг Traefik (metrics/health/ping) за basic-auth
@@ -75,9 +78,11 @@ services:
 
       # Dashboard: цепочки редиректов, переписывание /api и приоритеты (manifest>prefixed>api>root>redirect)
       - traefik.http.middlewares.dash-strip-prefix.stripPrefix.prefixes=/${URI_TRAEFIK_DASHBOARD}
+
       - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.regex=^/dashboard(.*)$
       - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard$1
       - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.permanent=true
+
       - traefik.http.middlewares.dash-redirect-root.redirectRegex.regex=^/${URI_TRAEFIK_DASHBOARD}/?$
       - traefik.http.middlewares.dash-redirect-root.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard/
       - traefik.http.middlewares.dash-redirect-root.redirectRegex.permanent=true
@@ -98,6 +103,7 @@ services:
 
       - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.regex=^https?://([^/]+)/api/(.*)
       - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.replacement=https://$1/${URI_TRAEFIK_DASHBOARD}/api/$2
+      
       - traefik.http.routers.traefik-dashboard-api-absolute.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)
       - traefik.http.routers.traefik-dashboard-api-absolute.entrypoints=websecure
       - traefik.http.routers.traefik-dashboard-api-absolute.middlewares=dash-api-rewrite,basic-auth

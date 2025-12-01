@@ -43,9 +43,10 @@ services:
       - traefik.http.middlewares.compress.compress=true
       - traefik.http.middlewares.dozzle-strip.stripPrefix.prefixes=/${URI_DOZZLE}
 
-      - traefik.http.middlewares.dozzle-chain.chain.middlewares=basic-auth,compress
+      - traefik.http.middlewares.dozzle-chain.chain.middlewares=crowdsec-bouncer,basic-auth,compress
+
       # API без compress, чтобы SSE не обрывались
-      - traefik.http.middlewares.dozzle-api-chain.chain.middlewares=basic-auth
+      - traefik.http.middlewares.dozzle-api-chain.chain.middlewares=crowdsec-bouncer,basic-auth
 
       # Router
       - traefik.http.routers.dozzle-router.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_DOZZLE}`)
