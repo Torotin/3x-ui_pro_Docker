@@ -23,6 +23,7 @@ services:
       - "443:443/tcp"
       - "443:443/udp"
       - "4443:4443/tcp"
+    entrypoint: ["sh", "-c", "chmod 600 /acme.json && exec traefik"]
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.6

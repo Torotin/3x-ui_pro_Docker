@@ -46,19 +46,8 @@ while [ ! -d /export ]; do
     sleep 0.2
 done
 
-# Привентивно ограничаем права на acme.json
-if [ -f /acme.json ]; then
-    if chmod 600 /acme.json 2>/dev/null; then
-        echo "[Exporter] Permissions set to 600 for /acme.json"
-    else
-        echo "[Exporter] WARN: Failed to set permissions on /acme.json"
-    fi
-else
-    echo "[Exporter] WARN: /acme.json not found to set permissions"
-fi
-
 # PID основного shell-процесса контейнера
-echo $$ > /exporter.pid
+echo $$ > /home/exporter.pid
 
 last_update=0
 debounce=3
@@ -74,7 +63,7 @@ sanitize_domain() {
 
 # Проверка "жив ли" основной процесс (BusyBox-safe)
 check_process() {
-    pid=$(cat /exporter.pid 2>/dev/null)
+    pid=$(cat /home/exporter.pid 2>/dev/null)
     if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
         echo "running"
     else
@@ -88,7 +77,7 @@ write_health() {
     msg="$2"
     process_status=$(check_process)
 
-    cat > /health.json <<EOF
+    cat > /home/health.json <<EOF
 {
   "status": "$status",
   "process": "$process_status",
@@ -104,7 +93,7 @@ EOF
 write_health_init() {
     process_status=$(check_process)
 
-    cat > /health.json <<EOF
+    cat > /home/health.json <<EOF
 {
   "status": "INIT",
   "process": "$process_status",

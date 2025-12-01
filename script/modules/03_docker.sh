@@ -260,10 +260,34 @@ docker_create_network() {
         esac
     done
 
-    # Если уже есть — ничего не делаем
+    # Проверяем наличие docker
+    if ! command_exists docker; then
+        log "ERROR" "docker is not installed or not in PATH"
+        exit 1
+    fi
+
+    # Если уже есть — ничего не делаем, но сверяем подсеть (если задана)
     if docker network inspect "$name" &>/dev/null; then
         log "INFO" "Network '$name' already exists, skipping creation."
+        if [[ -n "$subnet" ]]; then
+          local existing_subnets
+          existing_subnets=$(docker network inspect "$name" --format '{{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null)
+          if ! grep -qw "$subnet" <<<"$existing_subnets"; then
+            log "WARN" "Network '$name' exists, but expected subnet '$subnet' not found (have: $existing_subnets)"
+          fi
+        fi
         return 0
+    fi
+
+    # Предварительная проверка на совпадение подсетей с другими сетями (чтобы не словить invalid pool request)
+    if [[ -n "$subnet" ]]; then
+      local overlap
+      overlap=$(docker network ls -q | xargs -r docker network inspect --format '{{.Name}} {{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null | grep -w "$subnet" || true)
+      if [[ -n "$overlap" ]]; then
+        log "ERROR" "Подсеть $subnet уже используется сетями: $(echo "$overlap" | awk '{print $1}' | tr '\n' ' ')"
+        log "ERROR" "Создание сети '$name' остановлено во избежание конфликта (invalid pool request). Удалите/измените конфликтующие сети или задайте другой subnet."
+        exit 1
+      fi
     fi
 
     # Если external — создаём сеть, учитывая подсеть/IPv6, если заданы
