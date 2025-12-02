@@ -121,6 +121,9 @@ run_with_retries() {
       return 0
     fi
 
+    # Проверяем и убираем unhealthy между ретраями, чтобы не тащить битые контейнеры дальше
+    remove_unhealthy_containers
+
     if (( attempt < attempts )); then
       log "Попытка ${attempt} неудачна, повтор через ${delay}с"
       sleep "$delay"
@@ -129,6 +132,51 @@ run_with_retries() {
 
   log "Команда не удалась после ${attempts} попыток"
   return 1
+}
+
+remove_unhealthy_containers() {
+  # Ищем только в текущем стеке (compose ps) и удаляем контейнеры со статусом unhealthy.
+  if ! command -v awk >/dev/null 2>&1; then
+    log "WARN: awk недоступен, пропускаем удаление unhealthy контейнеров"
+    return
+  fi
+
+  local lines
+  if ! lines=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" ps --format "table {{.Name}}\t{{.Health}}" 2>/dev/null); then
+    log "WARN: Не удалось получить список контейнеров для проверки здоровья"
+    return
+  fi
+
+  mapfile -t UNHEALTHY < <(echo "$lines" | tail -n +2 | awk '$2=="unhealthy"{print $1}')
+  if [[ ${#UNHEALTHY[@]} -eq 0 ]]; then
+    log "Unhealthy контейнеров не обнаружено"
+    return
+  fi
+
+  log "Найдены unhealthy контейнеры: ${UNHEALTHY[*]}"
+  for c in "${UNHEALTHY[@]}"; do
+    log "Логи $c (последние 100 строк):"
+    docker logs --tail 100 "$c" 2>&1 || log "WARN: Не удалось получить логи $c"
+  done
+
+  log "Останавливаем и удаляем: ${UNHEALTHY[*]}"
+  for c in "${UNHEALTHY[@]}"; do
+    docker rm -f "$c" >/dev/null 2>&1 || log "WARN: Не удалось удалить $c"
+  done
+}
+
+validate_configs() {
+  local primary_cmd="$1"
+  if [[ "$primary_cmd" != "up" ]]; then
+    return
+  fi
+
+  log "Проверяем конфигурацию: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} config"
+  if ! output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config 2>&1 >/dev/null); then
+    log "ERROR: Найдены ошибки в конфигурации compose:"
+    echo "$output" >&2
+    exit 1
+  fi
 }
 
 main() {
@@ -182,10 +230,16 @@ main() {
     exec docker logs -f "$last_svc"
   fi
 
+  validate_configs "$1"
   stop_existing_stack "$1"
 
   if [[ "$1" == "up" ]]; then
-    run_with_retries "$@" || exit 1
+    if run_with_retries "$@"; then
+      exit 0
+    else
+      remove_unhealthy_containers
+      exit 1
+    fi
     exit 0
   fi
 
