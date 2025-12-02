@@ -57,9 +57,9 @@ services:
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.regex=^//(${WEBDOMAIN})(/.*)?$
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.replacement=$2
 
-      - traefik.http.middlewares.static-chain.chain.middlewares=compress
+      - traefik.http.middlewares.static-chain.chain.middlewares=crowdsec-bouncer,compress
 
-      - traefik.http.middlewares.caddy-chain.chain.middlewares=error-pages,redirect-to-caddy,compress
+      - traefik.http.middlewares.caddy-chain.chain.middlewares=crowdsec-bouncer,error-pages,redirect-to-caddy,compress
 
       # Routers
       - traefik.http.routers.caddy-favicon.rule=Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)

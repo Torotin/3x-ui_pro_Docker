@@ -109,7 +109,7 @@ experimental:
   plugins:
     bouncer:
       moduleName: "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
-      version: "v1.4.4"
+      version: "v1.4.6"
     traefik-plugin-rewrite-headers:
       moduleName: "github.com/XciD/traefik-plugin-rewrite-headers"
       version: "v0.0.4"
