@@ -89,7 +89,9 @@ providers:
     network: traefik-proxy
     watch: true
     constraints: "Label(`traefik.tags`,`traefik`)"
-
+  file:
+    filename: /dynamic/crowdsec.yml
+    watch: true
 # -------------------
 # ACME / Let's Encrypt (оптимизированный)
 # -------------------

@@ -1,0 +1,30 @@
+http:
+  middlewares:
+    bouncer:
+      plugin:
+        bouncer:
+          enabled: true
+          mode: live
+          logLevel: INFO
+          updateIntervalSeconds: 10          # Уменьшено с 15 до 10 секунд
+          updateMaxFailure: 3                 # Увеличено с 0 до 3 для устойчивости
+          defaultDecisionSeconds: 10          # Уменьшено с 15 до 10 секунд
+          httpTimeoutSeconds: 5               # Уменьшено с 10 до 5 секунд
+          crowdsecMode: stream
+          crowdsecAppsecEnabled: true
+          crowdsecAppsecFailureBlock: true
+          crowdsecAppsecUnreachableBlock: false # Изменено на false для устойчивости
+          crowdsecAppsecHost: crowdsec:7422
+          crowdsecLapiKey: '{{ env "CROWDSEC_API_KEY_TRAEFIK" }}'
+          crowdsecLapiHost: crowdsec:8080
+          crowdsecLapiScheme: http
+          forwardedHeadersTrustedIPs:
+            - 172.18.0.0/24
+            - 172.19.0.0/24
+          clientTrustedIPs:
+            - 172.18.0.0/24
+            - 172.19.0.0/24
+          # Дополнительные настройки для оптимизации
+          crowdsecLapiTimeout: 5s
+          crowdsecLapiRetryInterval: 1s
+          crowdsecLapiMaxRetries: 3

@@ -133,12 +133,6 @@
         "name": 'Hide Interface',
         "description": 'Позволяет скрыть элементы интерфейса',
         "status": 1
-      },
-      {
-        "url": '{localhost}/js/surs_quality.js',
-        "name": 'Surs Quality',
-        "description": 'Добавляет в плагин Surs выбор качества видео',
-        "status": 1
       }
     ];
 

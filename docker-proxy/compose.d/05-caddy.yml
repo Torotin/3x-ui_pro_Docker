@@ -36,20 +36,27 @@ services:
       - traefik.docker.network=traefik-proxy
       - traefik.tags=traefik
 
-      # Service
+      # ---------- Service ----------
+      # Caddy error backend + health-check
       - traefik.http.services.caddy-error.loadbalancer.server.port=${PORT_LOCAL_CADDYWEB}
       - traefik.http.services.caddy-error.loadbalancer.healthcheck.path=/index.html
       - traefik.http.services.caddy-error.loadbalancer.healthcheck.interval=10s
       - traefik.http.services.caddy-error.loadbalancer.healthcheck.timeout=2s
 
-      # Middlewares
+      # ---------- Middlewares ----------
+      # Лимитирование запросов
       - traefik.http.middlewares.rate-limit.ratelimit.average=50
       - traefik.http.middlewares.rate-limit.ratelimit.burst=100
+
+      # Сжатие
       - traefik.http.middlewares.compress.compress=true
+
+      # Поддержка кастомных error pages
       - traefik.http.middlewares.error-pages.errors.status=400-599
       - traefik.http.middlewares.error-pages.errors.service=caddy-error
       - traefik.http.middlewares.error-pages.errors.query=/index.html
 
+      # Перезапись Location для редиректов — направляем в Caddy
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^https?://(${WEBDOMAIN})(/.*)?$
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=$2
@@ -57,11 +64,15 @@ services:
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.regex=^//(${WEBDOMAIN})(/.*)?$
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.replacement=$2
 
-      - traefik.http.middlewares.static-chain.chain.middlewares=crowdsec-bouncer,compress
+      # Цепочки middleware
+      # Статические файлы — compress
+      - traefik.http.middlewares.static-chain.chain.middlewares=compress
 
-      - traefik.http.middlewares.caddy-chain.chain.middlewares=crowdsec-bouncer,error-pages,redirect-to-caddy,compress
+      # Основная цепочка для catch-all — error pages + редиректы
+      - traefik.http.middlewares.caddy-chain.chain.middlewares=bouncer@file,error-pages,redirect-to-caddy,compress
 
-      # Routers
+      # ---------- Routers ----------
+      # favicon обрабатываем через статическую цепочку
       - traefik.http.routers.caddy-favicon.rule=Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)
       - traefik.http.routers.caddy-favicon.entrypoints=websecure
       - traefik.http.routers.caddy-favicon.middlewares=static-chain
@@ -69,6 +80,7 @@ services:
       - traefik.http.routers.caddy-favicon.priority=1
       - traefik.http.routers.caddy-favicon.service=caddy-error
 
+      # Общий catch-all роутер — передаём всё в Caddy
       - traefik.http.routers.caddy-catchall.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/`)
       - traefik.http.routers.caddy-catchall.entrypoints=websecure
       - traefik.http.routers.caddy-catchall.middlewares=caddy-chain

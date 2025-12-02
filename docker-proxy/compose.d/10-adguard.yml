@@ -52,13 +52,17 @@ services:
       - traefik.http.middlewares.rate-limit.ratelimit.average=50
       - traefik.http.middlewares.rate-limit.ratelimit.burst=100
       - traefik.http.middlewares.compress.compress=true
+
+      # Редирект: добавляем префикс /${URI_ADGUARD_PANEL} к Location
       - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
       - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
       - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_ADGUARD_PANEL}/$1
 
+      # Снятие префикса
       - traefik.http.middlewares.strip-adguard-prefix.stripPrefix.prefixes=/${URI_ADGUARD_PANEL}
 
-      - traefik.http.middlewares.adguard-chain.chain.middlewares=crowdsec-bouncer,strip-adguard-prefix,redirect-adguard-panel,compress
+      # Общая цепочка для AdGuard
+      - traefik.http.middlewares.adguard-chain.chain.middlewares=bouncer@file,strip-adguard-prefix,redirect-adguard-panel,compress
 
       # Router
       - traefik.http.routers.adguard-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_PANEL}`)
