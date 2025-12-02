@@ -30,7 +30,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 45s
+      start_period: 15s
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-proxy
