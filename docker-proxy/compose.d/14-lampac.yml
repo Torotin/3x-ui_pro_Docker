@@ -3,12 +3,13 @@ services:
     image: immisterio/lampac:latest
     container_name: lampac
     restart: unless-stopped
-    environment:
-      - PUID=0
-      - PGID=0
     mem_reservation: 1g
     mem_limit: 2g
     cpus: "1.0"
+    ulimits:  
+      nofile:  
+        soft: 65536  
+        hard: 65536
     dns:
       - 172.19.0.10
     healthcheck:
