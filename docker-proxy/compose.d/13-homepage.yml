@@ -21,7 +21,7 @@ services:
       HOMEPAGE_VAR_PASS_WEB: ${PASS_WEB}
       HOMEPAGE_VAR_HT_PASS_ENCODED: ${HT_PASS_ENCODED}
     volumes:
-      - /opt/docker-proxy/_logs/homepage:/logs
+      - /opt/docker-proxy/homepage/logs:/logs
       - /opt/docker-proxy/homepage:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -46,9 +46,9 @@ services:
       - traefik.http.middlewares.homepage-basic-auth.basicauth.users=${HT_PASS_ENCODED}
       - traefik.http.middlewares.homepage-basic-auth.basicauth.realm=Homepage
       - traefik.http.middlewares.homepage-strip.stripPrefix.prefixes=/${URI_HOMEPAGE}
-      - traefik.http.middlewares.homepage-rewrite.plugin.RewriteHeaders.rewrites.0.header=Location
-      - traefik.http.middlewares.homepage-rewrite.plugin.RewriteHeaders.rewrites.0.regex=^/(.*)
-      - traefik.http.middlewares.homepage-rewrite.plugin.RewriteHeaders.rewrites.0.replacement=/${URI_HOMEPAGE}/$1
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_HOMEPAGE}/$1
       - traefik.http.middlewares.homepage-compress.compress=true
       - traefik.http.middlewares.homepage-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-strip,homepage-rewrite,homepage-compress
       - traefik.http.middlewares.homepage-static-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rewrite,homepage-compress

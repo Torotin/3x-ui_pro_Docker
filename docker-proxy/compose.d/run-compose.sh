@@ -20,10 +20,7 @@
 #   RETRY_COUNT=5 ./run-compose.sh # up -d с 5 попытками
 #   ./run-compose.sh ps            # любая другая команда выполняется один раз
 #   ENV_FILE=/opt/docker-proxy/.env ./run-compose.sh # указать общий env-файл
-if [[ "${NO_CLEAR:-0}" -ne 1 ]]; then
-  clear
-fi
-
+clear
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -176,7 +173,7 @@ validate_configs() {
   fi
 
   log "Проверяем конфигурацию: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} config"
-  if ! output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config >/dev/null 2>&1); then
+  if ! output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config 2>&1 >/dev/null); then
     log "ERROR: Найдены ошибки в конфигурации compose:"
     echo "$output" >&2
     exit 1
