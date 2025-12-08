@@ -7,6 +7,6 @@ services:
       - ${WEBDOMAIN}:${PUBLIC_IPV4}
     networks:
       traefik-proxy:
-        ipv4_address: 172.18.0.13
+        ipv4_address: 172.18.0.15
       dns-net:
-        ipv4_address: 172.19.0.13
+        ipv4_address: 172.19.0.15

@@ -30,7 +30,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 45s
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-proxy
@@ -57,12 +57,12 @@ services:
       - traefik.http.middlewares.error-pages.errors.query=/index.html
 
       # Перезапись Location для редиректов — направляем в Caddy
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^https?://(${WEBDOMAIN})(/.*)?$
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=$2
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.header=Location
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.regex=^//(${WEBDOMAIN})(/.*)?$
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.replacement=$2
+      - traefik.http.middlewares.redirect-to-caddy.plugin.rewriteHeaders.rewrites.0.header=Location
+      - traefik.http.middlewares.redirect-to-caddy.plugin.rewriteHeaders.rewrites.0.regex=^https?://(${WEBDOMAIN})(/.*)?$
+      - traefik.http.middlewares.redirect-to-caddy.plugin.rewriteHeaders.rewrites.0.replacement=$2
+      - traefik.http.middlewares.redirect-to-caddy.plugin.rewriteHeaders.rewrites.1.header=Location
+      - traefik.http.middlewares.redirect-to-caddy.plugin.rewriteHeaders.rewrites.1.regex=^//(${WEBDOMAIN})(/.*)?$
+      - traefik.http.middlewares.redirect-to-caddy.plugin.rewriteHeaders.rewrites.1.replacement=$2
 
       # Цепочки middleware
       # Статические файлы — compress

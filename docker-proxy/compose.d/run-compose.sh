@@ -20,6 +20,9 @@
 #   RETRY_COUNT=5 ./run-compose.sh # up -d с 5 попытками
 #   ./run-compose.sh ps            # любая другая команда выполняется один раз
 #   ENV_FILE=/opt/docker-proxy/.env ./run-compose.sh # указать общий env-файл
+if [[ "${NO_CLEAR:-0}" -ne 1 ]]; then
+  clear
+fi
 
 set -euo pipefail
 
@@ -34,6 +37,7 @@ fi
 ENV_FILE="${ENV_FILE:-$ENV_FILE_DEFAULT}"
 RETRY_COUNT="${RETRY_COUNT:-3}"
 RETRY_DELAY="${RETRY_DELAY:-5}"
+PULL_BEFORE_UP="${PULL_BEFORE_UP:-0}"
 ENV_ARGS=()
 COMPOSE_BASE_ARGS=()
 
@@ -172,10 +176,22 @@ validate_configs() {
   fi
 
   log "Проверяем конфигурацию: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} config"
-  if ! output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config 2>&1 >/dev/null); then
+  if ! output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config >/dev/null 2>&1); then
     log "ERROR: Найдены ошибки в конфигурации compose:"
     echo "$output" >&2
     exit 1
+  fi
+}
+
+pull_images_if_needed() {
+  local primary_cmd="$1"
+  if [[ "$primary_cmd" != "up" || "$PULL_BEFORE_UP" == "0" ]]; then
+    return
+  fi
+
+  log "Проверяем обновления образов: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} pull --quiet"
+  if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" pull --quiet; then
+    log "WARN: Не удалось обновить образы (pull), продолжаем без обновления"
   fi
 }
 
@@ -231,6 +247,7 @@ main() {
   fi
 
   validate_configs "$1"
+  pull_images_if_needed "$1"
   stop_existing_stack "$1"
 
   if [[ "$1" == "up" ]]; then
