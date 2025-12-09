@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     container_name: homepage
     env_file:
-      - /opt/docker-proxy/.env
+      - ./.env
     environment:
       # PUID: 1000
       # PGID: 1000

@@ -6,8 +6,8 @@ install_steps_init() {
   declare -gA INSTALL_STEPS=(
     ["0"]='auto_full:Automatic full install'
     ["1"]='update_and_upgrade_packages:System update'
-    ["2"]='docker_install;docker_create_network traefik-proxy external subnet=172.18.0.0/24:Docker. (Re)Install'
-    ["3"]='ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}";:Docker. Generate docker dir'
+    ["2"]='docker_install;docker_ensure_networks:Docker. (Re)Install'
+    ["3"]='ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}":Docker. Generate docker dir'
     ["4"]='generate_env_file "'$DOCKER_ENV_TEMPLATE'" "'$DOCKER_ENV_FILE'":Docker. Generate docker env-file'
     ["5"]='docker_run_compose:Docker. Run compose stack'
     ["6"]='user_create:Create user'

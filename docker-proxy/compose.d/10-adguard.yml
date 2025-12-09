@@ -18,7 +18,7 @@ services:
       - /opt/docker-proxy/adguard/update-pass.sh:/opt/adguardhome/update-pass.sh:ro
       - /opt/docker-proxy/traefik/pem:/opt/adguardhome/pem:ro
     env_file:
-      - /opt/docker-proxy/.env
+      - ./.env
     security_opt:
       - no-new-privileges=true
     entrypoint:

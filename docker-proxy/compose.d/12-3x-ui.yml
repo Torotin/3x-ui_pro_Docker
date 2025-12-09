@@ -32,7 +32,7 @@ services:
       - /opt/docker-proxy/_logs/xray/error.log:/app/error.log
       - /opt/docker-proxy/_logs:/var/log:rw
     env_file:
-      - /opt/docker-proxy/.env
+      - ./.env
       - /opt/docker-proxy/3x-ui/3x-ui.env
     environment:
       # - XUI_LOG_LEVEL=debug

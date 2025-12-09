@@ -6,7 +6,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
-      - /opt/docker-proxy/.env
+      - ./.env
     environment:
       - DOZZLE_ENABLE_ACTIONS=true
       - DOZZLE_BASE=/${URI_DOZZLE}

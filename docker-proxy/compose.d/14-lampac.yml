@@ -24,7 +24,7 @@ services:
       traefik:
         condition: service_healthy
     env_file:
-      - /opt/docker-proxy/.env
+      - ./.env
     volumes:
       - lampac_cache:/home/cache
       - /opt/docker-proxy/lampac/home/init.conf:/home/init.conf:rw

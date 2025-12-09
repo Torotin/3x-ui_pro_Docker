@@ -74,10 +74,10 @@ services:
       # Явный список контейнеров, которые нужно исключить
       WATCHTOWER_DISABLE_CONTAINERS: ${WATCHTOWER_DISABLE_CONTAINERS:-}
       # Scope для параллельных экземпляров Watchtower
-      WATCHTOWER_SCOPE: ${WATCHTOWER_SCOPE:-}
+      # WATCHTOWER_SCOPE: ${WATCHTOWER_SCOPE:-}
       # Разрешить меткам контейнеров перекрывать глобальные флаги
       WATCHTOWER_LABEL_TAKE_PRECEDENCE: ${WATCHTOWER_LABEL_TAKE_PRECEDENCE:-false}
     labels:
       - traefik.enable=false
       - com.centurylinklabs.watchtower.enable=true
-      - com.centurylinklabs.watchtower.scope=${WATCHTOWER_SCOPE}
+      # - com.centurylinklabs.watchtower.scope=${WATCHTOWER_SCOPE}

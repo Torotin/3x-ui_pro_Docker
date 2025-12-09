@@ -4,12 +4,11 @@
 
 networks:
   traefik-proxy:
+    name: traefik-proxy
     external: true
   dns-net:
-    internal: true
-    ipam:
-      config:
-        - subnet: "172.19.0.0/24"
+    name: dns-net
+    external: true
 
 volumes:
   crowdsec_data:
