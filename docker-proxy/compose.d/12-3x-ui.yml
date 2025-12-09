@@ -110,7 +110,7 @@ services:
       - traefik.http.routers.3xui-panel.priority=9997
 
       # Подписки и JSON-эндпоинты
-      - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
+      - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/${URI_SUB_PATH}`) || PathPrefix(`/${URI_JSON_PATH}`))
       - traefik.http.routers.3xui-sub.entrypoints=websecure
       - traefik.http.routers.3xui-sub.middlewares=bouncer@file,3xui-sub-chain
       - traefik.http.routers.3xui-sub.tls.certresolver=le
@@ -118,7 +118,7 @@ services:
       - traefik.http.routers.3xui-sub.priority=9998
 
       # L4-режим для xhttp (TCP)
-      - traefik.http.routers.xhttp3xui-l4.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)
+      - traefik.http.routers.xhttp3xui-l4.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_VLESS_XHTTP}`)
       - traefik.http.routers.xhttp3xui-l4.entrypoints=l4tcp
       - traefik.http.routers.xhttp3xui-l4.service=xhttp3xui-svc
       - traefik.http.routers.xhttp3xui-l4.priority=9999
