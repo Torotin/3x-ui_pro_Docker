@@ -6,11 +6,6 @@
 PROFILE_FILE="/etc/profile.d/custom_env.sh"
 DEFAULT_ATTEMPTS=3
 
-exit_error() {
-    log "ERROR" "$*"
-    exit 1
-}
-
 # --- RANDOM GENERATORS (STUBS, TO BE IMPLEMENTED) ---
 generate_random_string() {
     local min_len="${1:-16}"

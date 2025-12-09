@@ -148,7 +148,6 @@ check_args() {
 main_menu() {
   if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
   log "INFO" "Starting installation script..."
-  initialize_script
   check_args "$@"
 
   while true; do

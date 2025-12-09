@@ -332,6 +332,16 @@ docker_run_compose() {
     local runner="${DOCKER_DIR}/compose.d/run-compose.sh"
     local env_file="${DOCKER_ENV_FILE:-${DOCKER_DIR}/.env}"
 
+    if ! command -v docker >/dev/null 2>&1; then
+        log "ERROR" "docker not found in PATH. Please run step 2 (Docker install) first."
+        return 1
+    fi
+
+    if ! (docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1); then
+        log "ERROR" "docker compose/docker-compose not found. Please run step 2 (Docker install) first."
+        return 1
+    fi
+
     if [[ ! -f "$runner" ]]; then
         log "ERROR" "run-compose.sh not found at: $runner. Execute step 3 (generate docker dir) first."
         return 1
