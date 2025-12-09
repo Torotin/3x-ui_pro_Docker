@@ -237,16 +237,17 @@ EOF
 
 # Создаёт Docker-сеть с нужными опциями, если её ещё нет
 # Usage:
-#   docker_create_network NAME [external] [ipv6] [subnet=<CIDR>]
+#   docker_create_network NAME [external] [internal] [ipv6] [subnet=<CIDR>]
 # 1) Создаём внешнюю сеть traefik-proxy (для docker-compose external: true)
 # docker_create_network traefik-proxy external
-# 2) Создаём свою сеть с IPv6 и подсетью
-#    Имя, которое задаётся в переменной DOCKER_NETWORK_NAME
-#    и подсеть — в DOCKER_IPV6_SUBNET
+# 2) Создаём внутреннюю сеть с подсетью
+# docker_create_network dns-net internal subnet="172.19.0.0/24"
+# 3) Создаём сеть с IPv6 и подсетью
 # docker_create_network "$DOCKER_NETWORK_NAME" ipv6 subnet="$DOCKER_IPV6_SUBNET"
 docker_create_network() {
     local name="$1"; shift
     local is_external=false
+    local is_internal=false
     local is_ipv6=false
     local subnet=""
 
@@ -254,6 +255,7 @@ docker_create_network() {
     for opt in "$@"; do
         case "$opt" in
             external)   is_external=true ;;
+            internal)   is_internal=true ;;
             ipv6)       is_ipv6=true ;;
             subnet=*)   subnet="${opt#subnet=}" ;;
             *)          log "WARN" "Unknown option '$opt' for docker_create_network" ;;
@@ -295,6 +297,7 @@ docker_create_network() {
         local args=()
         local ipv6_label=""
         $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+        $is_internal && args+=(--internal)
         [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
 
         log "INFO" "Creating external network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
@@ -314,6 +317,7 @@ docker_create_network() {
     local args=()
     local ipv6_label=""
     $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+    $is_internal && args+=(--internal)
     [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
 
     log "INFO" "Creating network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
@@ -357,8 +361,77 @@ docker_run_compose() {
         log "WARN" "Env file not found at: $env_file (will rely on script defaults)"
     fi
 
+    docker_ensure_networks
+
     log "INFO" "Running compose stack via: $runner"
     ENV_FILE="$env_file" "$runner" "$@"
+}
+
+docker_ensure_networks() {
+    if ! command_exists docker; then
+        log "ERROR" "docker not found. Run step 2 (Docker install) first."
+        return 1
+    fi
+
+    local base_compose="${DOCKER_DIR}/compose.d/00-base.yml"
+    local fallback_done=false
+
+    # Фолбэк на старое поведение, если нет yq или базового файла
+    fallback_networks() {
+        fallback_done=true
+        log "WARN" "Autodetect of networks skipped; creating defaults."
+        local traefik_subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}"
+        local dns_subnet="${DNS_NET_SUBNET:-172.19.0.0/24}"
+        docker_create_network traefik-proxy external subnet="$traefik_subnet"
+        docker_create_network dns-net external subnet="$dns_subnet"
+    }
+
+    if ! command_exists yq; then
+        fallback_networks
+        return 0
+    fi
+    if [[ ! -f "$base_compose" ]]; then
+        log "WARN" "Base compose file not found: $base_compose"
+        fallback_networks
+        return 0
+    fi
+
+    mapfile -t net_entries < <(
+        yq eval '.networks // {} | to_entries[] | "\(.key)|\(.value.external // false)|\(.value.internal // false)|\(.value.ipam.config[0].subnet // "")"' "$base_compose" 2>/dev/null
+    )
+
+    if (( ${#net_entries[@]} == 0 )); then
+        log "WARN" "No networks found in $base_compose"
+        fallback_networks
+        return 0
+    fi
+
+    for entry in "${net_entries[@]}"; do
+        IFS="|" read -r net_name is_ext is_int subnet <<< "$entry"
+        [[ -z "$net_name" ]] && continue
+        local opts=()
+        [[ "$is_ext" == "true" ]] && opts+=(external)
+        [[ "$is_int" == "true" ]] && opts+=(internal)
+
+        # Если подсеть не описана в compose (например, external сети), подставляем умолчания
+        if [[ -z "$subnet" || "$subnet" == "null" ]]; then
+            case "$net_name" in
+                traefik-proxy) subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}" ;;
+                dns-net)       subnet="${DNS_NET_SUBNET:-172.19.0.0/24}" ;;
+                *) subnet="" ;;
+            esac
+        fi
+        [[ -n "$subnet" ]] && opts+=(subnet="$subnet")
+
+        log "INFO" "Ensuring network '$net_name' (external=$is_ext, internal=$is_int, subnet=${subnet:-<none>})"
+        docker_create_network "$net_name" "${opts[@]}"
+    done
+
+    if [[ "$fallback_done" == true ]]; then
+        log "WARN" "Networks were created with defaults due to missing config."
+    else
+        log "OK" "Networks ensured from $base_compose"
+    fi
 }
 
 # docker_compose_restart() {
