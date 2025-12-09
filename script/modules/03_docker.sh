@@ -328,6 +328,29 @@ docker_create_network() {
     fi
 }
 
+docker_run_compose() {
+    local runner="${DOCKER_DIR}/compose.d/run-compose.sh"
+    local env_file="${DOCKER_ENV_FILE:-${DOCKER_DIR}/.env}"
+
+    if [[ ! -f "$runner" ]]; then
+        log "ERROR" "run-compose.sh not found at: $runner. Execute step 3 (generate docker dir) first."
+        return 1
+    fi
+
+    if [[ ! -x "$runner" ]]; then
+        chmod +x "$runner" || log "WARN" "Failed to make $runner executable"
+    fi
+
+    if [[ -f "$env_file" ]]; then
+        log "INFO" "Using env file: $env_file"
+    else
+        log "WARN" "Env file not found at: $env_file (will rely on script defaults)"
+    fi
+
+    log "INFO" "Running compose stack via: $runner"
+    ENV_FILE="$env_file" "$runner" "$@"
+}
+
 # docker_compose_restart() {
 #   local env_file="${DOCKER_ENV_FILE:?DOCKER_ENV_FILE is not set}"
 #   local compose_file="${DOCKER_COMPOSE_FILE:?DOCKER_COMPOSE_FILE is not set}"
