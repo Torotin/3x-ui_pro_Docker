@@ -110,14 +110,25 @@ create_inbound_tcp_reality() {
     fi
     [ -n "${allocate_json:-}" ] || allocate_json='{"strategy":"always","refresh":5,"concurrency":3}'
 
+    # Прокидываем выбранный auth (PQ/X25519) в настройки VLESS
+    dec=${VLESS_DEC:-none}
+    enc=${VLESS_ENC:-none}
+    label=${VLESS_LABEL:-}
     # Override auth-free settings to match requested shape
     settings_json=$( \
-        jq -nc --argjson fallbacks "$fallbacks_json" '{
-          clients: [],
-          decryption: "none",
-          encryption: "none",
-          fallbacks: $fallbacks
-        }' \
+      jq -nc \
+        --arg dec "$dec" \
+        --arg enc "$enc" \
+        --arg label "$label" \
+        --argjson fallbacks "$fallbacks_json" '
+          (
+            if ($dec=="none" and $enc=="none")
+            then {clients: [], decryption: $dec, encryption: $enc, fallbacks: $fallbacks}
+            else {clients: [], decryption: $dec, encryption: $enc}
+            end
+          ) as $base
+          | if ($label|length)>0 then $base + {selectedAuth: $label} else $base end
+        ' \
     )
 
     stream_json=$( \
@@ -196,10 +207,26 @@ create_xhttp_inbound() {
     port=${PORT_LOCAL_XHTTP}
     xhttp_path=${URI_VLESS_XHTTP}
 
-    settings_json=$(jq -nc '{
+    # Получаем рекомендованные параметры шифрования VLESS (PQ/X25519)
+    if ! get_new_vless_enc; then
+        log ERROR "Не удалось получить параметры шифрования VLESS для XHTTP."
+        return 1
+    fi
+    vless_dec=${VLESS_DEC:-none}
+    vless_enc=${VLESS_ENC:-none}
+    vless_label=${VLESS_LABEL:-}
+
+    settings_json=$(
+      jq -nc \
+        --arg dec "$vless_dec" \
+        --arg enc "$vless_enc" \
+        --arg label "$vless_label" '{
         clients: [],
-        decryption: "none"
-    }')
+        decryption: $dec,
+        encryption: $enc,
+        selectedAuth: $label
+      }'
+    )
     sockopt_json=$(generate_sockopt_json acceptProxyProtocol=false tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
     external_proxy_json=$(
       jq -nc --arg dest "$WEBDOMAIN" --argjson port 443 \
@@ -435,9 +462,31 @@ get_new_vless_enc() {
         log ERROR "getNewVlessEnc success=false: $HTTP_BODY"
         return 1
     fi
-    local pick
-    # Prefer X25519 (not Post-Quantum)
-    pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[] | select(.label=="X25519, not Post-Quantum")' 2>/dev/null | head -n1)
+    local pick label_prefer
+    # По умолчанию пытаемся взять именно ML-KEM-768 (Post-Quantum),
+    # но позволяем переопределить через VLESS_AUTH_LABEL.
+    label_prefer=${VLESS_AUTH_LABEL:-"ML-KEM-768, Post-Quantum"}
+    # Выбор auth:
+    # 1) Точный label (по умолчанию ML-KEM-768, Post-Quantum)
+    # 2) Если VLESS_PREFER_PQ=true — берем любое Post-Quantum (label содержит post-quantum/ml-kem)
+    # 3) По умолчанию X25519, not Post-Quantum
+    pick=$(printf '%s' "$HTTP_BODY" | jq -c --arg label "$label_prefer" '
+      if ($label|length)>0 then
+        .obj.auths[] | select(.label==$label)
+      else empty end
+    ' 2>/dev/null | head -n1)
+    if [ -z "$pick" ] && [ "${VLESS_PREFER_PQ:-true}" = "true" ]; then
+        pick=$(printf '%s' "$HTTP_BODY" | jq -c '
+          .obj.auths[]
+          | select(
+              (.label // "" | ascii_downcase | contains("post-quantum"))
+              or (.label // "" | ascii_downcase | contains("ml-kem"))
+            )
+        ' 2>/dev/null | head -n1)
+    fi
+    if [ -z "$pick" ]; then
+        pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[] | select(.label=="X25519, not Post-Quantum")' 2>/dev/null | head -n1)
+    fi
     if [ -z "$pick" ]; then
         pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[0] // empty' 2>/dev/null)
     fi
@@ -499,4 +548,3 @@ check_inbound_exists() {
         printf ''
     fi
 }
-
