@@ -77,10 +77,13 @@ services:
       # Лимитирование запросов
       - traefik.http.middlewares.3xui-rate-limit.ratelimit.average=50
       - traefik.http.middlewares.3xui-rate-limit.ratelimit.burst=100
+      # Basic Auth
+      - traefik.http.middlewares.3xui-basic-auth.basicauth.users=${HT_PASS_ENCODED}
+      - traefik.http.middlewares.3xui-basic-auth.basicauth.realm=3x-ui
 
       # Цепочки middleware
       - traefik.http.middlewares.3xui-sub-chain.chain.middlewares=3xui-static-chain
-      - traefik.http.middlewares.3xui-panel-chain.chain.middlewares=3xui-api-chain
+      - traefik.http.middlewares.3xui-panel-chain.chain.middlewares=3xui-basic-auth,3xui-api-chain
       - traefik.http.middlewares.3xui-static-chain.chain.middlewares=3xui-compress
       - traefik.http.middlewares.3xui-api-chain.chain.middlewares=3xui-rate-limit,3xui-compress
 
@@ -104,13 +107,13 @@ services:
       # Панель администратора
       - traefik.http.routers.3xui-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)
       - traefik.http.routers.3xui-panel.entrypoints=websecure
-      - traelfik.http.routers.3xui-panel.middlewares=bouncer@file,3xui-panel-chain
+      - traefik.http.routers.3xui-panel.middlewares=bouncer@file,3xui-panel-chain
       - traefik.http.routers.3xui-panel.tls.certresolver=le
       - traefik.http.routers.3xui-panel.service=3xui-panel-svc
       - traefik.http.routers.3xui-panel.priority=9997
 
       # Подписки и JSON-эндпоинты
-      - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/${URI_SUB_PATH}`) || PathPrefix(`/${URI_JSON_PATH}`))
+      - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`))
       - traefik.http.routers.3xui-sub.entrypoints=websecure
       - traefik.http.routers.3xui-sub.middlewares=bouncer@file,3xui-sub-chain
       - traefik.http.routers.3xui-sub.tls.certresolver=le
