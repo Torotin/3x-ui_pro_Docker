@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     container_name: homepage
     env_file:
-      - ./.env
+      - /opt/docker-proxy/compose.d/.env
     environment:
       # PUID: 1000
       # PGID: 1000

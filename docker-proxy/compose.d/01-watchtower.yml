@@ -8,11 +8,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     security_opt:
       - no-new-privileges=true
-    networks:
-      traefik-proxy:
-        ipv4_address: 172.18.0.2
-      dns-net:
-        ipv4_address: 172.19.0.2
+    # networks:
+    #   traefik-proxy:
+    #     ipv4_address: 172.18.0.1
+    #   dns-net:
+    #     ipv4_address: 172.19.0.1
     healthcheck:
       test: ["CMD", "/watchtower", "--health-check"]
       interval: 30s

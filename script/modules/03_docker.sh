@@ -250,6 +250,7 @@ docker_create_network() {
     local is_internal=false
     local is_ipv6=false
     local subnet=""
+    local gateway=""
 
     # Разбираем ключи
     for opt in "$@"; do
@@ -290,6 +291,13 @@ docker_create_network() {
         log "ERROR" "Создание сети '$name' остановлено во избежание конфликта (invalid pool request). Удалите/измените конфликтующие сети или задайте другой subnet."
         exit 1
       fi
+
+      gateway="$(calculate_gateway_from_subnet "$subnet")"
+      if [[ -n "$gateway" ]]; then
+        log "INFO" "Для сети '$name' будет использован шлюз $gateway (последний доступный адрес подсети)"
+      else
+        log "WARN" "Не удалось вычислить gateway для '$name' (subnet=$subnet), создаём сеть без --gateway"
+      fi
     fi
 
     # Если external — создаём сеть, учитывая подсеть/IPv6, если заданы
@@ -299,6 +307,7 @@ docker_create_network() {
         $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
         $is_internal && args+=(--internal)
         [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+        [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
 
         log "INFO" "Creating external network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
         if docker network create "${args[@]}" "$name"; then
@@ -319,6 +328,7 @@ docker_create_network() {
     $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
     $is_internal && args+=(--internal)
     [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+    [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
 
     log "INFO" "Creating network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
     if docker network create "${args[@]}" "$name"; then
@@ -329,6 +339,40 @@ docker_create_network() {
     else
         log "ERROR" "Failed to create network '$name'"
         exit 1
+    fi
+}
+
+# Возвращает последний доступный IPv4 адрес для подсети (шлюз). Для /24 -> *.254.
+calculate_gateway_from_subnet() {
+    local subnet="$1"
+
+    # IPv6 пропускаем
+    [[ "$subnet" == *:* ]] && return 0
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$subnet" <<'PY'
+import sys
+from ipaddress import ip_network
+
+subnet = sys.argv[1]
+try:
+    net = ip_network(subnet, strict=False)
+    hosts = list(net.hosts())
+    # Используем последний адрес хоста в сети
+    if hosts:
+        print(hosts[-1])
+except Exception:
+    sys.exit(0)
+PY
+    else
+        local base prefix IFS=.
+        base="${subnet%/*}"
+        prefix="${subnet#*/}"
+        IFS=. read -r a b c d <<<"$base"
+        # Поддерживаем простой случай /24: 172.18.0.0/24 -> 172.18.0.255
+        if [[ "$prefix" -eq 24 && -n "$a" && -n "$b" && -n "$c" ]]; then
+            echo "$a.$b.$c.255"
+        fi
     fi
 }
 
