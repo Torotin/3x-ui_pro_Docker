@@ -31,7 +31,7 @@ update_panel_settings() {
     if [ "$HTTP_CODE" = "200" ] && printf '%s' "$HTTP_BODY" | jq -e '.success==true' >/dev/null 2>&1; then
         current_settings=$(printf '%s' "$HTTP_BODY" | jq -c '.obj // {}' 2>/dev/null || printf '{}')
         log INFO "Текущие настройки панели получены."
-        log INFO "Полученные параметры: $(printf '%s' "$current_settings")"
+        log DEBUG "Полученные параметры: $(printf '%s' "$current_settings")"
     else
         log WARN "Не удалось получить текущие настройки панели (HTTP $HTTP_CODE). Продолжаем без них."
     fi
@@ -85,7 +85,7 @@ update_panel_settings() {
 
     # Логируем, что именно отправляем
     log INFO "Отправляем запрос на обновление панели: $url"
-    log INFO "Параметры (полный набор): $param_list"
+    log DEBUG "Параметры (полный набор): $param_list"
     if [ -n "$override_list" ]; then
         log INFO "Изменяем параметры (из окружения): $override_list"
     else

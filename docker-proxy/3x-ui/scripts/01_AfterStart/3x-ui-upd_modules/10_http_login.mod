@@ -7,7 +7,7 @@ resolve_and_login() {
         for user_pass in "$USERNAME:$PASSWORD" "${NEW_ADMIN_USERNAME:-}:$NEW_ADMIN_PASSWORD"; do
             user=${user_pass%%:*}; pass=${user_pass#*:}
             [ -z "$user" ] && continue
-            log INFO "Проверка и логин на $login_url как '$user'."
+            log DEBUG "Проверка и логин на $login_url как '$user'."
             http_request POST "$login_url" \
                 -H 'Content-Type: application/x-www-form-urlencoded' \
                 --data-urlencode "username=$user" \
@@ -150,6 +150,7 @@ http_request() {
 
     while [ "$attempts" -gt 0 ]; do
         tmp=$(mktemp) || exit 1
+        tmp_err=$(mktemp) || exit 1
         HTTP_CODE=$(
             curl -k -sS \
                  --connect-timeout 2 \
@@ -159,11 +160,14 @@ http_request() {
                  --cookie-jar "$COOKIE_JAR" \
                  -w '%{http_code}' \
                  -o "$tmp" \
+                 2>"$tmp_err" \
                  "$@" "$url"
         )
         ret=$?
         HTTP_BODY=$(cat "$tmp" 2>/dev/null || printf '')
+        curl_stderr=$(tr '\n' ' ' < "$tmp_err" 2>/dev/null || printf '')
         rm -f "$tmp"
+        rm -f "$tmp_err"
 
         if [ $ret -eq 0 ] && [ -n "$HTTP_CODE" ]; then
             # Успешный вызов curl и получен код
@@ -172,10 +176,12 @@ http_request() {
 
         attempts=$((attempts - 1))
         if [ "$attempts" -gt 0 ]; then
+            [ -n "$curl_stderr" ] && log DEBUG "curl stderr: $curl_stderr"
             log DEBUG "curl error при $method $url (код $ret), попыток осталось $attempts. Ждём $delay с..."
             sleep "$delay"
             delay=$((delay * 2))
         else
+            [ -n "$curl_stderr" ] && log DEBUG "curl stderr: $curl_stderr"
             log ERROR "curl fatal error при $method $url после 3 попыток."
         fi
     done
