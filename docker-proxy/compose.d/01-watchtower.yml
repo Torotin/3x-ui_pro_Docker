@@ -2,26 +2,82 @@ services:
   watchtower:
     container_name: watchtower
     hostname: ${WEBDOMAIN}
-    image: containrrr/watchtower:latest
-    restart: always
+    image: nickfedor/watchtower:latest
+    restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - TZ=${TZ}
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_INCLUDE_STOPPED=true
-      - WATCHTOWER_ROLLING_RESTART=true
-      - WATCHTOWER_NOTIFICATION_REPORT=true
-      - WATCHTOWER_HEALTHCHECK_GRACE_PERIOD=300
-      - WATCHTOWER_POLL_INTERVAL=600
     security_opt:
       - no-new-privileges=true
-    networks:
-      - traefik-proxy
-      - dns-net
+    # networks:
+    #   traefik-proxy:
+    #     ipv4_address: 172.18.0.1
+    #   dns-net:
+    #     ipv4_address: 172.19.0.1
     healthcheck:
       test: ["CMD", "/watchtower", "--health-check"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 5s
+    environment:
+      # ---------- Логи и базовые флаги ----------
+      # Часовой пояс для логов и cron-расписаний
+      TZ: ${TZ}
+      # Эквивалент --debug; подробные логи
+      WATCHTOWER_DEBUG: ${WATCHTOWER_DEBUG:-false}
+      # Эквивалент --trace; суперподробные логи (могут содержать секреты)
+      WATCHTOWER_TRACE: ${WATCHTOWER_TRACE:-false}
+      # Максимальный уровень логирования (panic|fatal|error|warn|info|debug|trace)
+      WATCHTOWER_LOG_LEVEL: ${WATCHTOWER_LOG_LEVEL:-info}
+      # Формат логов (Auto|LogFmt|Pretty|JSON)
+      WATCHTOWER_LOG_FORMAT: ${WATCHTOWER_LOG_FORMAT:-Auto}
+      # Отключить ANSI-цвета в выводе
+      NO_COLOR: ${NO_COLOR:-false}
+      # Выполнить один цикл обновлений и завершиться (не совместимо с restart unless-stopped)
+      WATCHTOWER_RUN_ONCE: ${WATCHTOWER_RUN_ONCE:-false}
+      # Проверка обновлений сразу после запуска, до расписания/интервала
+      WATCHTOWER_UPDATE_ON_START: ${WATCHTOWER_UPDATE_ON_START:-false}
+
+      # ---------- Планировщик и Health ----------
+      # Cron-выражение из 6 полей; пусто = работаем по интервалу
+      WATCHTOWER_SCHEDULE: ${WATCHTOWER_SCHEDULE:-}
+      # Интервал проверки образов в секундах (если нет расписания)
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-21600}
+      # Разрешить периодические опросы при включённом HTTP API режиме
+      WATCHTOWER_HTTP_API_PERIODIC_POLLS: ${WATCHTOWER_HTTP_API_PERIODIC_POLLS:-false}
+      # Грейс-период (секунды) до начала health-check'ов обновлённых контейнеров
+      WATCHTOWER_HEALTHCHECK_GRACE_PERIOD: ${WATCHTOWER_HEALTHCHECK_GRACE_PERIOD:-300}
+      # Таймаут graceful-stop для контейнеров (формат duration)
+      WATCHTOWER_TIMEOUT: ${WATCHTOWER_TIMEOUT:-1m30s}
+
+      # ---------- Управление контейнерами ----------
+      # Следить за созданными и остановленными контейнерами
+      WATCHTOWER_INCLUDE_STOPPED: ${WATCHTOWER_INCLUDE_STOPPED:-true}
+      # Перезапускать остановленные контейнеры после обновления их образов
+      WATCHTOWER_REVIVE_STOPPED: ${WATCHTOWER_REVIVE_STOPPED:-false}
+      # Учитывать контейнеры в состоянии restarting
+      WATCHTOWER_INCLUDE_RESTARTING: ${WATCHTOWER_INCLUDE_RESTARTING:-false}
+      # Не перезапускать контейнеры после обновлений (если есть внешний supervisor)
+      WATCHTOWER_NO_RESTART: ${WATCHTOWER_NO_RESTART:-false}
+      # Роллинг-перезапуск (ждём healthy каждого контейнера)
+      WATCHTOWER_ROLLING_RESTART: ${WATCHTOWER_ROLLING_RESTART:-true}
+      # Удалять старые слои образов после удачных обновлений
+      WATCHTOWER_CLEANUP: ${WATCHTOWER_CLEANUP:-true}
+      # Удалять анонимные тома при пересоздании контейнера
+      WATCHTOWER_REMOVE_VOLUMES: ${WATCHTOWER_REMOVE_VOLUMES:-true}
+      # Только мониторинг и уведомления, без обновлений
+      WATCHTOWER_MONITOR_ONLY: ${WATCHTOWER_MONITOR_ONLY:-false}
+      # Не тянуть свежие образы (использовать только локальный кеш)
+      WATCHTOWER_NO_PULL: ${WATCHTOWER_NO_PULL:-false}
+      # Требовать метку com.centurylinklabs.watchtower.enable=true
+      WATCHTOWER_LABEL_ENABLE: ${WATCHTOWER_LABEL_ENABLE:-false}
+      # Явный список контейнеров, которые нужно исключить
+      WATCHTOWER_DISABLE_CONTAINERS: ${WATCHTOWER_DISABLE_CONTAINERS:-}
+      # Scope для параллельных экземпляров Watchtower
+      # WATCHTOWER_SCOPE: ${WATCHTOWER_SCOPE:-}
+      # Разрешить меткам контейнеров перекрывать глобальные флаги
+      WATCHTOWER_LABEL_TAKE_PRECEDENCE: ${WATCHTOWER_LABEL_TAKE_PRECEDENCE:-false}
+    labels:
+      - traefik.enable=false
+      - com.centurylinklabs.watchtower.enable=true
+      # - com.centurylinklabs.watchtower.scope=${WATCHTOWER_SCOPE}

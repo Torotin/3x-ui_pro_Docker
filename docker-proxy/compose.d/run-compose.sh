@@ -20,20 +20,24 @@
 #   RETRY_COUNT=5 ./run-compose.sh # up -d с 5 попытками
 #   ./run-compose.sh ps            # любая другая команда выполняется один раз
 #   ENV_FILE=/opt/docker-proxy/.env ./run-compose.sh # указать общий env-файл
-
+clear
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSE_DIR="$SCRIPT_DIR/compose.d"
-ACTIVE_COMPOSE_DIR="$SCRIPT_DIR"
+DEFAULT_COMPOSE_DIR="$SCRIPT_DIR"
+if [[ "$(basename "$SCRIPT_DIR")" != "compose.d" && -d "$SCRIPT_DIR/compose.d" ]]; then
+  DEFAULT_COMPOSE_DIR="$SCRIPT_DIR/compose.d"
+fi
+COMPOSE_DIR="${COMPOSE_DIR:-$DEFAULT_COMPOSE_DIR}"
+ACTIVE_COMPOSE_DIR="$COMPOSE_DIR"
 ENV_FILE_DEFAULT="$SCRIPT_DIR/.env"
 ENV_FILE_USER_SET=false
 if [[ -n "${ENV_FILE+set}" ]]; then
   ENV_FILE_USER_SET=true
 fi
-ENV_FILE="${ENV_FILE:-$ENV_FILE_DEFAULT}"
 RETRY_COUNT="${RETRY_COUNT:-3}"
 RETRY_DELAY="${RETRY_DELAY:-5}"
+PULL_BEFORE_UP="${PULL_BEFORE_UP:-0}"
 ENV_ARGS=()
 COMPOSE_BASE_ARGS=()
 
@@ -44,10 +48,16 @@ log() {
 
 # Выбор каталога: compose.d приоритетнее, иначе работаем из каталога скрипта.
 pick_compose_dir() {
-  if [[ -d "$COMPOSE_DIR" ]]; then
-    ACTIVE_COMPOSE_DIR="$COMPOSE_DIR"
-  else
-    log "Каталог $COMPOSE_DIR не найден, ищем файлы рядом со скриптом ($ACTIVE_COMPOSE_DIR)"
+  if [[ -d "$ACTIVE_COMPOSE_DIR" ]]; then
+    return
+  fi
+
+  log "Каталог $ACTIVE_COMPOSE_DIR не найден, ищем файлы рядом со скриптом ($SCRIPT_DIR)"
+  ACTIVE_COMPOSE_DIR="$SCRIPT_DIR"
+
+  if [[ ! -d "$ACTIVE_COMPOSE_DIR" ]]; then
+    log "ERROR: Каталог с compose-файлами не найден: $ACTIVE_COMPOSE_DIR"
+    exit 1
   fi
 }
 
@@ -77,6 +87,15 @@ build_compose_args() {
   for f in "${COMPOSE_FILES[@]}"; do
     COMPOSE_ARGS+=(-f "$f")
   done
+}
+
+# Настраиваем путь env-файла по умолчанию на уровень выше каталога compose.
+setup_env_file_path() {
+  if [[ "$ENV_FILE_USER_SET" == "true" ]]; then
+    return
+  fi
+
+  ENV_FILE="$ENV_FILE_DEFAULT"
 }
 
 # Конфигурируем env-файл (ENV_FILE или .env рядом со скриптом).
@@ -121,6 +140,9 @@ run_with_retries() {
       return 0
     fi
 
+    # Проверяем и убираем unhealthy между ретраями, чтобы не тащить битые контейнеры дальше
+    remove_unhealthy_containers
+
     if (( attempt < attempts )); then
       log "Попытка ${attempt} неудачна, повтор через ${delay}с"
       sleep "$delay"
@@ -131,8 +153,86 @@ run_with_retries() {
   return 1
 }
 
+remove_unhealthy_containers() {
+  # Ищем только в текущем стеке (compose ps) и удаляем контейнеры со статусом unhealthy.
+  if ! command -v awk >/dev/null 2>&1; then
+    log "WARN: awk недоступен, пропускаем удаление unhealthy контейнеров"
+    return
+  fi
+
+  local lines
+  if ! lines=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" ps --format "table {{.Name}}\t{{.Health}}" 2>/dev/null); then
+    log "WARN: Не удалось получить список контейнеров для проверки здоровья"
+    return
+  fi
+
+  mapfile -t UNHEALTHY < <(echo "$lines" | tail -n +2 | awk '$2=="unhealthy"{print $1}')
+  if [[ ${#UNHEALTHY[@]} -eq 0 ]]; then
+    log "Unhealthy контейнеров не обнаружено"
+    return
+  fi
+
+  log "Найдены unhealthy контейнеры: ${UNHEALTHY[*]}"
+  for c in "${UNHEALTHY[@]}"; do
+    log "Логи $c (последние 100 строк):"
+    docker logs --tail 100 "$c" 2>&1 || log "WARN: Не удалось получить логи $c"
+  done
+
+  log "Останавливаем и удаляем: ${UNHEALTHY[*]}"
+  for c in "${UNHEALTHY[@]}"; do
+    docker rm -f "$c" >/dev/null 2>&1 || log "WARN: Не удалось удалить $c"
+  done
+}
+
+validate_configs() {
+  local primary_cmd="$1"
+  if [[ "$primary_cmd" != "up" ]]; then
+    return
+  fi
+
+  ensure_env_file_for_config
+
+  log "Проверяем конфигурацию: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} config"
+  if ! output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config 2>&1 >/dev/null); then
+    log "ERROR: Найдены ошибки в конфигурации compose:"
+    echo "$output" >&2
+    exit 1
+  fi
+}
+
+pull_images_if_needed() {
+  local primary_cmd="$1"
+  if [[ "$primary_cmd" != "up" || "$PULL_BEFORE_UP" == "0" ]]; then
+    return
+  fi
+
+  log "Проверяем обновления образов: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} pull --quiet"
+  if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" pull --quiet; then
+    log "WARN: Не удалось обновить образы (pull), продолжаем без обновления"
+  fi
+}
+
+ensure_env_file_for_config() {
+  if [[ -z "${ENV_FILE:-}" ]]; then
+    return
+  fi
+
+  if [[ -f "$ENV_FILE" ]]; then
+    return
+  fi
+
+  if [[ "$ENV_FILE_USER_SET" == "true" ]]; then
+    log "ERROR: Указанный env-файл не найден: $ENV_FILE"
+  else
+    log "ERROR: Env-файл по умолчанию не найден: $ENV_FILE (ожидается перед проверкой config)"
+  fi
+  log "Подсказка: задайте ENV_FILE=... или создайте файл по указанному пути"
+  exit 1
+}
+
 main() {
   pick_compose_dir
+  setup_env_file_path
   log "Каталог с compose-файлами: $ACTIVE_COMPOSE_DIR"
   collect_compose_files
   if [[ ${#COMPOSE_FILES[@]} -eq 0 ]]; then
@@ -182,10 +282,17 @@ main() {
     exec docker logs -f "$last_svc"
   fi
 
+  validate_configs "$1"
+  pull_images_if_needed "$1"
   stop_existing_stack "$1"
 
   if [[ "$1" == "up" ]]; then
-    run_with_retries "$@" || exit 1
+    if run_with_retries "$@"; then
+      exit 0
+    else
+      remove_unhealthy_containers
+      exit 1
+    fi
     exit 0
   fi
 

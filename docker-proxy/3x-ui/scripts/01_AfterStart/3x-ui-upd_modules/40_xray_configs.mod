@@ -124,9 +124,59 @@ restart_xray() {
     # Ошибки curl 35/56 ожидаемы, не флудим WARN
     if [ "$HTTP_CODE" = "000" ]; then
         log INFO "Xray скорее всего успешно перезапущен (соединение разорвано как ожидается)."
-    elif [ "$HTTP_CODE" != "200" ]; then
-        log WARN "Не удалось отправить запрос (HTTP $HTTP_CODE), возможно Xray уже рестартанулся."
-    else
+        return 0
+    elif [ "$HTTP_CODE" = "200" ]; then
         log INFO "Запрос на перезагрузку XRAY отправлен (HTTP $HTTP_CODE)."
+        return 0
+    fi
+
+    # Fallback: локальный рестарт через бинарник (если API недоступен, например 404)
+    local enable_local=${XRAY_LOCAL_RESTART:-true}
+    if [ "$enable_local" != "true" ]; then
+        log WARN "Не удалось отправить запрос (HTTP $HTTP_CODE), локальный рестарт отключён (XRAY_LOCAL_RESTART=$XRAY_LOCAL_RESTART)."
+        return 1
+    fi
+
+    # Определяем бинарник и конфиг
+    local xray_bin
+    xray_bin=$(find_xray_bin) || return 1
+    # Если уже запущен — не плодим второй процесс
+    local running_pids
+    running_pids=$(pgrep -f "$xray_bin" 2>/dev/null || pgrep -f 'xray.*config' 2>/dev/null || true)
+    if [ -n "$running_pids" ]; then
+        log DEBUG "Xray уже запущен (PID: $running_pids). Пропускаем локальный рестарт."
+        return 0
+    fi
+    local cfg=""
+    for c in ${XRAY_CONFIG_PATH:-} \
+             /app/bin/config.json \
+             /etc/xray/config.json \
+             /usr/local/etc/xray/config.json \
+             /usr/local/bin/config.json \
+             /root/config.json; do
+        [ -n "$c" ] && [ -f "$c" ] && { cfg="$c"; break; }
+    done
+    if [ -z "$cfg" ]; then
+        log WARN "Конфиг Xray не найден (проверьте XRAY_CONFIG_PATH). Локальный рестарт не выполнен."
+        return 1
+    fi
+
+    log WARN "API перезапуска недоступно (HTTP $HTTP_CODE). Пробуем локальный рестарт через бинарник: $xray_bin -c $cfg"
+    # Стартуем новый процесс (если вдруг поднимется параллельно — pid проверяли выше)
+    local restart_log
+    restart_log=$(mktemp)
+    "$xray_bin" run -c "$cfg" >"$restart_log" 2>&1 &
+    sleep 1
+    if pgrep -f "$xray_bin" >/dev/null 2>&1; then
+        log INFO "Xray успешно запущен локально через бинарник."
+        rm -f "$restart_log"
+        return 0
+    else
+        log ERROR "Локальный запуск xray через бинарник не удался."
+        if [ -f "$restart_log" ] && [ -s "$restart_log" ]; then
+            log DEBUG "xray stderr: $(tr '\n' ' ' < \"$restart_log\" 2>/dev/null)"
+        fi
+        rm -f "$restart_log" 2>/dev/null || true
+        return 1
     fi
 }

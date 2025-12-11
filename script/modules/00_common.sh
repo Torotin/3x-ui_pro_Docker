@@ -1,6 +1,8 @@
 #!/bin/bash
 # lib/00_common.sh — Common utility functions for system checks, package installation, backups, and random generation
 : "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+: "${YQ_BIN:=/usr/bin/yq}"
+: "${YQ_CACHE_DIR:=${SCRIPT_DIR}/.cache/yq}"
 
 # === Check LOG_FILE ===
 check_LOG_FILE() {
@@ -122,14 +124,53 @@ update_and_upgrade_packages() {
 
 # --- Install yq from GitHub ---
 yq_install() {
-    local yq_bin="/usr/bin/yq"
+    local yq_bin="${YQ_BIN:-/usr/bin/yq}"
+    local cache_dir="${YQ_CACHE_DIR:-$SCRIPT_DIR/.cache/yq}"
+    local cache_bin="$cache_dir/yq_linux_amd64"
     local attempts=3
+
+    log "DEBUG" "yq_install: yq_bin=$yq_bin cache_bin=$cache_bin attempts=$attempts"
+
+    # Fast path: working binary already present
+    if command -v "$yq_bin" &>/dev/null; then
+        local current_version
+        current_version="$("$yq_bin" --version 2>/dev/null || true)"
+        if [[ -n "$current_version" ]]; then
+            log "INFO" "yq already installed: $current_version"
+            return 0
+        fi
+        log "WARN" "yq binary exists at $yq_bin but version check failed, will reinstall"
+    fi
+
+    ensure_directory_exists "$cache_dir"
+
+    # Use cached binary if available
+    if [[ -x "$cache_bin" ]]; then
+        local cache_version
+        cache_version="$("$cache_bin" --version 2>/dev/null || true)"
+        if [[ -n "$cache_version" ]]; then
+            log "INFO" "Using cached yq: $cache_version"
+            cp -- "$cache_bin" "$yq_bin" && chmod +x "$yq_bin"
+            if "$yq_bin" --version &>/dev/null; then
+                log "OK" "yq installed from cache: $("$yq_bin" --version)"
+                return 0
+            fi
+            log "WARN" "Failed to activate cached yq, will download fresh"
+        else
+            log "DEBUG" "Cached yq found at $cache_bin but version is empty; ignoring cache"
+        fi
+    fi
+
     for ((i=1; i<=attempts; i++)); do
-        [[ -f "$yq_bin" ]] && rm -f "$yq_bin"
-        if wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O "$yq_bin"; then
+        log "INFO" "Downloading yq (attempt $i/$attempts)..."
+        if wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O "$cache_bin"; then
+            chmod +x "$cache_bin"
+            cp -- "$cache_bin" "$yq_bin"
             chmod +x "$yq_bin"
-            if command -v yq &>/dev/null; then
-                log "INFO" "yq installed successfully: $(yq --version)"
+            local downloaded_version
+            downloaded_version="$("$yq_bin" --version 2>/dev/null || true)"
+            if [[ -n "$downloaded_version" ]]; then
+                log "OK" "yq installed successfully: $downloaded_version"
                 return 0
             fi
         fi

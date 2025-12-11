@@ -1,0 +1,46 @@
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/settings/
+
+providers:
+  openweathermap: openweathermapapikey
+  weatherapi: weatherapiapikey
+
+title: "Server Dashboard"
+
+description: HomeServ Homepage
+background:
+  image: https://images.wallpaperscraft.com/image/single/cat_night_lights_74375_2560x1600.jpg
+  blur: sm
+  saturate: 50
+  brightness: 50
+  opacity: 50
+cardBlur: xs
+favicon: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/favicon.ico
+theme: dark
+color: slate
+bookmarksStyle: icons
+fullWidth: true
+maxGroupColumns: 8
+maxBookmarkGroupColumns: 6
+disableCollapse: false
+groupsInitiallyCollapsed: false
+useEqualHeights: false
+headerStyle: boxed
+base: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_HOMEPAGE}}"
+language: en
+linksInNewTab: true
+target: _blank
+quicklaunch:
+  searchDescriptions: true
+  hideInternetSearch: true
+  showSearchSuggestions: true
+  hideVisitURL: true
+  provider: duckduckgo
+hideVersion: true
+disableUpdateCheck: false
+logpath: /
+showStats: true
+statusStyle: "dot"
+# instanceName: public
+hideErrors: true

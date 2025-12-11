@@ -47,7 +47,7 @@ while [ ! -d /export ]; do
 done
 
 # PID основного shell-процесса контейнера
-echo $$ > /export/exporter.pid
+echo $$ > /home/exporter.pid
 
 last_update=0
 debounce=3
@@ -63,7 +63,7 @@ sanitize_domain() {
 
 # Проверка "жив ли" основной процесс (BusyBox-safe)
 check_process() {
-    pid=$(cat /export/exporter.pid 2>/dev/null)
+    pid=$(cat /home/exporter.pid 2>/dev/null)
     if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
         echo "running"
     else
@@ -77,7 +77,7 @@ write_health() {
     msg="$2"
     process_status=$(check_process)
 
-    cat > /export/health.json <<EOF
+    cat > /home/health.json <<EOF
 {
   "status": "$status",
   "process": "$process_status",
@@ -93,7 +93,7 @@ EOF
 write_health_init() {
     process_status=$(check_process)
 
-    cat > /export/health.json <<EOF
+    cat > /home/health.json <<EOF
 {
   "status": "INIT",
   "process": "$process_status",
@@ -176,31 +176,14 @@ cleanup_old_files() {
     done
 }
 
-# --- INIT ---
-write_health_init
-
-# --- MAIN LOOP ---
-while true; do
-    now=$(date +%s)
-
-    # Heartbeat если давно нет активности
-    if [ $((now - last_heartbeat)) -ge $heartbeat_interval ]; then
-        write_heartbeat
-        last_heartbeat=$now
+process_acme() {
+    if [ ! -f /acme.json ]; then
+        write_health "WARN" "acme.json not found"
+        echo "[Exporter] acme.json not found"
+        return 1
     fi
 
-    # Ждём изменения acme.json
-    inotifywait -e close_write /acme.json >/dev/null 2>&1
-
-    # Debounce обновлений (случаются burst-записи)
-    now=$(date +%s)
-    if [ $((now - last_update)) -lt $debounce ]; then
-        echo "[Exporter] Debounced"
-        continue
-    fi
-    last_update=$now
-
-    echo "[Exporter] Detected acme.json update..."
+    echo "[Exporter] Processing acme.json..."
 
     all=$(extract_certificates | jq -s 'add')
 
@@ -208,7 +191,7 @@ while true; do
     if ! echo "$all" | jq empty 2>/dev/null; then
         write_health "ERROR" "Invalid acme.json format"
         echo "[Exporter] Bad acme.json"
-        continue
+        return 1
     fi
 
     count=$(echo "$all" | jq 'length')
@@ -216,7 +199,7 @@ while true; do
     if [ "$count" -eq 0 ]; then
         write_health "WARN" "No certificates found"
         echo "[Exporter] No certificates found"
-        continue
+        return 0
     fi
 
     processed_domains=""
@@ -260,4 +243,34 @@ $domain"
     write_health "OK" "Processed $count certificates"
 
     echo "[Exporter] Done"
+}
+
+# --- INIT ---
+write_health_init
+process_acme
+
+# --- MAIN LOOP ---
+while true; do
+    now=$(date +%s)
+
+    # Heartbeat если давно нет активности
+    if [ $((now - last_heartbeat)) -ge $heartbeat_interval ]; then
+        write_heartbeat
+        last_heartbeat=$now
+    fi
+
+    # Ждём изменения acme.json
+    inotifywait -e close_write /acme.json >/dev/null 2>&1
+
+    # Debounce обновлений (случаются burst-записи)
+    now=$(date +%s)
+    if [ $((now - last_update)) -lt $debounce ]; then
+        echo "[Exporter] Debounced"
+        continue
+    fi
+    last_update=$now
+
+    echo "[Exporter] Detected acme.json update..."
+
+    process_acme
 done

@@ -237,33 +237,67 @@ EOF
 
 # Создаёт Docker-сеть с нужными опциями, если её ещё нет
 # Usage:
-#   docker_create_network NAME [external] [ipv6] [subnet=<CIDR>]
+#   docker_create_network NAME [external] [internal] [ipv6] [subnet=<CIDR>]
 # 1) Создаём внешнюю сеть traefik-proxy (для docker-compose external: true)
 # docker_create_network traefik-proxy external
-# 2) Создаём свою сеть с IPv6 и подсетью
-#    Имя, которое задаётся в переменной DOCKER_NETWORK_NAME
-#    и подсеть — в DOCKER_IPV6_SUBNET
+# 2) Создаём внутреннюю сеть с подсетью
+# docker_create_network dns-net internal subnet="172.19.0.0/24"
+# 3) Создаём сеть с IPv6 и подсетью
 # docker_create_network "$DOCKER_NETWORK_NAME" ipv6 subnet="$DOCKER_IPV6_SUBNET"
 docker_create_network() {
     local name="$1"; shift
     local is_external=false
+    local is_internal=false
     local is_ipv6=false
     local subnet=""
+    local gateway=""
 
     # Разбираем ключи
     for opt in "$@"; do
         case "$opt" in
             external)   is_external=true ;;
+            internal)   is_internal=true ;;
             ipv6)       is_ipv6=true ;;
             subnet=*)   subnet="${opt#subnet=}" ;;
             *)          log "WARN" "Unknown option '$opt' for docker_create_network" ;;
         esac
     done
 
-    # Если уже есть — ничего не делаем
+    # Проверяем наличие docker
+    if ! command_exists docker; then
+        log "ERROR" "docker is not installed or not in PATH"
+        exit 1
+    fi
+
+    # Если уже есть — ничего не делаем, но сверяем подсеть (если задана)
     if docker network inspect "$name" &>/dev/null; then
         log "INFO" "Network '$name' already exists, skipping creation."
+        if [[ -n "$subnet" ]]; then
+          local existing_subnets
+          existing_subnets=$(docker network inspect "$name" --format '{{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null)
+          if ! grep -qw "$subnet" <<<"$existing_subnets"; then
+            log "WARN" "Network '$name' exists, but expected subnet '$subnet' not found (have: $existing_subnets)"
+          fi
+        fi
         return 0
+    fi
+
+    # Предварительная проверка на совпадение подсетей с другими сетями (чтобы не словить invalid pool request)
+    if [[ -n "$subnet" ]]; then
+      local overlap
+      overlap=$(docker network ls -q | xargs -r docker network inspect --format '{{.Name}} {{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null | grep -w "$subnet" || true)
+      if [[ -n "$overlap" ]]; then
+        log "ERROR" "Подсеть $subnet уже используется сетями: $(echo "$overlap" | awk '{print $1}' | tr '\n' ' ')"
+        log "ERROR" "Создание сети '$name' остановлено во избежание конфликта (invalid pool request). Удалите/измените конфликтующие сети или задайте другой subnet."
+        exit 1
+      fi
+
+      gateway="$(calculate_gateway_from_subnet "$subnet")"
+      if [[ -n "$gateway" ]]; then
+        log "INFO" "Для сети '$name' будет использован шлюз $gateway (последний доступный адрес подсети)"
+      else
+        log "WARN" "Не удалось вычислить gateway для '$name' (subnet=$subnet), создаём сеть без --gateway"
+      fi
     fi
 
     # Если external — создаём сеть, учитывая подсеть/IPv6, если заданы
@@ -271,7 +305,9 @@ docker_create_network() {
         local args=()
         local ipv6_label=""
         $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+        $is_internal && args+=(--internal)
         [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+        [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
 
         log "INFO" "Creating external network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
         if docker network create "${args[@]}" "$name"; then
@@ -290,7 +326,9 @@ docker_create_network() {
     local args=()
     local ipv6_label=""
     $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+    $is_internal && args+=(--internal)
     [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+    [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
 
     log "INFO" "Creating network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
     if docker network create "${args[@]}" "$name"; then
@@ -301,6 +339,142 @@ docker_create_network() {
     else
         log "ERROR" "Failed to create network '$name'"
         exit 1
+    fi
+}
+
+# Возвращает последний доступный IPv4 адрес для подсети (шлюз). Для /24 -> *.254.
+calculate_gateway_from_subnet() {
+    local subnet="$1"
+
+    # IPv6 пропускаем
+    [[ "$subnet" == *:* ]] && return 0
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$subnet" <<'PY'
+import sys
+from ipaddress import ip_network
+
+subnet = sys.argv[1]
+try:
+    net = ip_network(subnet, strict=False)
+    hosts = list(net.hosts())
+    # Используем последний адрес хоста в сети
+    if hosts:
+        print(hosts[-1])
+except Exception:
+    sys.exit(0)
+PY
+    else
+        local base prefix IFS=.
+        base="${subnet%/*}"
+        prefix="${subnet#*/}"
+        IFS=. read -r a b c d <<<"$base"
+        # Поддерживаем простой случай /24: 172.18.0.0/24 -> 172.18.0.255
+        if [[ "$prefix" -eq 24 && -n "$a" && -n "$b" && -n "$c" ]]; then
+            echo "$a.$b.$c.255"
+        fi
+    fi
+}
+
+docker_run_compose() {
+    local runner="${DOCKER_DIR}/compose.d/run-compose.sh"
+    local env_file="${DOCKER_ENV_FILE:-${DOCKER_DIR}/.env}"
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log "ERROR" "docker not found in PATH. Please run step 2 (Docker install) first."
+        return 1
+    fi
+
+    if ! (docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1); then
+        log "ERROR" "docker compose/docker-compose not found. Please run step 2 (Docker install) first."
+        return 1
+    fi
+
+    if [[ ! -f "$runner" ]]; then
+        log "ERROR" "run-compose.sh not found at: $runner. Execute step 3 (generate docker dir) first."
+        return 1
+    fi
+
+    if [[ ! -x "$runner" ]]; then
+        chmod +x "$runner" || log "WARN" "Failed to make $runner executable"
+    fi
+
+    if [[ -f "$env_file" ]]; then
+        log "INFO" "Using env file: $env_file"
+    else
+        log "WARN" "Env file not found at: $env_file (will rely on script defaults)"
+    fi
+
+    docker_ensure_networks
+
+    log "INFO" "Running compose stack via: $runner"
+    ENV_FILE="$env_file" "$runner" "$@"
+}
+
+docker_ensure_networks() {
+    if ! command_exists docker; then
+        log "ERROR" "docker not found. Run step 2 (Docker install) first."
+        return 1
+    fi
+
+    local base_compose="${DOCKER_DIR}/compose.d/00-base.yml"
+    local fallback_done=false
+
+    # Фолбэк на старое поведение, если нет yq или базового файла
+    fallback_networks() {
+        fallback_done=true
+        log "WARN" "Autodetect of networks skipped; creating defaults."
+        local traefik_subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}"
+        local dns_subnet="${DNS_NET_SUBNET:-172.19.0.0/24}"
+        docker_create_network traefik-proxy external subnet="$traefik_subnet"
+        docker_create_network dns-net external subnet="$dns_subnet"
+    }
+
+    if ! command_exists yq; then
+        fallback_networks
+        return 0
+    fi
+    if [[ ! -f "$base_compose" ]]; then
+        log "WARN" "Base compose file not found: $base_compose"
+        fallback_networks
+        return 0
+    fi
+
+    mapfile -t net_entries < <(
+        yq eval '.networks // {} | to_entries[] | "\(.key)|\(.value.external // false)|\(.value.internal // false)|\(.value.ipam.config[0].subnet // "")"' "$base_compose" 2>/dev/null
+    )
+
+    if (( ${#net_entries[@]} == 0 )); then
+        log "WARN" "No networks found in $base_compose"
+        fallback_networks
+        return 0
+    fi
+
+    for entry in "${net_entries[@]}"; do
+        IFS="|" read -r net_name is_ext is_int subnet <<< "$entry"
+        [[ -z "$net_name" ]] && continue
+        local opts=()
+        [[ "$is_ext" == "true" ]] && opts+=(external)
+        [[ "$is_int" == "true" ]] && opts+=(internal)
+
+        # Если подсеть не описана в compose (например, external сети), подставляем умолчания
+        if [[ -z "$subnet" || "$subnet" == "null" ]]; then
+            case "$net_name" in
+                traefik-proxy) subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}" ;;
+                dns-net)       subnet="${DNS_NET_SUBNET:-172.19.0.0/24}" ;;
+                *) subnet="" ;;
+            esac
+        fi
+        [[ -n "$subnet" ]] && opts+=(subnet="$subnet")
+
+        log "INFO" "Ensuring network '$net_name' (external=$is_ext, internal=$is_int, subnet=${subnet:-<none>})"
+        docker_create_network "$net_name" "${opts[@]}"
+    done
+
+    if [[ "$fallback_done" == true ]]; then
+        log "WARN" "Networks were created with defaults due to missing config."
+    else
+        log "OK" "Networks ensured from $base_compose"
     fi
 }
 

@@ -4,12 +4,11 @@
 
 networks:
   traefik-proxy:
+    name: traefik-proxy
     external: true
   dns-net:
-    internal: true
-    ipam:
-      config:
-        - subnet: "172.19.0.0/24"
+    name: dns-net
+    external: true
 
 volumes:
   crowdsec_data:
@@ -23,4 +22,4 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=5g
+      o: size=1g,uid=1000,gid=1000,mode=0750,noatime,nosuid,nodev,noexec,nr_inodes=200000
