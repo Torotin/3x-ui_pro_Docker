@@ -254,10 +254,10 @@ create_xhttp_inbound() {
               "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
               "Access-Control-Allow-Headers": "Content-Type"
           },
-          scMaxBufferedPosts: 30,
-          scMaxEachPostBytes: "1000000",
-          scStreamUpServerSecs: "20-80",
-          noSSEHeader: false,
+          scMaxBufferedPosts: 50,
+          scMaxEachPostBytes: "5000000",
+          scStreamUpServerSecs: "5-20",  
+          noSSEHeader: true,
           xPaddingBytes: "100-1000",
           mode: "packet-up"
         }
