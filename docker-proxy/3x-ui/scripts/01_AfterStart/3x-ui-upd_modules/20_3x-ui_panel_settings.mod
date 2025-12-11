@@ -84,7 +84,7 @@ update_panel_settings() {
     done
 
     # Логируем, что именно отправляем
-    log INFO "Отправляем запрос на обновление панели: $url"
+    log INFO "Отправляем запрос на обновление параметров панели: $url"
     log DEBUG "Параметры (полный набор): $param_list"
     if [ -n "$override_list" ]; then
         log INFO "Изменяем параметры (из окружения): $override_list"
