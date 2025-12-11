@@ -6,14 +6,15 @@ install_steps_init() {
   declare -gA INSTALL_STEPS=(
     ["0"]='auto_full:Automatic full install'
     ["1"]='update_and_upgrade_packages:System update'
-    ["2"]='docker_install;docker_create_network traefik-proxy external subnet=172.18.0.0/24:Docker. (Re)Install'
-    ["3"]='ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}";:Docker. Generate docker dir'
+    ["2"]='docker_install;docker_ensure_networks:Docker. (Re)Install'
+    ["3"]='ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}":Docker. Generate docker dir'
     ["4"]='generate_env_file "'$DOCKER_ENV_TEMPLATE'" "'$DOCKER_ENV_FILE'":Docker. Generate docker env-file'
-    ["5"]='user_create:Create user'
-    ["6"]='firewall_config:Configure firewall'
-    ["7"]='sshd_config:Configure SSH'
-    ["8"]='network_config_modify:Network optimization'
-    ["9"]='msg_final:Final message'
+    ["5"]='docker_run_compose:Docker. Run compose stack'
+    ["6"]='user_create:Create user'
+    ["7"]='firewall_config:Configure firewall'
+    ["8"]='sshd_config:Configure SSH'
+    ["9"]='network_config_modify:Network optimization'
+    ["10"]='msg_final:Final message'
     ["x"]='exit_script:Exit'
     ["r"]='reboot_system:Reboot'
   )
@@ -147,7 +148,6 @@ check_args() {
 main_menu() {
   if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
   log "INFO" "Starting installation script..."
-  initialize_script
   check_args "$@"
 
   while true; do

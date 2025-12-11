@@ -6,11 +6,6 @@
 PROFILE_FILE="/etc/profile.d/custom_env.sh"
 DEFAULT_ATTEMPTS=3
 
-exit_error() {
-    log "ERROR" "$*"
-    exit 1
-}
-
 # --- RANDOM GENERATORS (STUBS, TO BE IMPLEMENTED) ---
 generate_random_string() {
     local min_len="${1:-16}"
@@ -189,7 +184,9 @@ generate_htpasswd() {
     log "INFO" "Generating htpasswd for user $USER_WEB..."
     local raw_htpasswd
     raw_htpasswd=$(htpasswd -nb "$USER_WEB" "$PASS_WEB")
-    HT_PASS_ENCODED=$(echo "$raw_htpasswd" | sed -e 's/\$/\$\$/g')
+    # Escape $ so docker compose does not try to expand $apr1... when substituting variables;
+    # compose will convert $$ back to $ inside the container.
+    HT_PASS_ENCODED="${raw_htpasswd//$/\$\$}"
 
     log "OK" "htpasswd successfully generated."
   else

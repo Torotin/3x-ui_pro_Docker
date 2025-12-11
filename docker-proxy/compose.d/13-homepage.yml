@@ -1,0 +1,69 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    restart: unless-stopped
+    container_name: homepage
+    env_file:
+      - /opt/docker-proxy/compose.d/.env
+    environment:
+      # PUID: 1000
+      # PGID: 1000
+      TZ: ${TZ}
+      LOG_TARGETS: both
+      HOMEPAGE_ALLOWED_HOSTS: ${WEBDOMAIN}
+      HOMEPAGE_VAR_WEBDOMAIN: ${WEBDOMAIN}
+      HOMEPAGE_VAR_URI_3X-UI_PATH: ${URI_PANEL_PATH}
+      HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD: ${URI_TRAEFIK_DASHBOARD}
+      HOMEPAGE_VAR_URI_DOZZLE: ${URI_DOZZLE}
+      HOMEPAGE_VAR_URI_ADGUARD_PANEL: ${URI_ADGUARD_PANEL}
+      HOMEPAGE_VAR_URI_HOMEPAGE: ${URI_HOMEPAGE}
+      HOMEPAGE_VAR_USER_WEB: ${USER_WEB}
+      HOMEPAGE_VAR_PASS_WEB: ${PASS_WEB}
+      HOMEPAGE_VAR_HT_PASS_ENCODED: ${HT_PASS_ENCODED}
+    volumes:
+      - /opt/docker-proxy/homepage/logs:/logs
+      - /opt/docker-proxy/homepage:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.13
+      dns-net:
+        ipv4_address: 172.19.0.13
+    security_opt:
+      - no-new-privileges=true
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      # ---------- Service ----------
+      - traefik.http.services.homepage-svc.loadbalancer.server.port=3000
+      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.path=/
+      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.interval=30s
+      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.timeout=5s
+
+      # ---------- Middleware ----------
+      - traefik.http.middlewares.homepage-basic-auth.basicauth.users=${HT_PASS_ENCODED}
+      - traefik.http.middlewares.homepage-basic-auth.basicauth.realm=Homepage
+      - traefik.http.middlewares.homepage-strip.stripPrefix.prefixes=/${URI_HOMEPAGE}
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_HOMEPAGE}/$1
+      - traefik.http.middlewares.homepage-compress.compress=true
+      - traefik.http.middlewares.homepage-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-strip,homepage-rewrite,homepage-compress
+      - traefik.http.middlewares.homepage-static-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rewrite,homepage-compress
+
+      # ---------- Роутеры ----------
+      - traefik.http.routers.homepage-router.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_HOMEPAGE}`)
+      - traefik.http.routers.homepage-router.entrypoints=websecure
+      - traefik.http.routers.homepage-router.middlewares=homepage-chain
+      - traefik.http.routers.homepage-router.service=homepage-svc
+      - traefik.http.routers.homepage-router.tls.certresolver=le
+      - traefik.http.routers.homepage-router.priority=950
+
+      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`) || PathPrefix(`/favicon`) || PathPrefix(`/apple-touch-icon`) || PathPrefix(`/site.webmanifest`) || PathPrefix(`/homepage.ico`) || PathPrefix(`/safari-pinned-tab`) || PathPrefix(`/android-chrome`))
+      - traefik.http.routers.homepage-static.entrypoints=websecure
+      - traefik.http.routers.homepage-static.middlewares=homepage-static-chain
+      - traefik.http.routers.homepage-static.service=homepage-svc
+      - traefik.http.routers.homepage-static.tls.certresolver=le
+      - traefik.http.routers.homepage-static.priority=949

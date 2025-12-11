@@ -158,7 +158,30 @@ firewall_setup_iptables() {
     firewall_add_tcp_flags_protection_iptables
 
     # Запрещаем ICMP
-    iptables -A INPUT -p icmp -j DROP
+    # --- ICMP (IPv4) ---
+
+    # Разрешаем системные типы (PMTU, TTL)
+    iptables -A INPUT -p icmp --icmp-type fragmentation-needed -j ACCEPT
+    iptables -A INPUT -p icmp --icmp-type time-exceeded -j ACCEPT
+    iptables -A INPUT -p icmp --icmp-type destination-unreachable -j ACCEPT
+
+    # Рубим ping, чтобы сервер не пинговался
+    iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+
+    # Остальные ICMP попадают под политику (INPUT = DROP), можно не трогать
+    log "DEBUG" "ICMP hardened: system types allowed, echo-request dropped."
+
+    # --- ICMPv6 (если нужен) ---
+    if command -v ip6tables &>/dev/null; then
+        ip6tables -A INPUT -p ipv6-icmp --icmpv6-type packet-too-big -j ACCEPT
+        ip6tables -A INPUT -p ipv6-icmp --icmpv6-type time-exceeded -j ACCEPT
+        ip6tables -A INPUT -p ipv6-icmp --icmpv6-type destination-unreachable -j ACCEPT
+
+        ip6tables -A INPUT -p ipv6-icmp --icmpv6-type echo-request -j DROP
+
+        log "DEBUG" "IPv6 ICMP hardened."
+    fi
+    
     command -v ip6tables &>/dev/null && ip6tables -A INPUT -p ipv6-icmp -j DROP
     log "DEBUG" "Blocked all ICMP requests."
 
@@ -227,13 +250,13 @@ firewall_add_tcp_flags_protection_iptables() {
 firewall_comment_icmp_accepts() {
     local file="$1"
     local patterns=(
-        "-A ufw-before-input -p icmp --icmp-type destination-unreachable -j ACCEPT"
-        "-A ufw-before-input -p icmp --icmp-type time-exceeded -j ACCEPT"
-        "-A ufw-before-input -p icmp --icmp-type parameter-problem -j ACCEPT"
+        # "-A ufw-before-input -p icmp --icmp-type destination-unreachable -j ACCEPT"
+        # "-A ufw-before-input -p icmp --icmp-type time-exceeded -j ACCEPT"
+        # "-A ufw-before-input -p icmp --icmp-type parameter-problem -j ACCEPT"
         "-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT"
-        "-A ufw-before-forward -p icmp --icmp-type destination-unreachable -j ACCEPT"
-        "-A ufw-before-forward -p icmp --icmp-type time-exceeded -j ACCEPT"
-        "-A ufw-before-forward -p icmp --icmp-type parameter-problem -j ACCEPT"
+        # "-A ufw-before-forward -p icmp --icmp-type destination-unreachable -j ACCEPT"
+        # "-A ufw-before-forward -p icmp --icmp-type time-exceeded -j ACCEPT"
+        # "-A ufw-before-forward -p icmp --icmp-type parameter-problem -j ACCEPT"
         "-A ufw-before-forward -p icmp --icmp-type echo-request -j ACCEPT"
     )
     for pattern in "${patterns[@]}"; do

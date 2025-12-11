@@ -1,6 +1,9 @@
+# templates/crowdsec-bouncer.yml (оптимизированная версия)
+
 http:
   middlewares:
-    bouncer:
+    # Оптимизированный CrowdSec bouncer
+    crowdsec-bouncer:
       plugin:
         bouncer:
           enabled: true
@@ -15,15 +18,17 @@ http:
           crowdsecAppsecFailureBlock: true
           crowdsecAppsecUnreachableBlock: false # Изменено на false для устойчивости
           crowdsecAppsecHost: crowdsec:7422
-          crowdsecLapiKey: '{{ env "CROWDSEC_API_KEY_TRAEFIK" }}'
+          crowdsecLapiKey: ${CROWDSEC_API_KEY_TRAEFIK}
           crowdsecLapiHost: crowdsec:8080
           crowdsecLapiScheme: http
           forwardedHeadersTrustedIPs:
-            - 172.18.0.0/24
-            - 172.19.0.0/24
+            - 172.16.0.0/12
+            - 172.18.0.0/16
+            - 172.20.0.0/16
           clientTrustedIPs:
-            - 172.18.0.0/24
-            - 172.19.0.0/24
+            - 172.16.0.0/12
+            - 172.18.0.0/16
+            - 172.20.0.0/16
           # Дополнительные настройки для оптимизации
           crowdsecLapiTimeout: 5s
           crowdsecLapiRetryInterval: 1s

@@ -59,7 +59,14 @@ create_inbound_tcp_reality() {
     # Получаем X25519 ключи
     get_new_vless_enc || return 1
     get_new_x25519_cert || return 1
-    get_new_mldsa65 || return 1
+    use_mldsa=${USE_MLDSA65:-false}
+    if [ "$use_mldsa" = "true" ]; then
+        get_new_mldsa65 || return 1
+    else
+        MLD_SA_SEED=""
+        MLD_SA_VERIFY=""
+        log INFO "mldsa65 disabled for Reality (USE_MLDSA65=$use_mldsa)"
+    fi
 
     # fallbacks_json=$(
     #   jq -nc \
@@ -110,14 +117,25 @@ create_inbound_tcp_reality() {
     fi
     [ -n "${allocate_json:-}" ] || allocate_json='{"strategy":"always","refresh":5,"concurrency":3}'
 
+    # Прокидываем выбранный auth (PQ/X25519) в настройки VLESS
+    dec=${VLESS_DEC:-none}
+    enc=${VLESS_ENC:-none}
+    label=${VLESS_LABEL:-}
     # Override auth-free settings to match requested shape
     settings_json=$( \
-        jq -nc --argjson fallbacks "$fallbacks_json" '{
-          clients: [],
-          decryption: "none",
-          encryption: "none",
-          fallbacks: $fallbacks
-        }' \
+      jq -nc \
+        --arg dec "$dec" \
+        --arg enc "$enc" \
+        --arg label "$label" \
+        --argjson fallbacks "$fallbacks_json" '
+          (
+            if ($dec=="none" and $enc=="none")
+            then {clients: [], decryption: $dec, encryption: $enc, fallbacks: $fallbacks}
+            else {clients: [], decryption: $dec, encryption: $enc}
+            end
+          ) as $base
+          | if ($label|length)>0 then $base + {selectedAuth: $label} else $base end
+        ' \
     )
 
     stream_json=$( \
@@ -126,6 +144,8 @@ create_inbound_tcp_reality() {
         --arg sni "$WEBDOMAIN" \
         --arg priv "$X25519_PRIVATE_KEY" \
         --arg pub "$X25519_PUBLIC_KEY" \
+        --arg mldseed "${MLD_SA_SEED:-}" \
+        --arg mldverify "${MLD_SA_VERIFY:-}" \
         --arg fingerprint "chrome" \
         --arg spider "/" \
         --argjson shortIds "$short_ids" \
@@ -144,12 +164,13 @@ create_inbound_tcp_reality() {
           maxClientVer: "",
           maxTimediff: 0,
           shortIds: $shortIds,
+          mldsa65Seed: $mldseed,
           settings: {
             publicKey: $pub,
             fingerprint: $fingerprint,
             serverName: "",
             spiderX: $spider,
-            mldsa65Verify: ""
+            mldsa65Verify: $mldverify
           }
         },
         sockopt: $sockopt,
@@ -196,10 +217,26 @@ create_xhttp_inbound() {
     port=${PORT_LOCAL_XHTTP}
     xhttp_path=${URI_VLESS_XHTTP}
 
-    settings_json=$(jq -nc '{
+    # Получаем рекомендованные параметры шифрования VLESS (PQ/X25519)
+    if ! get_new_vless_enc; then
+        log ERROR "Не удалось получить параметры шифрования VLESS для XHTTP."
+        return 1
+    fi
+    vless_dec=${VLESS_DEC:-none}
+    vless_enc=${VLESS_ENC:-none}
+    vless_label=${VLESS_LABEL:-}
+
+    settings_json=$(
+      jq -nc \
+        --arg dec "$vless_dec" \
+        --arg enc "$vless_enc" \
+        --arg label "$vless_label" '{
         clients: [],
-        decryption: "none"
-    }')
+        decryption: $dec,
+        encryption: $enc,
+        selectedAuth: $label
+      }'
+    )
     sockopt_json=$(generate_sockopt_json acceptProxyProtocol=false tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
     external_proxy_json=$(
       jq -nc --arg dest "$WEBDOMAIN" --argjson port 443 \
@@ -219,25 +256,18 @@ create_xhttp_inbound() {
           path: $path,
           host: $host,
           headers: {
+              "Server": "nginx",
+              "Content-Type": "text/html; charset=UTF-8",
+              "Cache-Control": "no-cache",
+              "Connection": "keep-alive",
               "Access-Control-Allow-Origin": ("https://" + $host),
               "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-              "Access-Control-Allow-Headers": "Origin, Content-Type, Accept",
-              "Access-Control-Allow-Credentials": "true",
-              "Vary": "Origin",
-              "Access-Control-Max-Age": "600",
-              "Cross-Origin-Opener-Policy": "same-origin",
-              "Cross-Origin-Resource-Policy": "same-origin",
-              "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
-              "Referrer-Policy": "no-referrer",
-              "X-Content-Type-Options": "nosniff",
-              "X-XSS-Protection": "1; mode=block",
-              "X-Frame-Options": "DENY",
-              "Server": ""
+              "Access-Control-Allow-Headers": "Content-Type"
           },
-          scMaxBufferedPosts: 30,
-          scMaxEachPostBytes: "1000000",
-          scStreamUpServerSecs: "20-80",
-          noSSEHeader: false,
+          scMaxBufferedPosts: 50,
+          scMaxEachPostBytes: "5000000",
+          scStreamUpServerSecs: "5-20",  
+          noSSEHeader: true,
           xPaddingBytes: "100-1000",
           mode: "packet-up"
         }
@@ -297,31 +327,51 @@ add_client_to_inbound() {
         client_uuid=$(gen_rand_str 36)
     fi
 
-    # Собираем JSON для form-data, используя параметры flow и email
-    settings_json=$(jq -nc \
+    # Получаем текущие настройки инбаунда, чтобы не терять PQ decryption/encryption/selectedAuth
+    panel_api_request GET "$API_URL_INBOUND_LIST" \
+        -H 'X-Requested-With: XMLHttpRequest'
+    existing_settings=$(printf '%s' "$HTTP_BODY" | jq -c --arg id "$inbound_id" '
+      .obj[] | select(.id == ($id|tonumber)) | .settings | fromjson
+    ' 2>/dev/null)
+    # Текущие PQ-параметры: берем из инбаунда или из окружения
+    dec=$(printf '%s' "${existing_settings:-}" | jq -r '.decryption // empty' 2>/dev/null)
+    enc=$(printf '%s' "${existing_settings:-}" | jq -r '.encryption // empty' 2>/dev/null)
+    label=$(printf '%s' "${existing_settings:-}" | jq -r '.selectedAuth // empty' 2>/dev/null)
+    [ -n "$dec" ] || dec=${VLESS_DEC:-none}
+    [ -n "$enc" ] || enc=${VLESS_ENC:-none}
+    [ -n "$label" ] || label=${VLESS_LABEL:-}
+    # Базовые настройки для слияния
+    if [ -z "$existing_settings" ]; then
+        existing_settings='{}'
+    fi
+    # Собираем JSON для form-data, добавляя клиента и сохраняя PQ-поля
+    settings_json=$(printf '%s' "$existing_settings" | jq -c \
       --arg id    "$client_uuid" \
       --arg flow  "$flow" \
       --arg email "$email" \
-      --arg sid   "$subid" '
-      {
-        clients: [
-          {
-            id:         $id,
-            flow:       $flow,
-            email:      $email,
-            limitIp:    0,
-            totalGB:    0,
-            expiryTime: 0,
-            enable:     true,
-            tgId:       "",
-            subId:      $sid,
-            comment:    "",
-            reset:      0
-          }
-        ],
-        decryption: "none"
-      }'
-    )
+      --arg sid   "$subid" \
+      --arg dec   "$dec" \
+      --arg enc   "$enc" \
+      --arg label "$label" '
+      .clients = ((.clients // []) + [
+        {
+          id:         $id,
+          flow:       $flow,
+          email:      $email,
+          limitIp:    0,
+          totalGB:    0,
+          expiryTime: 0,
+          enable:     true,
+          tgId:       "",
+          subId:      $sid,
+          comment:    "",
+          reset:      0
+        }
+      ]) |
+      .decryption = ($dec // "none") |
+      .encryption = ($enc // "none") |
+      (if ($label|length)>0 then .selectedAuth = $label else . end)
+    ')
 
     # Отправляем запрос с таймаутами
     panel_api_request POST "$API_URL_ADD_CLIENT" \
@@ -442,9 +492,31 @@ get_new_vless_enc() {
         log ERROR "getNewVlessEnc success=false: $HTTP_BODY"
         return 1
     fi
-    local pick
-    # Prefer X25519 (not Post-Quantum)
-    pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[] | select(.label=="X25519, not Post-Quantum")' 2>/dev/null | head -n1)
+    local pick label_prefer
+    # По умолчанию пытаемся взять именно ML-KEM-768 (Post-Quantum),
+    # но позволяем переопределить через VLESS_AUTH_LABEL.
+    label_prefer=${VLESS_AUTH_LABEL:-"ML-KEM-768, Post-Quantum"}
+    # Выбор auth:
+    # 1) Точный label (по умолчанию ML-KEM-768, Post-Quantum)
+    # 2) Если VLESS_PREFER_PQ=true — берем любое Post-Quantum (label содержит post-quantum/ml-kem)
+    # 3) По умолчанию X25519, not Post-Quantum
+    pick=$(printf '%s' "$HTTP_BODY" | jq -c --arg label "$label_prefer" '
+      if ($label|length)>0 then
+        .obj.auths[] | select(.label==$label)
+      else empty end
+    ' 2>/dev/null | head -n1)
+    if [ -z "$pick" ] && [ "${VLESS_PREFER_PQ:-true}" = "true" ]; then
+        pick=$(printf '%s' "$HTTP_BODY" | jq -c '
+          .obj.auths[]
+          | select(
+              (.label // "" | ascii_downcase | contains("post-quantum"))
+              or (.label // "" | ascii_downcase | contains("ml-kem"))
+            )
+        ' 2>/dev/null | head -n1)
+    fi
+    if [ -z "$pick" ]; then
+        pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[] | select(.label=="X25519, not Post-Quantum")' 2>/dev/null | head -n1)
+    fi
     if [ -z "$pick" ]; then
         pick=$(printf '%s' "$HTTP_BODY" | jq -c '.obj.auths[0] // empty' 2>/dev/null)
     fi
@@ -456,6 +528,8 @@ get_new_vless_enc() {
         return 1
     fi
     [ -z "$VLESS_LABEL" ] && VLESS_LABEL="X25519, not Post-Quantum"
+    log DEBUG "get_new_vless_enc: label='$VLESS_LABEL'"
+    log DEBUG "get_new_vless_enc: decryption='${VLESS_DEC:0:48}...' encryption='${VLESS_ENC:0:48}...'"
     log INFO "Выбран auth: $VLESS_LABEL"
 }
 
@@ -478,6 +552,7 @@ get_new_mldsa65() {
         log ERROR "Не удалось получить mldsa65 seed/verify"
         return 1
     fi
+    log DEBUG "get_new_mldsa65: seed='${MLD_SA_SEED:0:48}...' verify='${MLD_SA_VERIFY:0:48}...'"
     log INFO "Получены mldsa65 seed/verify."
 }
 
@@ -506,4 +581,3 @@ check_inbound_exists() {
         printf ''
     fi
 }
-
