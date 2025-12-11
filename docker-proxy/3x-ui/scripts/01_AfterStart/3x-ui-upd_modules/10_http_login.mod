@@ -172,11 +172,11 @@ http_request() {
 
         attempts=$((attempts - 1))
         if [ "$attempts" -gt 0 ]; then
-            log WARN "curl error при $method $url (код $ret), попыток осталось $attempts. Ждём $delay с..."
+            log DEBUG "curl error при $method $url (код $ret), попыток осталось $attempts. Ждём $delay с..."
             sleep "$delay"
             delay=$((delay * 2))
         else
-            log ERROR "curl окончательно не удался при $method $url после 3 попыток."
+            log ERROR "curl fatal error при $method $url после 3 попыток."
         fi
     done
 }
