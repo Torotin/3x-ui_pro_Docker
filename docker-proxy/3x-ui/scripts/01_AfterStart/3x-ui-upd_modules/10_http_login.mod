@@ -172,7 +172,7 @@ http_request() {
 
         attempts=$((attempts - 1))
         if [ "$attempts" -gt 0 ]; then
-            log WARN "curl ошибся при $method $url (код $ret), попыток осталось $attempts. Ждём $delay с..."
+            log WARN "curl error при $method $url (код $ret), попыток осталось $attempts. Ждём $delay с..."
             sleep "$delay"
             delay=$((delay * 2))
         else

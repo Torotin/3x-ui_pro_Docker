@@ -21,6 +21,21 @@ update_panel_settings() {
         exit 1
     fi
 
+    # Получаем текущие настройки панели, чтобы не перетирать непереданные поля
+    current_settings='{}'
+    settings_url="$URL_BASE_RESOLVED/panel/setting/all"
+    http_request POST "$settings_url" \
+        -b "$COOKIE_JAR" \
+        -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' \
+        -H 'X-Requested-With: XMLHttpRequest'
+    if [ "$HTTP_CODE" = "200" ] && printf '%s' "$HTTP_BODY" | jq -e '.success==true' >/dev/null 2>&1; then
+        current_settings=$(printf '%s' "$HTTP_BODY" | jq -c '.obj // {}' 2>/dev/null || printf '{}')
+        log INFO "Текущие настройки панели получены."
+        log INFO "Полученные параметры: $(printf '%s' "$current_settings")"
+    else
+        log WARN "Не удалось получить текущие настройки панели (HTTP $HTTP_CODE). Продолжаем без них."
+    fi
+
     # Normalize subscription-related values (strip quotes, expand templates)
     normalize_sub_value() {
         local name=$1 raw expanded
@@ -44,6 +59,8 @@ update_panel_settings() {
     url="$URL_BASE_RESOLVED/panel/setting/update"
     # Собираем параметры --data-urlencode в позиционные параметры через set --
     set --
+    param_list=""
+    override_list=""
     for var in webListen webDomain webPort webCertFile webKeyFile webBasePath \
                sessionMaxAge pageSize expireDiff trafficDiff remarkModel datepicker \
                tgBotEnable tgBotToken tgBotProxy tgBotAPIServer tgBotChatId \
@@ -55,15 +72,25 @@ update_panel_settings() {
                subJsonURI subJsonFragment subJsonNoises subJsonMux subJsonRules subJsonEnable \
                timeLocation; do
         # Получаем значение переменной
-        val=$(eval "printf '%s' \"\${$var:-}\"")
-        if [ -n "$val" ]; then
-            set -- "$@" "--data-urlencode" "$var=$val"
+        env_val=$(eval "printf '%s' \"\${$var:-}\"")
+        if [ -n "$env_val" ]; then
+            val="$env_val"
+            override_list="$override_list$var=$val "
+        else
+            val=$(printf '%s' "$current_settings" | jq -r --arg k "$var" 'if has($k) then .[$k] else "" end' 2>/dev/null)
         fi
+        set -- "$@" "--data-urlencode" "$var=$val"
+        param_list="$param_list$var=$val "
     done
 
     # Логируем, что именно отправляем
     log INFO "Отправляем запрос на обновление панели: $url"
-    log INFO "Параметры: $(printf '%s ' "$@")"
+    log INFO "Параметры (полный набор): $param_list"
+    if [ -n "$override_list" ]; then
+        log INFO "Изменяем параметры (из окружения): $override_list"
+    else
+        log INFO "Изменяем параметры (из окружения): нет"
+    fi
 
     # Выполняем запрос с накопленными параметрами
     http_request POST "$url" \
