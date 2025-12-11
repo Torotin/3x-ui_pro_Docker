@@ -59,7 +59,14 @@ create_inbound_tcp_reality() {
     # Получаем X25519 ключи
     get_new_vless_enc || return 1
     get_new_x25519_cert || return 1
-    get_new_mldsa65 || return 1
+    use_mldsa=${USE_MLDSA65:-false}
+    if [ "$use_mldsa" = "true" ]; then
+        get_new_mldsa65 || return 1
+    else
+        MLD_SA_SEED=""
+        MLD_SA_VERIFY=""
+        log INFO "mldsa65 disabled for Reality (USE_MLDSA65=$use_mldsa)"
+    fi
 
     # fallbacks_json=$(
     #   jq -nc \
@@ -137,6 +144,8 @@ create_inbound_tcp_reality() {
         --arg sni "$WEBDOMAIN" \
         --arg priv "$X25519_PRIVATE_KEY" \
         --arg pub "$X25519_PUBLIC_KEY" \
+        --arg mldseed "${MLD_SA_SEED:-}" \
+        --arg mldverify "${MLD_SA_VERIFY:-}" \
         --arg fingerprint "chrome" \
         --arg spider "/" \
         --argjson shortIds "$short_ids" \
@@ -155,12 +164,13 @@ create_inbound_tcp_reality() {
           maxClientVer: "",
           maxTimediff: 0,
           shortIds: $shortIds,
+          mldsa65Seed: $mldseed,
           settings: {
             publicKey: $pub,
             fingerprint: $fingerprint,
             serverName: "",
             spiderX: $spider,
-            mldsa65Verify: ""
+            mldsa65Verify: $mldverify
           }
         },
         sockopt: $sockopt,
@@ -317,31 +327,51 @@ add_client_to_inbound() {
         client_uuid=$(gen_rand_str 36)
     fi
 
-    # Собираем JSON для form-data, используя параметры flow и email
-    settings_json=$(jq -nc \
+    # Получаем текущие настройки инбаунда, чтобы не терять PQ decryption/encryption/selectedAuth
+    panel_api_request GET "$API_URL_INBOUND_LIST" \
+        -H 'X-Requested-With: XMLHttpRequest'
+    existing_settings=$(printf '%s' "$HTTP_BODY" | jq -c --arg id "$inbound_id" '
+      .obj[] | select(.id == ($id|tonumber)) | .settings | fromjson
+    ' 2>/dev/null)
+    # Текущие PQ-параметры: берем из инбаунда или из окружения
+    dec=$(printf '%s' "${existing_settings:-}" | jq -r '.decryption // empty' 2>/dev/null)
+    enc=$(printf '%s' "${existing_settings:-}" | jq -r '.encryption // empty' 2>/dev/null)
+    label=$(printf '%s' "${existing_settings:-}" | jq -r '.selectedAuth // empty' 2>/dev/null)
+    [ -n "$dec" ] || dec=${VLESS_DEC:-none}
+    [ -n "$enc" ] || enc=${VLESS_ENC:-none}
+    [ -n "$label" ] || label=${VLESS_LABEL:-}
+    # Базовые настройки для слияния
+    if [ -z "$existing_settings" ]; then
+        existing_settings='{}'
+    fi
+    # Собираем JSON для form-data, добавляя клиента и сохраняя PQ-поля
+    settings_json=$(printf '%s' "$existing_settings" | jq -c \
       --arg id    "$client_uuid" \
       --arg flow  "$flow" \
       --arg email "$email" \
-      --arg sid   "$subid" '
-      {
-        clients: [
-          {
-            id:         $id,
-            flow:       $flow,
-            email:      $email,
-            limitIp:    0,
-            totalGB:    0,
-            expiryTime: 0,
-            enable:     true,
-            tgId:       "",
-            subId:      $sid,
-            comment:    "",
-            reset:      0
-          }
-        ],
-        decryption: "none"
-      }'
-    )
+      --arg sid   "$subid" \
+      --arg dec   "$dec" \
+      --arg enc   "$enc" \
+      --arg label "$label" '
+      .clients = ((.clients // []) + [
+        {
+          id:         $id,
+          flow:       $flow,
+          email:      $email,
+          limitIp:    0,
+          totalGB:    0,
+          expiryTime: 0,
+          enable:     true,
+          tgId:       "",
+          subId:      $sid,
+          comment:    "",
+          reset:      0
+        }
+      ]) |
+      .decryption = ($dec // "none") |
+      .encryption = ($enc // "none") |
+      (if ($label|length)>0 then .selectedAuth = $label else . end)
+    ')
 
     # Отправляем запрос с таймаутами
     panel_api_request POST "$API_URL_ADD_CLIENT" \
@@ -498,6 +528,8 @@ get_new_vless_enc() {
         return 1
     fi
     [ -z "$VLESS_LABEL" ] && VLESS_LABEL="X25519, not Post-Quantum"
+    log DEBUG "get_new_vless_enc: label='$VLESS_LABEL'"
+    log DEBUG "get_new_vless_enc: decryption='${VLESS_DEC:0:48}...' encryption='${VLESS_ENC:0:48}...'"
     log INFO "Выбран auth: $VLESS_LABEL"
 }
 
@@ -520,6 +552,7 @@ get_new_mldsa65() {
         log ERROR "Не удалось получить mldsa65 seed/verify"
         return 1
     fi
+    log DEBUG "get_new_mldsa65: seed='${MLD_SA_SEED:0:48}...' verify='${MLD_SA_VERIFY:0:48}...'"
     log INFO "Получены mldsa65 seed/verify."
 }
 
