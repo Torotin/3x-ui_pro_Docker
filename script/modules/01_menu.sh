@@ -108,6 +108,9 @@ auto_full() {
 }
 
 check_args() {
+  # Ensure steps are initialized before processing args
+  install_steps_init
+
   # Если переданы аргументы — воспринимаем их как список шагов и сразу выполняем
   if (( $# > 0 )); then
     log "INFO" "Запуск в неинтерактивном режиме: шаги = $*"
