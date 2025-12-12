@@ -67,19 +67,19 @@ sudo "$INSTALL_SCRIPT"
 
 ## Какие инбаунды создаёт 3x-ui (по AfterStart)
 
-1) **VLESS TCP Reality (Vision + PQ)**  
+1) **VLESS TCP Reality (Vision)**  
    - Протокол: `vless`  
    - Transport: `tcp` + Reality, fingerprint `chrome`, target Traefik (`traefik:<порт>`).  
-   - Шифрование: ML‑KEM‑768 (Post‑Quantum) decryption/encryption, `selectedAuth` проставляется автоматически.  
-   - ShortIds генерируются; mldsa65 можно включить переменной `USE_MLDSA65=true`.  
-   - Клиенты: flow `xtls-rprx-vision-udp443`, UUID генерируется.  
+   - PQ (ML‑KEM‑768) опционально: включается `USE_VLESS_PQ=true` (по умолчанию включено, decryption/encryption=`none`).  
+   - mldsa65 для Reality также опционально: `USE_MLDSA65=true` (по умолчанию выключено).  
+   - ShortIds генерируются; клиенты: flow `xtls-rprx-vision-udp443`, UUID генерируется.  
 
 2) **VLESS XHTTP (маскировка под HTTP)**  
    - Протокол: `vless`, `network: xhttp`, `security: none`.  
    - Host/path берутся из переменных (`WEBDOMAIN`, `URI_VLESS_XHTTP`).  
    - Заголовки имитируют nginx (`Server`, `Content-Type`, CORS, keep-alive).  
    - Ограничения: `scMaxBufferedPosts=50`, `scMaxEachPostBytes=5000000`, `scStreamUpServerSecs=5-20`, `noSSEHeader=true`, `xPaddingBytes=100-1000`, режим `packet-up`.  
-   - Подтягивает VLESS PQ‑пары через `getNewVlessEnc`, проставляет `selectedAuth`.  
+   - PQ для VLESS опционально тем же флагом `USE_VLESS_PQ` (по умолчанию выключено).  
 
 Порты инбаундов задаются в `.env` (переменные `PORT_LOCAL_VISION`, `PORT_LOCAL_XHTTP` или аналогичные). Подписки/JSON‑эндпоинты формируются 3x-ui согласно basePath и subPath из `.env`.
 
