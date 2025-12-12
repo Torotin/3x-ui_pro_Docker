@@ -4,7 +4,6 @@
 
 # --- CONFIGURABLES ---
 PROFILE_FILE="/etc/profile.d/custom_env.sh"
-DEFAULT_ATTEMPTS=3
 
 # --- RANDOM GENERATORS (STUBS, TO BE IMPLEMENTED) ---
 generate_random_string() {
@@ -68,26 +67,23 @@ read_required_var() {
     local var_name="$1"
     local prompt_text="$2"
     local default_value="${3:-}"
-    local attempts="${4:-$DEFAULT_ATTEMPTS}"
     local input
 
-    for ((i = 1; i <= attempts; i++)); do
-        [[ -n "${!var_name:-}" ]] && return 0
+    [[ -n "${!var_name:-}" ]] && return 0
 
-        echo -ne "$prompt_text (attempt $i/$attempts)"
-        [[ -n "$default_value" ]] && echo -n " [$default_value]"
-        echo -n ": "
-        IFS= read -r input
+    echo -ne "$prompt_text"
+    [[ -n "$default_value" ]] && echo -n " [$default_value]"
+    echo -n ": "
+    IFS= read -r input
 
-        [[ -z "$input" && -n "$default_value" ]] && input="$default_value"
+    [[ -z "$input" && -n "$default_value" ]] && input="$default_value"
 
-        if [[ -n "$input" ]]; then
-            export "$var_name"="$input"
-            return 0
-        fi
-    done
+    if [[ -n "$input" ]]; then
+        export "$var_name"="$input"
+        return 0
+    fi
 
-    log "WARN" "$var_name not set after $attempts attempts"
+    log "WARN" "$var_name not set"
     return 1
 }
 
