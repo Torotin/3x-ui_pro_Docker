@@ -4,7 +4,6 @@
 
 # --- CONFIGURABLES ---
 PROFILE_FILE="/etc/profile.d/custom_env.sh"
-DEFAULT_ATTEMPTS=3
 
 # --- RANDOM GENERATORS (STUBS, TO BE IMPLEMENTED) ---
 generate_random_string() {
@@ -68,26 +67,23 @@ read_required_var() {
     local var_name="$1"
     local prompt_text="$2"
     local default_value="${3:-}"
-    local attempts="${4:-$DEFAULT_ATTEMPTS}"
     local input
 
-    for ((i = 1; i <= attempts; i++)); do
-        [[ -n "${!var_name:-}" ]] && return 0
+    [[ -n "${!var_name:-}" ]] && return 0
 
-        echo -ne "$prompt_text (attempt $i/$attempts)"
-        [[ -n "$default_value" ]] && echo -n " [$default_value]"
-        echo -n ": "
-        IFS= read -r input
+    echo -ne "$prompt_text"
+    [[ -n "$default_value" ]] && echo -n " [$default_value]"
+    echo -n ": "
+    IFS= read -r input
 
-        [[ -z "$input" && -n "$default_value" ]] && input="$default_value"
+    [[ -z "$input" && -n "$default_value" ]] && input="$default_value"
 
-        if [[ -n "$input" ]]; then
-            export "$var_name"="$input"
-            return 0
-        fi
-    done
+    if [[ -n "$input" ]]; then
+        export "$var_name"="$input"
+        return 0
+    fi
 
-    log "WARN" "$var_name not set after $attempts attempts"
+    log "WARN" "$var_name not set"
     return 1
 }
 
@@ -96,9 +92,27 @@ load_existing_env_file() {
     local env_file="$1"
     if [[ -f "$env_file" ]]; then
         log "INFO" "Loading variables from: $env_file"
-        set -o allexport
-        source "$env_file" 2>/dev/null
-        set +o allexport
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line#"${line%%[![:space:]]*}"}"   # trim leading spaces
+            [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+            [[ "$line" =~ ^export[[:space:]]+ ]] && line="${line#export }"
+
+            if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                local key="${BASH_REMATCH[1]}"
+                local value="${BASH_REMATCH[2]}"
+
+                # Strip surrounding quotes if present
+                if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+                    value="${value:1:${#value}-2}"
+                elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+                    value="${value:1:${#value}-2}"
+                fi
+
+                export "$key"="$value"
+            else
+                log "WARN" "Skipping malformed line in $env_file: $line"
+            fi
+        done < "$env_file"
     else
         log "WARN" "File $env_file not found. Will create a new one."
     fi
@@ -176,19 +190,83 @@ populate_env_vars_from_template() {
 
 generate_htpasswd() {
   if [[ -n "$USER_WEB" ]]; then
+    if [[ -n "$HT_PASS_ENCODED" ]]; then
+      if [[ "$HT_PASS_ENCODED" =~ ^[^:]+:.*\$ ]]; then
+        log "DEBUG" "HT_PASS_ENCODED already set — skipping htpasswd generation."
+        return 0
+      else
+        log "WARN" "HT_PASS_ENCODED looks invalid; regenerating htpasswd."
+        HT_PASS_ENCODED=""
+      fi
+    fi
+
     if [[ -z "$PASS_WEB" ]]; then
       log "ERROR" "USER_WEB is set but PASS_WEB is missing or empty."
-      return
+      return 1
+    fi
+
+    if ! command -v htpasswd >/dev/null 2>&1; then
+      log "ERROR" "htpasswd binary not found; cannot generate htpasswd."
+      return 1
     fi
 
     log "INFO" "Generating htpasswd for user $USER_WEB..."
     local raw_htpasswd
-    raw_htpasswd=$(htpasswd -nb "$USER_WEB" "$PASS_WEB")
+    # Use bcrypt; trim newlines in case htpasswd outputs them (e.g., on some platforms).
+    if ! raw_htpasswd=$(htpasswd -nBb "$USER_WEB" "$PASS_WEB" 2>/dev/null); then
+      log "ERROR" "htpasswd failed to generate hash."
+      return 1
+    fi
+    raw_htpasswd=$(printf '%s' "$raw_htpasswd" | tr -d '\r\n')
+
+    # Verify the generated entry matches the provided credentials when supported.
+    local verify_status=0
+    local verify_output=""
+    local tmpfile=""
+    local verify_attempted=false
+    if ! tmpfile=$(mktemp); then
+      log "ERROR" "Could not create temp file for htpasswd verification."
+      return 1
+    fi
+    printf '%s\n' "$raw_htpasswd" > "$tmpfile"
+
+    verify_output=$(htpasswd -vb "$tmpfile" "$USER_WEB" "$PASS_WEB" 2>&1)
+    verify_attempted=true
+    if [[ $? -ne 0 ]]; then
+      if grep -qiE 'unknown option|illegal option|usage' <<<"$verify_output"; then
+        log "WARN" "htpasswd binary does not support verification; using generated hash without verification."
+        verify_status=2
+      else
+        log "WARN" "htpasswd verification failed; regenerating hash and retrying..."
+        if ! raw_htpasswd=$(htpasswd -nBb "$USER_WEB" "$PASS_WEB" 2>/dev/null); then
+          rm -f "$tmpfile"
+          log "ERROR" "htpasswd failed to regenerate hash during verification."
+          return 1
+        fi
+        raw_htpasswd=$(printf '%s' "$raw_htpasswd" | tr -d '\r\n')
+        printf '%s\n' "$raw_htpasswd" > "$tmpfile"
+        verify_output=$(htpasswd -vb "$tmpfile" "$USER_WEB" "$PASS_WEB" 2>&1)
+        if [[ $? -ne 0 ]]; then
+          log "WARN" "htpasswd verification failed after retry; using generated hash without verification."
+          verify_status=1
+        else
+          verify_status=0
+        fi
+      fi
+    fi
+    rm -f "$tmpfile"
     # Escape $ so docker compose does not try to expand $apr1... when substituting variables;
     # compose will convert $$ back to $ inside the container.
     HT_PASS_ENCODED="${raw_htpasswd//$/\$\$}"
 
-    log "OK" "htpasswd successfully generated."
+    if [[ $verify_status -eq 0 ]]; then
+      $verify_attempted && log "INFO" "htpasswd verification passed."
+      log "OK" "htpasswd successfully generated."
+    elif [[ $verify_status -eq 2 ]]; then
+      log "OK" "htpasswd generated; verification skipped (unsupported by binary)."
+    else
+      log "OK" "htpasswd generated without verified credentials."
+    fi
   else
     log "DEBUG" "USER_WEB is not set — skipping htpasswd generation."
   fi

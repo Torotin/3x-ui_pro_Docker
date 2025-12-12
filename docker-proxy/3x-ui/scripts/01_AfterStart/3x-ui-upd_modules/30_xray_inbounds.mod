@@ -56,8 +56,16 @@ refresh_api_urls() {
 
 create_inbound_tcp_reality() {
     refresh_api_urls
+    use_pq=${USE_VLESS_PQ:-true}
     # Получаем X25519 ключи
-    get_new_vless_enc || return 1
+    if [ "$use_pq" = "true" ]; then
+        get_new_vless_enc || return 1
+    else
+        VLESS_DEC="none"
+        VLESS_ENC="none"
+        VLESS_LABEL=""
+        log INFO "VLESS PQ disabled (USE_VLESS_PQ=$use_pq); decryption/encryption set to none."
+    fi
     get_new_x25519_cert || return 1
     use_mldsa=${USE_MLDSA65:-false}
     if [ "$use_mldsa" = "true" ]; then
@@ -68,15 +76,6 @@ create_inbound_tcp_reality() {
         log INFO "mldsa65 disabled for Reality (USE_MLDSA65=$use_mldsa)"
     fi
 
-    # fallbacks_json=$(
-    #   jq -nc \
-    #     --arg port_xhttp "$PORT_LOCAL_XHTTP" \
-    #     --arg port_traefik "$PORT_LOCAL_TRAEFIK" '
-    #     [
-    #       { alpn: "h1 h2 h3", path: "", dest: ("traefik:" + $port_traefik), xver: 2 }
-    #     ]
-    #     '
-    # )
     # fallbacks_json=$(
     #   jq -nc \
     #     --arg port_xhttp "$PORT_LOCAL_XHTTP" \
@@ -218,9 +217,17 @@ create_xhttp_inbound() {
     xhttp_path=${URI_VLESS_XHTTP}
 
     # Получаем рекомендованные параметры шифрования VLESS (PQ/X25519)
-    if ! get_new_vless_enc; then
-        log ERROR "Не удалось получить параметры шифрования VLESS для XHTTP."
-        return 1
+    use_pq=${USE_VLESS_PQ:-true}
+    if [ "$use_pq" = "true" ]; then
+        if ! get_new_vless_enc; then
+            log ERROR "Не удалось получить параметры шифрования VLESS для XHTTP."
+            return 1
+        fi
+    else
+        VLESS_DEC="none"
+        VLESS_ENC="none"
+        VLESS_LABEL=""
+        log INFO "VLESS PQ disabled for XHTTP (USE_VLESS_PQ=$use_pq); decryption/encryption set to none."
     fi
     vless_dec=${VLESS_DEC:-none}
     vless_enc=${VLESS_ENC:-none}
@@ -230,12 +237,14 @@ create_xhttp_inbound() {
       jq -nc \
         --arg dec "$vless_dec" \
         --arg enc "$vless_enc" \
-        --arg label "$vless_label" '{
-        clients: [],
-        decryption: $dec,
-        encryption: $enc,
-        selectedAuth: $label
-      }'
+        --arg label "$vless_label" '
+        {
+          clients: [],
+          decryption: $dec,
+          encryption: $enc
+        }
+        | if ($label|length)>0 then . + {selectedAuth:$label} else . end
+      '
     )
     sockopt_json=$(generate_sockopt_json acceptProxyProtocol=false tcpFastOpen=true domainStrategy="UseIP" tproxy="tproxy")
     external_proxy_json=$(
@@ -337,6 +346,12 @@ add_client_to_inbound() {
     dec=$(printf '%s' "${existing_settings:-}" | jq -r '.decryption // empty' 2>/dev/null)
     enc=$(printf '%s' "${existing_settings:-}" | jq -r '.encryption // empty' 2>/dev/null)
     label=$(printf '%s' "${existing_settings:-}" | jq -r '.selectedAuth // empty' 2>/dev/null)
+    # Если глобально PQ отключён — не подставляем selectedAuth
+    if [ "${USE_VLESS_PQ:-true}" != "true" ]; then
+        dec=${dec:-none}
+        enc=${enc:-none}
+        label=""
+    fi
     [ -n "$dec" ] || dec=${VLESS_DEC:-none}
     [ -n "$enc" ] || enc=${VLESS_ENC:-none}
     [ -n "$label" ] || label=${VLESS_LABEL:-}
