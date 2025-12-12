@@ -178,12 +178,21 @@ generate_htpasswd() {
   if [[ -n "$USER_WEB" ]]; then
     if [[ -z "$PASS_WEB" ]]; then
       log "ERROR" "USER_WEB is set but PASS_WEB is missing or empty."
-      return
+      return 1
     fi
 
     log "INFO" "Generating htpasswd for user $USER_WEB..."
     local raw_htpasswd
-    raw_htpasswd=$(htpasswd -nb "$USER_WEB" "$PASS_WEB")
+    # Use bcrypt; trim newlines in case htpasswd outputs them (e.g., on some platforms).
+    if ! raw_htpasswd=$(htpasswd -nBb "$USER_WEB" "$PASS_WEB" 2>/dev/null | tr -d '\r\n'); then
+      log "ERROR" "htpasswd failed to generate hash."
+      return 1
+    fi
+    # Verify the generated entry matches the provided credentials.
+    if ! htpasswd -vb <(printf '%s\n' "$raw_htpasswd") "$USER_WEB" "$PASS_WEB" >/dev/null 2>&1; then
+      log "ERROR" "htpasswd verification failed; please retry."
+      return 1
+    fi
     # Escape $ so docker compose does not try to expand $apr1... when substituting variables;
     # compose will convert $$ back to $ inside the container.
     HT_PASS_ENCODED="${raw_htpasswd//$/\$\$}"
