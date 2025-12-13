@@ -34,7 +34,7 @@ services:
       - crowdsec_data:/var/lib/crowdsec/data
       - crowdsec_config:/etc/crowdsec
       - /opt/docker-proxy/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml
-      - /opt/docker-proxy/crowdsec/appsec-trusted-proxies.yaml:/etc/crowdsec/appsec-configs/appsec-trusted-proxies.yaml:ro
+      - /opt/docker-proxy/crowdsec/config.yaml:/etc/crowdsec/config.yaml
       - /var/log:/var/log:ro
       - /opt/docker-proxy/_logs:/var/logs:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

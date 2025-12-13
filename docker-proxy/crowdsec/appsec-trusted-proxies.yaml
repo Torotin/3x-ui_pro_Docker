@@ -1,7 +1,0 @@
-name: local/trusted-proxies
-trusted_forwarded_headers:
-  - X-Forwarded-For
-  - X-Real-IP
-trusted_proxies:
-  - 172.18.0.6/32   # traefik в сети traefik-proxy
-  - 172.19.0.6/32   # traefik в сети dns-net
