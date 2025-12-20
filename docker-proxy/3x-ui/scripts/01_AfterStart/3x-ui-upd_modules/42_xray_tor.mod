@@ -1,12 +1,12 @@
 #!/bin/bash
 update_xray_tor() {
-    # Добавляем SOCKS outbound на tor-proxy:9150 и правило маршрутизации для .onion
+    # Добавляем SOCKS outbound на tor-proxy:9050 и правило маршрутизации для .onion
 
     TAG_TOR="tor-proxy"
     HOST="tor-proxy"
-    PORT=9150
+    PORT=9050
 
-    # 1) Добавим outbound socks -> tor-proxy:9150, если его нет
+    # 1) Добавим outbound socks -> tor-proxy:9050, если его нет
     if nc -z -w2 "$HOST" "$PORT" 2>/dev/null; then
         exists_tor=$(echo "$XRAY_SETTINGS_JSON" | jq --arg tag "$TAG_TOR" --arg host "$HOST" --argjson port "$PORT" '
             [.xraySetting.outbounds[]? | select(.tag==$tag and .protocol=="socks" and .settings.servers[0]?.address==$host and (.settings.servers[0]?.port|tonumber)==$port)] | length')
@@ -26,7 +26,12 @@ update_xray_tor() {
     fi
 
     # 2) Добавим/обновим routing-правило: все .onion через outboundTag=tor-proxy
-    desired_domains=$(jq -nc '["domain:onion"]')
+    desired_domains=$(jq -nc '[
+        "domain:onion",
+        "domain:torproject.org",
+        "domain:ntc.party"
+    ]')
+
 
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq '
         .xraySetting.routing = (.xraySetting.routing // {}) |

@@ -43,7 +43,7 @@ COMPOSE_BASE_ARGS=()
 
 # Единообразный вывод сообщений в stderr.
 log() {
-  echo "[run-compose] $*" >&2
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [run-compose] $*" >&2
 }
 
 # Выбор каталога: compose.d приоритетнее, иначе работаем из каталога скрипта.
