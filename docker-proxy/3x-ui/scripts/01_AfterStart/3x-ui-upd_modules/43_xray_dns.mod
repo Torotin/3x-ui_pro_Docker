@@ -277,21 +277,13 @@ update_xray_dns() {
         return 1
     }
 
-    # 1) local AdGuard (port 53)
-    # tor-proxy for .onion (skipFallback=true)
-    # TD_ONION="${TEST_DNS_DOMAIN_ONION:-test.onion}"
-    # if add_server_if_ok "tor-proxy" 5353 true '["domain:onion"]' "$TD_ONION" reply; then
-    # log INFO "Добавлен DNS tor-proxy:5353 для .onion"
-    # else
-    #     log WARN "tor-proxy:5353 недоступен — пропускаю."
-    # fi
-
-    # if add_server_if_ok "adguard" 53 false ''; then
-    #     log INFO "Добавлен DNS adguard:53"
-    #     ADDED_LOCAL_ADGUARD=1
-    # else
-    #     log WARN "adguard:53 недоступен — пропускаю."
-    # fi
+    # 1) local AdGuard (port 53). If недоступен, переходим к публичным DoH/DoT.
+    if add_server_if_ok "adguard" 53 false ''; then
+        log INFO "Добавлен DNS adguard:53"
+        ADDED_LOCAL_ADGUARD=1
+    else
+        log WARN "adguard:53 недоступен — использую публичные DoH/DoT."
+    fi
 
     # 2) Extra DoH/DoT resolvers (skip quic://). Order as provided.
     # These act as additional fallbacks after adguard and Cloudflare.
