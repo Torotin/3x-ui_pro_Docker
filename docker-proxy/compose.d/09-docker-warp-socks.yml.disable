@@ -1,7 +1,7 @@
 services:
   docker-warp-socks:
     image: ghcr.io/mon-ius/docker-warp-socks:v5
-    container_name: warp_socks_v5
+    container_name: docker-warp-socks
     restart: unless-stopped
     networks:
       traefik-proxy:
