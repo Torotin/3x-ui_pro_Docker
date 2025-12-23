@@ -60,7 +60,7 @@ services:
       # Не перезапускать контейнеры после обновлений (если есть внешний supervisor)
       WATCHTOWER_NO_RESTART: ${WATCHTOWER_NO_RESTART:-false}
       # Роллинг-перезапуск (ждём healthy каждого контейнера)
-      WATCHTOWER_ROLLING_RESTART: ${WATCHTOWER_ROLLING_RESTART:-true}
+      WATCHTOWER_ROLLING_RESTART: ${WATCHTOWER_ROLLING_RESTART:-false}
       # Удалять старые слои образов после удачных обновлений
       WATCHTOWER_CLEANUP: ${WATCHTOWER_CLEANUP:-true}
       # Удалять анонимные тома при пересоздании контейнера

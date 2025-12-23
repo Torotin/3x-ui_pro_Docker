@@ -17,6 +17,7 @@ DOCKER_ENV_FILE="$DOCKER_DIR/compose.d/.env"
 DOCKER_ENV_TEMPLATE="$TEMPLATE_DIR/docker.env.template"
 GITHUB_REPO_OWNER="${REPO_OWNER:-Torotin}"
 GITHUB_REPO_NAME="${REPO_NAME:-3x-ui_pro_Docker}"
+AUTO_UPDATES_MODE="${AUTO_UPDATES_MODE:-all}"  # "security" or "all"
 LOADED_MODULES=()
 
 # Detect which branch the installer was fetched from; fall back to env or main

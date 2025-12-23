@@ -33,8 +33,7 @@ labels:
 name: AppSecComponent
 listen_addr: 0.0.0.0:7422
 appsec_configs:
-  - crowdsecurity/virtual-patching
-  - /etc/crowdsec/appsec-configs/appsec-trusted-proxies.yaml
+  - crowdsecurity/appsec-default
 source: appsec
 labels:
   type: appsec

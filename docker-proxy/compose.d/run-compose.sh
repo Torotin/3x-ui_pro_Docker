@@ -20,7 +20,7 @@
 #   RETRY_COUNT=5 ./run-compose.sh # up -d с 5 попытками
 #   ./run-compose.sh ps            # любая другая команда выполняется один раз
 #   ENV_FILE=/opt/docker-proxy/.env ./run-compose.sh # указать общий env-файл
-clear
+if [[ -t 1 ]]; then clear; fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,13 +37,13 @@ if [[ -n "${ENV_FILE+set}" ]]; then
 fi
 RETRY_COUNT="${RETRY_COUNT:-3}"
 RETRY_DELAY="${RETRY_DELAY:-5}"
-PULL_BEFORE_UP="${PULL_BEFORE_UP:-0}"
+PULL_BEFORE_UP="${PULL_BEFORE_UP:-1}"
 ENV_ARGS=()
 COMPOSE_BASE_ARGS=()
 
 # Единообразный вывод сообщений в stderr.
 log() {
-  echo "[run-compose] $*" >&2
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [run-compose] $*" >&2
 }
 
 # Выбор каталога: compose.d приоритетнее, иначе работаем из каталога скрипта.
@@ -193,22 +193,61 @@ validate_configs() {
   ensure_env_file_for_config
 
   log "Проверяем конфигурацию: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} config"
-  if ! output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config 2>&1 >/dev/null); then
+  output=$("${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config 2>&1)
+  rc=$?
+  if (( rc != 0 )); then
     log "ERROR: Найдены ошибки в конфигурации compose:"
     echo "$output" >&2
     exit 1
   fi
 }
 
+get_compose_images() {
+  "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" config \
+    | awk '/image:/ {print $2}' \
+    | sort -u
+}
+
+snapshot_images_state() {
+  while read -r img; do
+    id=$(docker image inspect "$img" --format '{{.Id}}' 2>/dev/null || echo "<missing>")
+    echo "$img $id"
+  done < <(get_compose_images)
+}
+
 pull_images_if_needed() {
   local primary_cmd="$1"
+  local BEFORE AFTER
+
   if [[ "$primary_cmd" != "up" || "$PULL_BEFORE_UP" == "0" ]]; then
     return
   fi
 
-  log "Проверяем обновления образов: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} pull --quiet"
-  if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" pull --quiet; then
-    log "WARN: Не удалось обновить образы (pull), продолжаем без обновления"
+  log "Проверяем и скачиваем обновления образов"
+
+  BEFORE="$(snapshot_images_state)"
+
+  if ! "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" pull; then
+    log "ERROR: pull образов завершился с ошибкой"
+    exit 1
+  fi
+
+  AFTER="$(snapshot_images_state)"
+
+  UPDATED=$(join -j1 \
+    <(echo "$BEFORE" | sort) \
+    <(echo "$AFTER"  | sort) \
+    | awk '$2 != $3 {print $1, $2, "→", $3}')
+
+  if [[ -n "$UPDATED" ]]; then
+    log "Обновлены образы:"
+    while read -r line; do
+      log "  - $line"
+    done <<< "$UPDATED"
+    IMAGES_UPDATED=1
+  else
+    log "Образы уже актуальны"
+    IMAGES_UPDATED=0
   fi
 }
 
