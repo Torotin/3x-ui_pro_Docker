@@ -6,7 +6,6 @@
 : "${PROJECT_ROOT:=/mnt/share}"
 : "${BACKUP_DIR:=${PROJECT_ROOT}/backup}"
 : "${TEMPLATE_DIR:=${PROJECT_ROOT}/template}"
-: "${DOCKER_COMPOSE_FILE:=${PROJECT_ROOT}/docker/docker-compose.yml}"
 : "${DOCKER_DAEMON_FILE:=/etc/docker/daemon.json}"
 : "${DOCKER_NETWORK_NAME:=my-ipv6-network}"
 : "${DOCKER_IPV6_SUBNET:=fd00:dead:beef::/64}"
@@ -238,242 +237,285 @@ EOF
 
 # Создаёт Docker-сеть с нужными опциями, если её ещё нет
 # Usage:
-#   docker_create_network NAME [external] [ipv6] [subnet=<CIDR>]
+#   docker_create_network NAME [external] [internal] [ipv6] [subnet=<CIDR>]
 # 1) Создаём внешнюю сеть traefik-proxy (для docker-compose external: true)
 # docker_create_network traefik-proxy external
-# 2) Создаём свою сеть с IPv6 и подсетью
-#    Имя, которое задаётся в переменной DOCKER_NETWORK_NAME
-#    и подсеть — в DOCKER_IPV6_SUBNET
+# 2) Создаём внутреннюю сеть с подсетью
+# docker_create_network dns-net internal subnet="172.19.0.0/24"
+# 3) Создаём сеть с IPv6 и подсетью
 # docker_create_network "$DOCKER_NETWORK_NAME" ipv6 subnet="$DOCKER_IPV6_SUBNET"
 docker_create_network() {
     local name="$1"; shift
     local is_external=false
+    local is_internal=false
     local is_ipv6=false
     local subnet=""
+    local gateway=""
 
     # Разбираем ключи
     for opt in "$@"; do
         case "$opt" in
             external)   is_external=true ;;
+            internal)   is_internal=true ;;
             ipv6)       is_ipv6=true ;;
             subnet=*)   subnet="${opt#subnet=}" ;;
             *)          log "WARN" "Unknown option '$opt' for docker_create_network" ;;
         esac
     done
 
-    # Если уже есть — ничего не делаем
+    # Проверяем наличие docker
+    if ! command_exists docker; then
+        log "ERROR" "docker is not installed or not in PATH"
+        exit 1
+    fi
+
+    # Если уже есть — ничего не делаем, но сверяем подсеть (если задана)
     if docker network inspect "$name" &>/dev/null; then
         log "INFO" "Network '$name' already exists, skipping creation."
+        if [[ -n "$subnet" ]]; then
+          local existing_subnets
+          existing_subnets=$(docker network inspect "$name" --format '{{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null)
+          if ! grep -qw "$subnet" <<<"$existing_subnets"; then
+            log "WARN" "Network '$name' exists, but expected subnet '$subnet' not found (have: $existing_subnets)"
+          fi
+        fi
         return 0
     fi
 
-    # Если external — просто создаём «пустую» сеть под этим именем
+    # Предварительная проверка на совпадение подсетей с другими сетями (чтобы не словить invalid pool request)
+    if [[ -n "$subnet" ]]; then
+      local overlap
+      overlap=$(docker network ls -q | xargs -r docker network inspect --format '{{.Name}} {{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null | grep -w "$subnet" || true)
+      if [[ -n "$overlap" ]]; then
+        log "ERROR" "Подсеть $subnet уже используется сетями: $(echo "$overlap" | awk '{print $1}' | tr '\n' ' ')"
+        log "ERROR" "Создание сети '$name' остановлено во избежание конфликта (invalid pool request). Удалите/измените конфликтующие сети или задайте другой subnet."
+        exit 1
+      fi
+
+      gateway="$(calculate_gateway_from_subnet "$subnet")"
+      if [[ -n "$gateway" ]]; then
+        log "INFO" "Для сети '$name' будет использован шлюз $gateway (последний доступный адрес подсети)"
+      else
+        log "WARN" "Не удалось вычислить gateway для '$name' (subnet=$subnet), создаём сеть без --gateway"
+      fi
+    fi
+
+    # Если external — создаём сеть, учитывая подсеть/IPv6, если заданы
     if [[ "$is_external" == true ]]; then
-        log "INFO" "Creating external network '$name'..."
-        docker network create "$name" \
-            && log "INFO" "External network '$name' created." \
-            || { log "ERROR" "Failed to create external network '$name'"; exit 1; }
+        local args=()
+        local ipv6_label=""
+        $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+        $is_internal && args+=(--internal)
+        [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+        [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
+
+        log "INFO" "Creating external network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
+        if docker network create "${args[@]}" "$name"; then
+            log "INFO" "External network '$name' created."
+            local inspect
+            inspect=$(docker network inspect "$name" 2>/dev/null)
+            log "INFO" "Network '$name' inspect: $inspect"
+        else
+            log "ERROR" "Failed to create external network '$name'"
+            exit 1
+        fi
         return 0
     fi
 
     # Для остального собираем аргументы
     local args=()
-    $is_ipv6    && args+=(--ipv6)
+    local ipv6_label=""
+    $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
+    $is_internal && args+=(--internal)
     [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
+    [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
 
-    log "INFO" "Creating network '$name' ${is_ipv6:+(with IPv6)} ${subnet:+subnet $subnet}..."
-    docker network create "${args[@]}" "$name" \
-        && log "INFO" "Network '$name' created." \
-        || { log "ERROR" "Failed to create network '$name'"; exit 1; }
-}
-
-docker_compose_restart() {
-  local env_file="${DOCKER_ENV_FILE:?DOCKER_ENV_FILE is not set}"
-  local compose_file="${DOCKER_COMPOSE_FILE:?DOCKER_COMPOSE_FILE is not set}"
-
-  log "INFO" "Restarting Docker stack using compose file '$compose_file' and env '$env_file'"
-
-  if [[ ! -f "$compose_file" ]]; then
-    log "ERROR" "Compose file not found: $compose_file"
-    return 1
-  fi
-  if ! command -v docker &>/dev/null; then
-    log "ERROR" "docker not found in PATH"
-    return 1
-  fi
-
-  # Корректно останавливаем и чистим orphans
-  if ! docker compose --env-file "$env_file" -f "$compose_file" down --remove-orphans; then
-    log "ERROR" "docker compose down failed"
-    return 1
-  else
-    log "INFO" "docker compose down succeeded"
-  fi
-
-  # Не обязательно, но полезно: подтянуть обновления образов (можно убрать, если не нужно)
-  log "INFO" "Pulling latest images..."
-  if ! docker compose --env-file "$env_file" -f "$compose_file" pull --quiet; then
-    log "WARN" "docker compose pull failed — продолжаю без обновления образов"
-  else
-    log "INFO" "docker compose pull succeeded"
-  fi
-
-  # Поднимаем стек заново
-  log "INFO" "Starting Docker stack using compose file '$compose_file' and env '$env_file'"
-  if docker compose --env-file "$env_file" -f "$compose_file" up -d --force-recreate; then
-    log "OK" "Docker stack restarted"
-    return 0
-  else
-    log "ERROR" "docker compose up failed"
-    return 1
-  fi
-}
-
-# --- Docker Compose Helpers ---
-docker_compose_generate() {
-    local target_file="${1:-$DOCKER_COMPOSE_FILE}"
-    if [[ -z "$target_file" ]]; then
-        exit_error "Error: docker-compose.yml path not specified."
+    log "INFO" "Creating network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
+    if docker network create "${args[@]}" "$name"; then
+        log "INFO" "Network '$name' created."
+        local inspect
+        inspect=$(docker network inspect "$name" 2>/dev/null)
+        log "INFO" "Network '$name' inspect: $inspect"
+    else
+        log "ERROR" "Failed to create network '$name'"
+        exit 1
     fi
-    if [[ -f "$target_file" ]]; then
-        log "INFO" "docker-compose file already exists: $target_file"
+}
+
+# Возвращает последний доступный IPv4 адрес для подсети (шлюз). Для /24 -> *.254.
+calculate_gateway_from_subnet() {
+    local subnet="$1"
+
+    # IPv6 пропускаем
+    [[ "$subnet" == *:* ]] && return 0
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$subnet" <<'PY'
+import sys
+from ipaddress import ip_network
+
+subnet = sys.argv[1]
+try:
+    net = ip_network(subnet, strict=False)
+    hosts = list(net.hosts())
+    # Используем последний адрес хоста в сети
+    if hosts:
+        print(hosts[-1])
+except Exception:
+    sys.exit(0)
+PY
+    else
+        local base prefix IFS=.
+        base="${subnet%/*}"
+        prefix="${subnet#*/}"
+        IFS=. read -r a b c d <<<"$base"
+        # Поддерживаем простой случай /24: 172.18.0.0/24 -> 172.18.0.255
+        if [[ "$prefix" -eq 24 && -n "$a" && -n "$b" && -n "$c" ]]; then
+            echo "$a.$b.$c.255"
+        fi
+    fi
+}
+
+docker_run_compose() {
+    local runner="${DOCKER_DIR}/compose.d/run-compose.sh"
+    local env_file="${DOCKER_ENV_FILE:-${DOCKER_DIR}/.env}"
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log "ERROR" "docker not found in PATH. Please run step 2 (Docker install) first."
+        return 1
+    fi
+
+    if ! (docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1); then
+        log "ERROR" "docker compose/docker-compose not found. Please run step 2 (Docker install) first."
+        return 1
+    fi
+
+    if [[ ! -f "$runner" ]]; then
+        log "ERROR" "run-compose.sh not found at: $runner. Execute step 3 (generate docker dir) first."
+        return 1
+    fi
+
+    if [[ ! -x "$runner" ]]; then
+        chmod +x "$runner" || log "WARN" "Failed to make $runner executable"
+    fi
+
+    if [[ -f "$env_file" ]]; then
+        log "INFO" "Using env file: $env_file"
+    else
+        log "WARN" "Env file not found at: $env_file (will rely on script defaults)"
+    fi
+
+    docker_ensure_networks
+
+    log "INFO" "Running compose stack via: $runner"
+    ENV_FILE="$env_file" "$runner" "$@"
+}
+
+docker_ensure_networks() {
+    if ! command_exists docker; then
+        log "ERROR" "docker not found. Run step 2 (Docker install) first."
+        return 1
+    fi
+
+    local base_compose="${DOCKER_DIR}/compose.d/00-base.yml"
+    local fallback_done=false
+
+    # Фолбэк на старое поведение, если нет yq или базового файла
+    fallback_networks() {
+        fallback_done=true
+        log "WARN" "Autodetect of networks skipped; creating defaults."
+        local traefik_subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}"
+        local dns_subnet="${DNS_NET_SUBNET:-172.19.0.0/24}"
+        docker_create_network traefik-proxy external subnet="$traefik_subnet"
+        docker_create_network dns-net external subnet="$dns_subnet"
+    }
+
+    if ! command_exists yq; then
+        fallback_networks
         return 0
     fi
-    local dir
-    dir="$(dirname "$target_file")"
-    if [[ ! -d "$dir" ]]; then
-        mkdir -p "$dir" || exit_error "Failed to create directory: $dir"
-        log "INFO" "Created directory: $dir"
-    fi
-    touch "$target_file" || exit_error "Failed to create file: $target_file"
-    log "WARN" "Created new empty docker-compose.yml: $target_file"
-    # Optionally, add base structure:
-    # echo "version: '3.8'" > "$target_file"
-    # echo "services:" >> "$target_file"
-}
-
-docker_compose_key_remove() {
-    local compose_file="$DOCKER_COMPOSE_FILE"
-    local section="$1"
-    local entry_name="$2"
-    local key_path="$3"
-
-    if [[ ! -f "$compose_file" ]]; then
-        log "ERROR" "File $compose_file not found!"
-        return 1
+    if [[ ! -f "$base_compose" ]]; then
+        log "WARN" "Base compose file not found: $base_compose"
+        fallback_networks
+        return 0
     fi
 
-    log "DEBUG" "Args: compose_file=$compose_file, section=$section, entry_name=$entry_name, key_path=$key_path"
+    mapfile -t net_entries < <(
+        yq eval '.networks // {} | to_entries[] | "\(.key)|\(.value.external // false)|\(.value.internal // false)|\(.value.ipam.config[0].subnet // "")"' "$base_compose" 2>/dev/null
+    )
 
-    if [[ -z "$section" ]]; then
-        log "ERROR" "Missing section argument. Skipping call."
-        return 1
+    if (( ${#net_entries[@]} == 0 )); then
+        log "WARN" "No networks found in $base_compose"
+        fallback_networks
+        return 0
     fi
 
-    if [[ -z "$entry_name" ]]; then
-        log "INFO" "Removing section $section from $compose_file"
-        yq eval "del(.$section)" -i "$compose_file"
-        log "INFO" "Section $section removed."
-        return
-    fi
+    for entry in "${net_entries[@]}"; do
+        IFS="|" read -r net_name is_ext is_int subnet <<< "$entry"
+        [[ -z "$net_name" ]] && continue
+        local opts=()
+        [[ "$is_ext" == "true" ]] && opts+=(external)
+        [[ "$is_int" == "true" ]] && opts+=(internal)
 
-    if ! yq eval ". | has(\"$section\")" "$compose_file" | grep -q "true"; then
-        log "WARN" "Section $section missing, skipping removal."
-        return
-    fi
-    if ! yq eval ".$section | has(\"$entry_name\")" "$compose_file" | grep -q "true"; then
-        log "WARN" "Entry $entry_name missing in $section, skipping removal."
-        return
-    fi
+        # Если подсеть не описана в compose (например, external сети), подставляем умолчания
+        if [[ -z "$subnet" || "$subnet" == "null" ]]; then
+            case "$net_name" in
+                traefik-proxy) subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}" ;;
+                dns-net)       subnet="${DNS_NET_SUBNET:-172.19.0.0/24}" ;;
+                *) subnet="" ;;
+            esac
+        fi
+        [[ -n "$subnet" ]] && opts+=(subnet="$subnet")
 
-    if [[ -z "$key_path" ]]; then
-        log "INFO" "Removing $entry_name from section $section in $compose_file"
-        yq eval "del(.$section.$entry_name)" -i "$compose_file"
-        log "INFO" "Entry $entry_name removed from $section"
+        log "INFO" "Ensuring network '$net_name' (external=$is_ext, internal=$is_int, subnet=${subnet:-<none>})"
+        docker_create_network "$net_name" "${opts[@]}"
+    done
+
+    if [[ "$fallback_done" == true ]]; then
+        log "WARN" "Networks were created with defaults due to missing config."
     else
-        if ! yq eval ".$section.$entry_name | has(\"$key_path\")" "$compose_file" | grep -q "true"; then
-            log "WARN" "Key $key_path not found in $entry_name ($section), skipping removal."
-            return
-        fi
-        log "INFO" "Removing key $key_path from $entry_name ($section) in $compose_file"
-        yq eval "del(.$section.$entry_name.$key_path)" -i "$compose_file"
-        log "INFO" "Key $key_path removed from $entry_name ($section)"
-    fi
-
-    if [[ "$(yq eval ".$section | keys | length" "$compose_file")" -eq 0 ]]; then
-        log "INFO" "Section $section is empty, removing."
-        yq eval "del(.$section)" -i "$compose_file"
-    fi
-
-    yq eval 'with_entries(select(.value != {}))' -i "$compose_file"
-}
-
-docker_compose_key_update() {
-    local compose_file="$DOCKER_COMPOSE_FILE"
-    local section="$1"
-    local entry_name="$2"
-    local key_path="$3"
-    local new_value="$4"
-    local env_value="$5"
-
-    if [[ ! -f "$compose_file" ]]; then
-        log "ERROR" "File $compose_file not found!"
-        return 1
-    fi
-
-    log "DEBUG" "Args: compose_file=$compose_file, section=$section, entry_name=$entry_name, key_path=$key_path, new_value=$new_value"
-
-    # Ensure section exists
-    if ! yq eval "has(\"$section\")" "$compose_file" | grep -q "true"; then
-        log "INFO" "Creating section '$section'."
-        yq eval -i ".[\"$section\"] = {}" "$compose_file"
-    fi
-    # Ensure entry exists
-    if ! yq eval ".[\"$section\"] | has(\"$entry_name\")" "$compose_file" | grep -q "true"; then
-        log "INFO" "Creating entry '$entry_name'."
-        yq eval -i ".[\"$section\"][\"$entry_name\"] = {}" "$compose_file"
-    fi
-
-    # Handle array keys
-    if [[ "$key_path" =~ \[[0-9]+\]$ || "$key_path" =~ \[\+\]$ ]]; then
-        local array_key="${key_path%%\[*}"
-        if ! yq eval ".[\"$section\"][\"$entry_name\"] | has(\"$array_key\")" "$compose_file" | grep -q "true"; then
-            log "INFO" "Creating array '$array_key'."
-            yq eval -i ".[\"$section\"][\"$entry_name\"][\"$array_key\"] = []" "$compose_file"
-        fi
-        if [[ "$key_path" == "environment[+]" ]]; then
-            if [[ -z "$env_value" ]]; then
-                log "WARN" "Variable '$new_value' cannot be added to $key_path: value is empty!"
-                return 1
-            fi
-            new_value="$new_value=$env_value"
-        fi
-        if [[ "$new_value" == "true" ]]; then
-            yq eval -i ".[\"$section\"][\"$entry_name\"][\"$array_key\"] += [$new_value]" "$compose_file"
-        else
-            yq eval -i ".[\"$section\"][\"$entry_name\"][\"$array_key\"] += [\"$new_value\"]" "$compose_file"
-        fi
-        log "INFO" "Added to ${section}.${entry_name}.${array_key} → $new_value"
-    elif [[ "$key_path" == "command" ]]; then
-        local NEW_VALUE
-        export NEW_VALUE="$new_value"
-        yq eval -i ".[\"$section\"][\"$entry_name\"][\"$key_path\"] = [\"sh\", \"-c\", strenv(NEW_VALUE)]" "$compose_file"
-        log "INFO" "Updated: $key_path in $entry_name ($section) → (multiline command)"
-        awk '{gsub("- \\|-", "- |")}1' "$compose_file" > "${compose_file}.tmp" && mv "${compose_file}.tmp" "$compose_file"
-        log "INFO" "Fixed YAML: replaced '- |-' with '- |'"
-    else
-        if [[ "$key_path" == "environment[+]" ]]; then
-            if [[ -z "$env_value" ]]; then
-                log "WARN" "Variable '$new_value' cannot be added to $key_path: value is empty!"
-                return 1
-            fi
-            new_value="$new_value=$env_value"
-        fi
-        if [[ "$new_value" == "true" ]]; then
-            yq eval -i ".[\"$section\"][\"$entry_name\"][\"$key_path\"] = $new_value" "$compose_file"
-        else
-            yq eval -i ".[\"$section\"][\"$entry_name\"][\"$key_path\"] = \"$new_value\"" "$compose_file"
-        fi
-        log "INFO" "Updated: $key_path in $entry_name ($section) → $new_value"
+        log "OK" "Networks ensured from $base_compose"
     fi
 }
+
+# docker_compose_restart() {
+#   local env_file="${DOCKER_ENV_FILE:?DOCKER_ENV_FILE is not set}"
+#   local compose_file="${DOCKER_COMPOSE_FILE:?DOCKER_COMPOSE_FILE is not set}"
+
+#   log "INFO" "Restarting Docker stack using compose file '$compose_file' and env '$env_file'"
+
+#   if [[ ! -f "$compose_file" ]]; then
+#     log "ERROR" "Compose file not found: $compose_file"
+#     return 1
+#   fi
+#   if ! command -v docker &>/dev/null; then
+#     log "ERROR" "docker not found in PATH"
+#     return 1
+#   fi
+
+#   # Корректно останавливаем и чистим orphans
+#   if ! docker compose --env-file "$env_file" -f "$compose_file" down --remove-orphans; then
+#     log "ERROR" "docker compose down failed"
+#     return 1
+#   else
+#     log "INFO" "docker compose down succeeded"
+#   fi
+
+#   # Не обязательно, но полезно: подтянуть обновления образов (можно убрать, если не нужно)
+#   log "INFO" "Pulling latest images..."
+#   if ! docker compose --env-file "$env_file" -f "$compose_file" pull --quiet; then
+#     log "WARN" "docker compose pull failed — продолжаю без обновления образов"
+#   else
+#     log "INFO" "docker compose pull succeeded"
+#   fi
+
+#   # Поднимаем стек заново
+#   log "INFO" "Starting Docker stack using compose file '$compose_file' and env '$env_file'"
+#   if docker compose --env-file "$env_file" -f "$compose_file" up -d --force-recreate; then
+#     log "OK" "Docker stack restarted"
+#     return 0
+#   else
+#     log "ERROR" "docker compose up failed"
+#     return 1
+#   fi
+# }

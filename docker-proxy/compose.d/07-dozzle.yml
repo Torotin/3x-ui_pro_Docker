@@ -1,0 +1,77 @@
+services:
+  dozzle:
+    container_name: dozzle
+    image: amir20/dozzle:latest
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - /opt/docker-proxy/compose.d/.env
+    environment:
+      - DOZZLE_ENABLE_ACTIONS=true
+      - DOZZLE_BASE=/${URI_DOZZLE}
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 3s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.7
+      dns-net:
+        ipv4_address: 172.19.0.7
+    # dns:
+    #   - 172.19.0.10
+    security_opt:
+      - no-new-privileges=true
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      # ---------- Сервис Dozzle ----------
+      # Основной backend-порт + health-check
+      - traefik.http.services.dozzle-service.loadbalancer.server.port=8080
+      - traefik.http.services.dozzle-service.loadbalancer.healthcheck.path=/${URI_DOZZLE}
+      - traefik.http.services.dozzle-service.loadbalancer.healthcheck.interval=30s
+      - traefik.http.services.dozzle-service.loadbalancer.healthcheck.timeout=5s
+
+      # ---------- Middleware ----------
+      # Basic Auth
+      - traefik.http.middlewares.basic-auth.basicauth.users=${HT_PASS_ENCODED}
+      - traefik.http.middlewares.basic-auth.basicauth.realm=Basic Authentication
+
+      # Сжатие и удаление префикса
+      - traefik.http.middlewares.compress.compress=true
+      - traefik.http.middlewares.dozzle-strip.stripPrefix.prefixes=/${URI_DOZZLE}
+
+      # Основная цепочка middleware (включая auth и compress)
+      - traefik.http.middlewares.dozzle-chain.chain.middlewares=bouncer@file,basic-auth,compress
+
+      # API без compress — чтобы SSE не обрывались
+      - traefik.http.middlewares.dozzle-api-chain.chain.middlewares=bouncer@file,basic-auth
+
+      # ---------- Роутеры ----------
+      # Основной интерфейс Dozzle
+      - traefik.http.routers.dozzle-router.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_DOZZLE}`)
+      - traefik.http.routers.dozzle-router.entrypoints=websecure
+      - traefik.http.routers.dozzle-router.middlewares=dozzle-chain
+      - traefik.http.routers.dozzle-router.service=dozzle-service
+      - traefik.http.routers.dozzle-router.tls.certresolver=le
+      - traefik.http.routers.dozzle-router.priority=999
+
+      # API для Dozzle — без сжатия
+      - traefik.http.routers.dozzle-api.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_DOZZLE}/api`)
+      - traefik.http.routers.dozzle-api.entrypoints=websecure
+      - traefik.http.routers.dozzle-api.middlewares=dozzle-api-chain
+      - traefik.http.routers.dozzle-api.service=dozzle-service
+      - traefik.http.routers.dozzle-api.tls.certresolver=le
+      - traefik.http.routers.dozzle-api.priority=1001
+
+      # Манифесты Dozzle — открытый доступ
+      - traefik.http.routers.dozzle-manifest.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`/${URI_DOZZLE}/.*manifest(\\.webmanifest|\\.json)$`)
+      - traefik.http.routers.dozzle-manifest.entrypoints=websecure
+      - traefik.http.routers.dozzle-manifest.service=dozzle-service
+      - traefik.http.routers.dozzle-manifest.tls.certresolver=le
+      - traefik.http.routers.dozzle-manifest.priority=1000

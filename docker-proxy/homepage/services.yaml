@@ -1,0 +1,29 @@
+- Main:
+    - Main Page:
+        icon: mdi-home
+        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}
+
+    - 3X-UI Web Panel:
+        icon: https://github.com/MHSanaei/3x-ui/raw/main/media/3x-ui-dark.png
+        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_3X-UI_PATH}}/
+
+    - Dozzle:
+        icon: sh-dozzle.webp
+        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_DOZZLE}}/
+
+    - AdGuard Home:
+        icon: sh-adguard-home.webp
+        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_ADGUARD_PANEL}}/
+        widget:
+            type: adguard
+            url: http://adguard
+            username: {{HOMEPAGE_VAR_USER_WEB}}
+            password: {{HOMEPAGE_VAR_PASS_WEB}}
+
+    - Traefik Dashboard:
+        description: Traefik dashboard
+        icon: sh-traefik.webp
+        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}/dashboard/#/
+        widget:
+            type: traefik
+            url: http://traefik:8080

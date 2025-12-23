@@ -1,3 +1,4 @@
+#!/bin/bash
 ensure_socks_outbound() {
     local host="$1"
     local port="$2"
@@ -220,20 +221,12 @@ ensure_warp_registered() {
 
     # Генерация пары ключей через xray wg
     log INFO "Подготовка ключей WireGuard (xray wg) для WARP."
-    arch=$(uname -m)
-    case "$arch" in
-        x86_64)  FNAME="amd64" ;;
-        aarch64) FNAME="arm64" ;;
-        armv7l)  FNAME="arm"   ;;
-        *)       FNAME="amd64" ;;
-    esac
-    xray_dir="${XUI_BIN_FOLDER:-/app/bin}"
-    xray_file="${xray_dir}/xray-linux-${FNAME}"
-    if [ ! -x "$xray_file" ]; then
-        if command -v xray >/dev/null 2>&1; then xray_file=$(command -v xray)
-        elif [ -x "${xray_dir}/xray" ]; then xray_file="${xray_dir}/xray"
-        else log ERROR "Не найден бинарник xray"; return 1; fi
+    # Находим бинарник Xray (делегируем общей функции)
+    if ! xray_file=$(find_xray_bin); then
+        log ERROR "Не найден бинарник xray для WARP регистрации."
+        return 1
     fi
+
     if ! output="$($xray_file wg 2>/dev/null)" || [ -z "$output" ]; then
         log ERROR "Не удалось выполнить '$xray_file wg' для генерации ключей."
         return 1
@@ -344,19 +337,19 @@ register_warp_inbound() {
             ;;
     esac
 
-    xray_dir="${XUI_BIN_FOLDER:-/app/bin}"
-    xray_file="${xray_dir}/xray-linux-${FNAME}"
+    # xray_dir="${XUI_BIN_FOLDER:-/app/bin}"
+    # xray_file="${xray_dir}/xray-linux-${FNAME}"
 
-    if [ ! -x "$xray_file" ]; then
-        if command -v xray >/dev/null 2>&1; then
-            xray_file=$(command -v xray)
-        elif [ -x "${xray_dir}/xray" ]; then
-            xray_file="${xray_dir}/xray"
-        else
-            log ERROR "Не найден бинарник xray: ожидался ${xray_dir}/xray-linux-${FNAME}"
-            return 1
-        fi
-    fi
+    # if [ ! -x "$xray_file" ]; then
+    #     if command -v xray >/dev/null 2>&1; then
+    #         xray_file=$(command -v xray)
+    #     elif [ -x "${xray_dir}/xray" ]; then
+    #         xray_file="${xray_dir}/xray"
+    #     else
+    #         log ERROR "Не найден бинарник xray: ожидался ${xray_dir}/xray-linux-${FNAME}"
+    #         return 1
+    #     fi
+    # fi
 
     # Generate keys
     if ! output="$($xray_file wg 2>/dev/null)" || [ -z "$output" ]; then

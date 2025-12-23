@@ -1,3 +1,4 @@
+#!/bin/bash
 init_env_vars() {
     # Если есть файл .env — загружаем из него
     if [ -f ".env" ]; then

@@ -1,6 +1,8 @@
 #!/bin/bash
 # lib/00_common.sh — Common utility functions for system checks, package installation, backups, and random generation
 : "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+: "${YQ_BIN:=/usr/bin/yq}"
+: "${YQ_CACHE_DIR:=${SCRIPT_DIR}/.cache/yq}"
 
 # === Check LOG_FILE ===
 check_LOG_FILE() {
@@ -117,19 +119,61 @@ update_and_upgrade_packages() {
     else
         log "INFO" "No upgrades available — system is up to date"
     fi
+
+    # Always configure unattended upgrades, even when there were no package updates
+    enable_auto_updates
 }
 
 
 # --- Install yq from GitHub ---
 yq_install() {
-    local yq_bin="/usr/bin/yq"
+    local yq_bin="${YQ_BIN:-/usr/bin/yq}"
+    local cache_dir="${YQ_CACHE_DIR:-$SCRIPT_DIR/.cache/yq}"
+    local cache_bin="$cache_dir/yq_linux_amd64"
     local attempts=3
+
+    log "DEBUG" "yq_install: yq_bin=$yq_bin cache_bin=$cache_bin attempts=$attempts"
+
+    # Fast path: working binary already present
+    if command -v "$yq_bin" &>/dev/null; then
+        local current_version
+        current_version="$("$yq_bin" --version 2>/dev/null || true)"
+        if [[ -n "$current_version" ]]; then
+            log "INFO" "yq already installed: $current_version"
+            return 0
+        fi
+        log "WARN" "yq binary exists at $yq_bin but version check failed, will reinstall"
+    fi
+
+    ensure_directory_exists "$cache_dir"
+
+    # Use cached binary if available
+    if [[ -x "$cache_bin" ]]; then
+        local cache_version
+        cache_version="$("$cache_bin" --version 2>/dev/null || true)"
+        if [[ -n "$cache_version" ]]; then
+            log "INFO" "Using cached yq: $cache_version"
+            cp -- "$cache_bin" "$yq_bin" && chmod +x "$yq_bin"
+            if "$yq_bin" --version &>/dev/null; then
+                log "OK" "yq installed from cache: $("$yq_bin" --version)"
+                return 0
+            fi
+            log "WARN" "Failed to activate cached yq, will download fresh"
+        else
+            log "DEBUG" "Cached yq found at $cache_bin but version is empty; ignoring cache"
+        fi
+    fi
+
     for ((i=1; i<=attempts; i++)); do
-        [[ -f "$yq_bin" ]] && rm -f "$yq_bin"
-        if wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O "$yq_bin"; then
+        log "INFO" "Downloading yq (attempt $i/$attempts)..."
+        if wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O "$cache_bin"; then
+            chmod +x "$cache_bin"
+            cp -- "$cache_bin" "$yq_bin"
             chmod +x "$yq_bin"
-            if command -v yq &>/dev/null; then
-                log "INFO" "yq installed successfully: $(yq --version)"
+            local downloaded_version
+            downloaded_version="$("$yq_bin" --version 2>/dev/null || true)"
+            if [[ -n "$downloaded_version" ]]; then
+                log "OK" "yq installed successfully: $downloaded_version"
                 return 0
             fi
         fi
@@ -230,6 +274,34 @@ is_port_in_use() {
     else
         netstat -tuln | awk '{print $4}' | grep -qE "[:.]${port}\b"
     fi
+}
+
+# --- Wait for APT/dpkg locks to clear ---
+wait_for_apt_locks() {
+    local attempts="${1:-12}"
+    local sleep_secs="${2:-5}"
+    local locks=(
+        /var/lib/dpkg/lock-frontend
+        /var/lib/dpkg/lock
+        /var/cache/apt/archives/lock
+        /var/lib/apt/lists/lock
+    )
+
+    for ((i=1; i<=attempts; i++)); do
+        local busy=0
+        for lock in "${locks[@]}"; do
+            if fuser "$lock" &>/dev/null; then
+                busy=1
+                break
+            fi
+        done
+        if (( busy == 0 )); then
+            return 0
+        fi
+        log "WARN" "APT/dpkg lock detected, attempt $i/$attempts — waiting ${sleep_secs}s..."
+        sleep "$sleep_secs"
+    done
+    return 1
 }
 
 pick_fast_mirror() {
@@ -519,4 +591,82 @@ NEWLIST
 
   log INFO "=== Result test mirrors ==="
   print_results_table | column -t
+}
+
+# --- Enable automatic unattended upgrades (security | all) ---
+enable_auto_updates() {
+    log "INFO" "Enabling automatic Ubuntu updates (mode: $AUTO_UPDATES_MODE)"
+
+    declare -g -A required_commands=(
+        [unattended-upgrade]="unattended-upgrades"
+        [apt-get]="apt"
+    )
+
+    check_required_commands
+    install_packages
+
+    # --- 20auto-upgrades ---
+    local auto_file="/etc/apt/apt.conf.d/20auto-upgrades"
+    backup_file "$auto_file" "$SCRIPT_DIR"
+
+    cat >"$auto_file" <<EOF
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+
+    log "OK" "Configured $auto_file"
+
+    # --- 50unattended-upgrades ---
+    local unattended_file="/etc/apt/apt.conf.d/50unattended-upgrades"
+    backup_file "$unattended_file" "$SCRIPT_DIR"
+
+    # Перезаписываем конфиг, чтобы не копить дублирующиеся Allowed-Origins
+    cat >"$unattended_file" <<EOF
+// Managed by install.sh — keep this block minimal
+Unattended-Upgrade::Allowed-Origins {
+    "\${distro_id}:\${distro_codename}-security";
+$( [[ "$AUTO_UPDATES_MODE" == "all" ]] && echo '    "${distro_id}:${distro_codename}-updates";' )
+};
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+
+    if [[ "$AUTO_UPDATES_MODE" == "all" ]]; then
+        log "OK" "Enabled security + regular updates"
+    else
+        log "OK" "Enabled security-only updates (server mode)"
+    fi
+
+    # Ensure systemd timers are active so unattended upgrades actually run
+    if command_exists systemctl; then
+        local timers=(apt-daily.timer apt-daily-upgrade.timer)
+        for t in "${timers[@]}"; do
+            if systemctl list-unit-files --type=timer --no-legend 2>/dev/null | awk '{print $1}' | grep -Fxq "$t"; then
+                if systemctl enable --now "$t" &>/dev/null; then
+                    log "OK" "Enabled and started $t"
+                else
+                    log "WARN" "Failed to enable/start $t (check system logs)"
+                fi
+            else
+                log "DEBUG" "Timer $t not found; skipping"
+            fi
+        done
+    else
+        log "WARN" "systemctl not available; skipping apt timers"
+    fi
+
+    # --- Dry run ---
+    if ! wait_for_apt_locks 6 5; then
+        log "WARN" "APT/dpkg lock is still busy after waiting; skipping unattended-upgrade dry-run"
+        return
+    fi
+    log "INFO" "Running unattended-upgrades dry-run..."
+    if unattended-upgrade --dry-run --debug &>>"$LOG_FILE"; then
+        log "OK" "unattended-upgrades dry-run completed successfully"
+    else
+        local rc=$?
+        log "WARN" "unattended-upgrades dry-run reported issues (rc=$rc). Check $LOG_FILE or /var/log/unattended-upgrades/unattended-upgrades.log for details."
+    fi
 }

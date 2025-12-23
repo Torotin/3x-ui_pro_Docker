@@ -1,0 +1,25 @@
+# Ranges in use:
+# traefik-proxy: 172.18.0.0/24 (external network created separately)
+# dns-net:       172.19.0.0/24 (internal network for DNS services)
+
+networks:
+  traefik-proxy:
+    name: traefik-proxy
+    external: true
+  dns-net:
+    name: dns-net
+    external: true
+
+volumes:
+  crowdsec_data:
+    driver: local
+  crowdsec_config:
+    driver: local
+  logrotate-status:
+    driver: local
+  lampac_cache:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1g,uid=1000,gid=1000,mode=0750,noatime,nosuid,nodev,noexec,nr_inodes=200000

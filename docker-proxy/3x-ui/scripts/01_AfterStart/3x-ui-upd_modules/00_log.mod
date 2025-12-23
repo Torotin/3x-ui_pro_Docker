@@ -1,3 +1,4 @@
+#!/bin/bash
 
 log() {
     level=$1; shift

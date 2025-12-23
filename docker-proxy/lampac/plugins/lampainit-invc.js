@@ -27,7 +27,6 @@ lampainit_invc.first_initiale = function firstinitiale() {
   // Lampa.Storage.set('source', 'tmdb');
   Lampa.Utils.putScriptAsync(["https://aviamovie.github.io/surs.js"], function() {});
   Lampa.Utils.putScriptAsync(["{localhost}/js/hide_interface.js"], function() {});
-  Lampa.Utils.putScriptAsync(["{localhost}/js/surs_quality.js"], function() {});
   Lampa.Storage.set('source', 'SURS');
   localStorage.setItem('menu_sort', '["Главная","Фильтр","Каталог","Фильмы","Сериалы","Релизы","Аниме","Избранное","IPTV","История","Расписание"]');
   localStorage.setItem('cub_domain', 'cub.rip');

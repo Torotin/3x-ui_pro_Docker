@@ -1,3 +1,4 @@
+#!/bin/bash
 # Определение флага страны по IP (POSIX совместимо)
 detect_country_flag() {
     log INFO "Определение флага страны по IP."
@@ -190,4 +191,31 @@ detect_country_flag() {
 
     log WARN "Флаг страны не определён, используем ⚠."
     return 1
+}
+
+# find_xray_bin: определяет путь к бинарнику Xray и экспортирует XRAY_BIN_PATH
+find_xray_bin() {
+    # Если уже задан и существует — выходим
+    if [ -n "${XRAY_BIN_PATH:-}" ] && [ -x "$XRAY_BIN_PATH" ]; then
+        echo "$XRAY_BIN_PATH"
+        return 0
+    fi
+
+    local xray_dir="${XUI_BIN_FOLDER:-/app/bin}"
+    local fname="${FNAME:-amd64}"
+    local candidate="${xray_dir}/xray-linux-${fname}"
+
+    if [ -x "$candidate" ]; then
+        XRAY_BIN_PATH="$candidate"
+    elif command -v xray >/dev/null 2>&1; then
+        XRAY_BIN_PATH="$(command -v xray)"
+    elif [ -x "${xray_dir}/xray" ]; then
+        XRAY_BIN_PATH="${xray_dir}/xray"
+    else
+        log ERROR "Не найден бинарник xray: ожидался ${xray_dir}/xray-linux-${fname}"
+        return 1
+    fi
+
+    echo "$XRAY_BIN_PATH"
+    return 0
 }

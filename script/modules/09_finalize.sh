@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # lib/render.sh — универсальный движок шаблонов на bash + awk
 
 render_template() {

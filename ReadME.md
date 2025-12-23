@@ -1,13 +1,12 @@
-# 3x-ui_pro_Docker — Установка и использование
+# 3x-ui_pro_Docker — краткий мануал
 
 [![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 
-**3x-ui_pro_Docker** — окружение для прокси на базе Docker с поддержкой Traefik, Caddy и 3x-ui.  
-Собственные Docker-образы для этого проекта собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
+Готовое Docker‑окружение для прокси/панелей: Traefik, 3x-ui (Xray), Caddy, AdGuard, CrowdSec, Lampac, Homepage и вспомогательные модули. Собственные образы собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
 
-## Быстрый старт
+## Быстрый старт (загрузить установщик из GitHub)
 
-Скрипт загрузит актуальную версию `install.sh` с кешированием по ETag и запустит установщик.
+Скрипт ниже скачает свежий `install.sh` с кешированием по ETag и запустит его.
 
 ```bash
 #!/usr/bin/env bash
@@ -18,13 +17,9 @@ INSTALL_SCRIPT="$TARGET_DIR/install.sh"
 ETAG_FILE="$INSTALL_SCRIPT.etag"
 URL="https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/refs/heads/main/script/install.sh"
 
-# Создать каталог назначения
 sudo mkdir -p "$TARGET_DIR"
-
-# Временный файл для загрузки
 TMP="$(mktemp)"
 
-# Загрузка с учётом ETag (304 — без изменений)
 HTTP_CODE="$(
   curl -sS -L -f \
     --etag-compare "$ETAG_FILE" \
@@ -38,71 +33,110 @@ if [[ "$HTTP_CODE" == "304" ]]; then
   echo "install.sh не изменился (304 Not Modified)."
   rm -f "$TMP"
 else
-  # Установить права и поместить файл в целевой каталог
   sudo install -m 0755 "$TMP" "$INSTALL_SCRIPT"
   rm -f "$TMP"
   echo "install.sh обновлён (HTTP $HTTP_CODE)."
 fi
 
-# Запуск установщика
 sudo "$INSTALL_SCRIPT"
 ```
 
+## Что разворачивается
+
+- **Traefik** — фронтовый reverse‑proxy и ACME, терминирует TLS, маршрутизирует HTTP/S к сервисам.
+- **Caddy** — вспомогательный веб‑сервер (статика/проксирование бэкендов).
+- **3x-ui + Xray core** — панель управления и сам Xray, автоконфиг инбаундов.
+- **AdGuard Home** — DNS‑фильтрация и блокировка рекламы/трекеров.
+- **CrowdSec** — анализ логов/поведенческая защита; может выдавать bouncer‑решения.
+- **Lampac** — медиаменеджер/доп. сервис (работает через общий Traefik).
+- **Homepage** — дашборд для быстрых ссылок на сервисы/статус.
+- **WARP helper** — регистрация WireGuard‑ключей и outbound’ов Cloudflare WARP (для Xray).
+- **Поддержка**: автообновление GeoIP/GeoSite, скрипты оптимизации сети, резервные модули AfterStart.
+
+## Как работают сервисы
+
+- **Traefik**: вход 80/443, умеет HTTP‑01/ALPN для сертификатов, имеет dashboard (можно скрыть/закрыть по BasicAuth). Маршруты на 3x-ui, Caddy, AdGuard, Homepage и др.
+- **3x-ui**: панель на кастомном домене/портах из `.env`, API используется модулями AfterStart. Запускает Xray и управляет инбаундами.
+- **Xray (core)**: конфиг собирается и обновляется модулями; поддерживает PQ‑ключи (ML‑KEM‑768) для VLESS; может перезапускаться через API или локальный бинарник.
+- **AdGuard Home**: DNS‑сервер с веб‑панелью, фильтры по спискам, статистика запросов.
+- **Caddy**: может подхватывать статический контент/прокси; служит «тихим» бэкендом для маскировки.
+- **CrowdSec**: читает логи (Traefik/SSH и т.п.), применяет решения (ban/allow); API‑ключи формируются установщиком.
+- **Lampac**: отдельный сервис под медиа/интеграции (доступ через Traefik).
+- **Homepage**: стартовая страница с ссылками на панели и статусом сервисов.
+- **WARP helper**: генерирует WireGuard‑ключи, добавляет outbounds/balancer в Xray при необходимости.
+
+## Какие инбаунды создаёт 3x-ui (по AfterStart)
+
+1) **VLESS TCP Reality (Vision)**  
+   - Протокол: `vless`  
+   - Transport: `tcp` + Reality, fingerprint `chrome`, target Traefik (`traefik:<порт>`).  
+   - PQ (ML‑KEM‑768) опционально: включается `USE_VLESS_PQ=true` (по умолчанию включено, decryption/encryption=`none`).  
+   - mldsa65 для Reality также опционально: `USE_MLDSA65=true` (по умолчанию выключено).  
+   - ShortIds генерируются; клиенты: flow `xtls-rprx-vision-udp443`, UUID генерируется.  
+
+2) **VLESS XHTTP (маскировка под HTTP)**  
+   - Протокол: `vless`, `network: xhttp`, `security: none`.  
+   - Host/path берутся из переменных (`WEBDOMAIN`, `URI_VLESS_XHTTP`).  
+   - Заголовки имитируют nginx (`Server`, `Content-Type`, CORS, keep-alive).  
+   - Ограничения: `scMaxBufferedPosts=50`, `scMaxEachPostBytes=5000000`, `scStreamUpServerSecs=5-20`, `noSSEHeader=true`, `xPaddingBytes=100-1000`, режим `packet-up`.  
+   - PQ для VLESS опционально тем же флагом `USE_VLESS_PQ` (по умолчанию выключено).  
+
+Порты инбаундов задаются в `.env` (переменные `PORT_LOCAL_VISION`, `PORT_LOCAL_XHTTP` или аналогичные). Подписки/JSON‑эндпоинты формируются 3x-ui согласно basePath и subPath из `.env`.
+
 ## Требования
 
-- Root-доступ и bash-окружение (Debian/Ubuntu совместимые).
-- Доступ в интернет (загрузка шаблонов и модулей из GitHub).
-- Docker/Docker Compose будут установлены скриптом при необходимости.
+- Root и bash (Debian/Ubuntu‑совместимые).
+- Доступ в интернет для загрузки шаблонов/модулей/образов.
+- Docker и Docker Compose устанавливаются скриптом при отсутствии.
 
-## Меню установщика
+## Шаги установщика (меню)
 
-После запуска вы увидите меню шагов. Их можно выбирать по одному или диапазонами (например, `1,3 5 7` или `1-6`). Основные шаги:
+Шаги выбираются числом или диапазоном (`1,3 5 7`, `1-6`):
 
-- 1: System update — обновление системы
-- 2: Docker. (Re)Install — установка/переустановка Docker и сети `traefik-proxy`
-- 3: Docker. Generate docker dir — создание каталога `/opt/docker-proxy` и загрузка файлов
-- 4: Docker. Generate docker env-file — генерация `/opt/docker-proxy/.env`
-- 5: Create user — создание системного пользователя
-- 6: Configure firewall — настройка firewall
-- 7: Configure SSH — настройка SSH
-- 8: Network optimization — оптимизация сетевых параметров
-- 9: Docker. Run Compose — запуск `docker compose up -d`
-- 10: Final message — итоговая сводка
-- x: Exit — выход
-- r: Reboot — перезагрузка
+1. System update  
+2. Docker. (Re)Install (сеть `traefik-proxy`)  
+3. Docker. Generate docker dir (`/opt/docker-proxy`, загрузка файлов)  
+4. Docker. Generate docker env-file (`/opt/docker-proxy/.env`)  
+5. Create user  
+6. Configure firewall  
+7. Configure SSH  
+8. Network optimization  
+9. Docker. Run Compose (`docker compose up -d`)  
+10. Final message  
+`x` — Exit, `r` — Reboot  
 
-## Какие переменные запрашивает install.sh
+## Какие переменные спрашивает install.sh
 
-Скрипт автоматически определяет часть параметров и запрашивает только ключевые данные. Ниже — все возможные запросы и поведение по умолчанию.
+Спрашиваются только ключевые значения, остальное генерируется:
 
-- WEBDOMAIN: домен для публикации сервисов. Запрашивается обязательно («Enter domain (WEBDOMAIN)»).
-- USER_SSH: имя системного пользователя. Предлагается ввести («Enter username (USER_SSH)»); при пропуске — генерируется случайно.
-- PASS_SSH: пароль системного пользователя. Предлагается ввести («Enter password (PASS_SSH)»); при пропуске — генерируется случайно.
-- SSH_PBK: публичный SSH‑ключ (строка вида `ssh-ed25519 ...`). Предлагается ввести («Enter public key (SSH_PBK)»); при пропуске — оставляется пустым, будет сгенерирована локальная пара ED25519, а её публичный ключ добавлен в `authorized_keys`.
-- USER_WEB: имя для базовой HTTP‑аутентификации (например, для панелей). Предлагается ввести («Enter username (USER_WEB)»); при пропуске — генерируется случайно. Если указали `USER_WEB`, обязательно укажите и `PASS_WEB`.
-- PASS_WEB: пароль для базовой HTTP‑аутентификации. Предлагается ввести («Enter password (PASS_WEB)»); при пропуске — генерируется случайно. Используется для формирования `HT_PASS_ENCODED` (Apache htpasswd).
+- `WEBDOMAIN` — домен (обязательно).  
+- `USER_SSH` / `PASS_SSH` — учётка системы (можно пропустить, будет сгенерировано).  
+- `SSH_PBK` — ваш публичный ключ (ED25519/RSA). Если пусто — генерится новый ключ.  
+- `USER_WEB` / `PASS_WEB` — BasicAuth для панелей (если указали логин, задайте и пароль).  
 
-Что происходит автоматически:
+Автоматически:
 
-- PUBLIC_IPV4/PUBLIC_IPV6: определяются автоматически. Если IPv6 недоступен/некорректен, подставляется IPv4.
-- Все переменные, начинающиеся на `PORT_`: случайные свободные порты (диапазон ~20000–65000).
-- Все переменные, начинающиеся на `URI_`: случайные безопасные URI‑фрагменты.
-- CROWDSEC_API_KEY_*: случайные ключи 32–48 символов.
-- HT_PASS_ENCODED: вычисляется автоматически из `USER_WEB`/`PASS_WEB` (если оба заданы).
+- `PUBLIC_IPV4/6` — определяются; при проблемах с IPv6 берётся IPv4.  
+- Все `PORT_*` — свободные порты (≈20000–65000).  
+- Все `URI_*` — случайные безопасные URI.  
+- `CROWDSEC_API_KEY_*` — случайные ключи 32–48 символов.  
+- `HT_PASS_ENCODED` — htpasswd из `USER_WEB/PASS_WEB`.  
 
-Подсказка: можно переопределить значения через окружение перед запуском, например: `WEBDOMAIN=example.com USER_SSH=alice PASS_SSH='S3curePass' sudo ./install.sh`.
+Переменные можно задать заранее:  
+`WEBDOMAIN=example.com USER_SSH=alice PASS_SSH='S3cure' sudo ./install.sh`
 
-## Куда записываются параметры
+## Куда пишутся параметры
 
-- Файл окружения установщика: `install.env` рядом с `install.sh`.
-- Docker Compose окружение: `/opt/docker-proxy/.env`.
-- Compose файл: `/opt/docker-proxy/compose.yml`.
+- `install.env` — рядом с `install.sh`.  
+- `/opt/docker-proxy/.env` — окружение для Compose.  
+- `/opt/docker-proxy/compose.yml` + `compose.d/*.yml` — сервисы.  
 
-## Обновление/повторный запуск
+## Повторный запуск/обновление
 
-Перезапуск вышеуказанного «Быстрый старт» блока проверит ETag и скачает новую версию только при изменении. Повторный запуск `install.sh` позволяет выбрать нужные шаги повторно (например, только генерацию `.env` и рестарт Compose).
+Повторный запуск блока «Быстрый старт» скачает новый `install.sh` только при изменении ETag. Сам установщик можно запускать повторно для отдельных шагов (например, регенерация `.env` и `docker compose up -d`).
 
-## Примечания безопасности
+## Безопасность
 
-- Рекомендуется указать собственный `SSH_PBK` (ваш публичный ключ) и сменить сгенерированные пароли после установки.
-- Если задаёте `USER_WEB`, обязательно задайте и `PASS_WEB`, иначе htpasswd не будет сгенерирован.
+- Укажите свой `SSH_PBK`, смените сгенерированные пароли после установки.  
+- Если задаёте `USER_WEB`, обязательно задайте и `PASS_WEB`, иначе htpasswd не будет создан.  
+- Traefik dashboard/Caddy/3x-ui лучше закрывать BasicAuth/файрволом и использовать HTTPS.  

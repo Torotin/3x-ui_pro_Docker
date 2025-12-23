@@ -22,7 +22,7 @@ PermitRootLogin no
 PermitEmptyPasswords no
 
 # Max keepalive count before disconnecting idle client / Кол-во keep-alive перед отключением
-ClientAliveCountMax 10
+ClientAliveCountMax 3
 
 # Keep-alive packet interval / Период keep-alive (сек)
 ClientAliveInterval 60
@@ -30,14 +30,20 @@ ClientAliveInterval 60
 # Use SSH protocol version 2 only / Только SSHv2
 Protocol 2
 
+# Skip reverse DNS lookups to speed up auth / Не выполняем rDNS для ускорения входа
+UseDNS no
+
 # Allow only specific user to log in / Разрешённый пользователь
 AllowUsers $USER_SSH
 
 # Set SFTP subsystem path / Подсистема SFTP
-Subsystem sftp /usr/lib/openssh/sftp-server
+Subsystem sftp internal-sftp
 
 # Include additional config files / Подключение доп. конфигураций
 Include /etc/ssh/sshd_config.d/*.conf
+
+# Explicit path to authorized keys / Явный путь к ключам
+AuthorizedKeysFile %h/.ssh/authorized_keys
 
 # Ignore rhosts files / Игнорировать rhosts
 IgnoreRhosts yes
@@ -60,8 +66,11 @@ PubkeyAuthentication $pubkey_auth
 # Disable TCP port forwarding globally / Запрет TCP перенаправления
 AllowTcpForwarding no
 
+# Disable Unix socket forwarding globally / Запрет UNIX-сокет перенаправления
+AllowStreamLocalForwarding no
+
 # Set login grace time before disconnect / Время ожидания аутентификации
-LoginGraceTime 20
+LoginGraceTime 15
 
 # SSH listening port / Порт SSH
 Port $PORT_REMOTE_SSH
@@ -78,27 +87,32 @@ GatewayPorts no
 # Limit simultaneous connections / Ограничение подключений
 MaxStartups 5:40:15
 
+# Limit session channels per connection / Ограничение сессий на подключение
+MaxSessions 10
+
 # Key exchange algorithms / Алгоритмы обмена ключами
-KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
+KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
 
 # Disable agent forwarding globally / Запрет ssh-agent
 AllowAgentForwarding no
 
 # Message Authentication Code algorithms / MAC
-MACs hmac-sha2-256,hmac-sha2-512
+MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha2-512
 
 # Accepted encryption ciphers / Шифры
-Ciphers aes256-ctr,aes192-ctr,aes128-ctr
+Ciphers chacha20-poly1305@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
 
 # Log level for SSH server / Уровень логов
 LogLevel VERBOSE
+
+# Hide OS info in banner / Скрыть информацию об ОС в баннере
+DebianBanner no
 
 # Accept environment variables / Переменные окружения
 AcceptEnv LANG LC_*
 
 # Enable/disable password authentication / Разрешение пароля
 PasswordAuthentication $PASS_SSH_auth
-
 
 # === Per-user overrides ===
 

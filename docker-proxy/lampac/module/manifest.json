@@ -5,7 +5,7 @@
     },
     {
         "dll": "SISI.dll",
-        "enable": true
+        "enable": false
     },
     {
         "dll": "JacRed.dll",
