@@ -13,12 +13,44 @@ LOG_FILE="$LOGS_DIR/$LOG_NAME.log"
 ENV_FILE="$PROJECT_ROOT/$LOG_NAME.env"
 ENV_TEMPLATE_FILE="$TEMPLATE_DIR/$LOG_NAME.env.template"
 DOCKER_DIR="/opt/docker-proxy"
-DOCKER_COMPOSE_FILE="$DOCKER_DIR/compose.yml"
-DOCKER_ENV_FILE="$DOCKER_DIR/.env"
+DOCKER_ENV_FILE="$DOCKER_DIR/compose.d/.env"
 DOCKER_ENV_TEMPLATE="$TEMPLATE_DIR/docker.env.template"
 GITHUB_REPO_OWNER="${REPO_OWNER:-Torotin}"
-GITHUB_REPO_NAME="${REPO_OWNER:-3x-ui_pro_Docker}"
+GITHUB_REPO_NAME="${REPO_NAME:-3x-ui_pro_Docker}"
+AUTO_UPDATES_MODE="${AUTO_UPDATES_MODE:-all}"  # "security" or "all"
 LOADED_MODULES=()
+
+# Detect which branch the installer was fetched from; fall back to env or main
+detect_github_branch() {
+  local branch candidate src_path
+
+  branch="${REPO_BRANCH:-}"
+  [[ -n "$branch" ]] && { echo "$branch"; return; }
+
+  # Try to parse branch out of the source path (works for raw.githubusercontent.com URLs)
+  src_path="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  if [[ "$src_path" =~ raw\.githubusercontent\.com/[^/]+/[^/]+/([^/]+)/ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return
+  fi
+
+  # If we're inside a git clone, use the current branch; fall back to commit short hash
+  if command -v git >/dev/null 2>&1; then
+    local git_root
+    git_root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$git_root" ]]; then
+      candidate="$(git -C "$git_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+      if [[ -n "$candidate" && "$candidate" != "HEAD" ]]; then
+        echo "$candidate"
+        return
+      fi
+      candidate="$(git -C "$git_root" rev-parse --short HEAD 2>/dev/null || true)"
+      [[ -n "$candidate" ]] && { echo "$candidate"; return; }
+    fi
+  fi
+
+  echo "main"
+}
 
 declare -A required_commands=(
     ["mc"]="mc"
@@ -154,10 +186,25 @@ reset_permissions() {
   fi
 
   # Права применяем ВСЕГДА, вне зависимости от результата chown
-  if chmod -R u=rwX,go=rX -- "$TARGET_DIR"; then
-    log "INFO" "Permissions reset to u=rwX,go=rX for '$TARGET_DIR'"
+  local perm_rc=0
+
+  if find "$TARGET_DIR" -type d -exec chmod u=rwx,go=rx {} +; then
+    log "DEBUG" "Directory permissions set to u=rwx,go=rx under '$TARGET_DIR'"
   else
-    log "ERROR" "Failed to reset permissions for '$TARGET_DIR'"
+    log "ERROR" "Failed to reset directory permissions under '$TARGET_DIR'"
+    perm_rc=1
+  fi
+
+  if find "$TARGET_DIR" -type f -exec chmod u=rwX,go=rX {} +; then
+    log "DEBUG" "File permissions set to u=rwX,go=rX under '$TARGET_DIR'"
+  else
+    log "ERROR" "Failed to reset file permissions under '$TARGET_DIR'"
+    perm_rc=1
+  fi
+
+  if (( perm_rc == 0 )); then
+    log "INFO" "Permissions reset recursively for '$TARGET_DIR'"
+  else
     rc=1
   fi
 
@@ -170,9 +217,22 @@ reset_permissions() {
   return $rc
 }
 
+# Нормализация USER_SSH: убираем управляющие символы/пробелы
+sanitize_user_ssh() {
+  local target_user="${1:-$USER_SSH}"
+  if [[ -n "${target_user:-}" ]]; then
+    target_user="${target_user//$'\r'/}"
+    target_user="${target_user//$'\n'/}"
+    target_user="${target_user//$'\t'/}"
+    target_user="${target_user//[[:space:]]/}"
+  fi
+  echo "$target_user"
+}
+
 # Обёртка для применения к двум каталогам
 reset_all_permissions() {
-  local target_user="${1:-$USER_SSH}"
+  local target_user
+  target_user=$(sanitize_user_ssh "${1:-$USER_SSH}")
   local rc=0
 
   reset_permissions "$SCRIPT_DIR" "$target_user" || rc=1
@@ -252,7 +312,7 @@ download_repo_dir() {
   local target="${2:?Local destination path is required}"
   local repo_owner="${GITHUB_REPO_OWNER:?GITHUB_REPO_OWNER is required}"
   local repo_name="${GITHUB_REPO_NAME:?GITHUB_REPO_NAME is required}"
-  local branch="${GITHUB_BRANCH:-main}"
+  local branch="${GITHUB_BRANCH:-$(detect_github_branch)}"
   local auth_token="${GITHUB_TOKEN:-}"
   local repo_url="https://github.com/${repo_owner}/${repo_name}.git"
 

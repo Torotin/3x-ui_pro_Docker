@@ -1,0 +1,32 @@
+services:
+  logrotate:
+    image: blacklabelops/logrotate:1.3
+    container_name: logrotate
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      # cron: каждые 5 минут
+      LOGROTATE_CRONSCHEDULE: "*/5 * * * *"
+      # директории с логами (через пробел)
+      LOGS_DIRECTORIES: "/logs"
+      # какие файлы ротировать (через пробел)
+      LOG_FILE_ENDINGS: "log prev.log"
+      # максимальный размер для ротации
+      LOGROTATE_SIZE: "100k"
+      # минимальный размер для ротации
+      LOGROTATE_MINSIZE: "50k"
+      # количество копий
+      LOGROTATE_COPIES: "10"
+      # сжимать архивы или нет
+      LOGROTATE_COMPRESSION: "nocompress"
+      # формат даты в имени архива
+      LOGROTATE_DATEFORMAT: "-%Y%m%d-%H%M%S"
+      # (опц.) складывать архивы отдельно
+      # LOGROTATE_OLDDIR: "/logs/_logrotate/archive"
+
+      # логи самого ротатора/cron
+      LOGROTATE_LOGFILE: "/logs/_logrotate/logrotate.log"
+      LOG_FILE: "/logs/_logrotate/cron.log"
+    volumes:
+      - /opt/docker-proxy/_logs:/logs:rw
+      - logrotate-status:/logrotate-status

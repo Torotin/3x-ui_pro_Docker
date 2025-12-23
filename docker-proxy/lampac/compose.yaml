@@ -46,7 +46,7 @@ services:
       - traefik-proxy
       - dns-net
     dns:
-      - 172.31.0.53
+      - 172.19.0.10
 
 networks:
   traefik-proxy:

@@ -1,0 +1,48 @@
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec
+    container_name: crowdsec
+    restart: unless-stopped
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.3
+      dns-net:
+        ipv4_address: 172.19.0.3
+    # dns:
+    #   - 172.19.0.10
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:7422:7422"
+    environment:
+      TZ: ${TZ}
+      GID: ${GID-1000}
+      COLLECTIONS: >
+        crowdsecurity/sshd
+        crowdsecurity/caddy
+        crowdsecurity/http-cve
+        crowdsecurity/traefik
+        crowdsecurity/linux
+        crowdsecurity/whitelist-good-actors
+        crowdsecurity/appsec-virtual-patching
+        crowdsecurity/appsec-generic-rules
+        crowdsecurity/base-http-scenarios
+        crowdsecurity/appsec-crs
+      BOUNCER_KEY_CADDY: ${CROWDSEC_API_KEY_CADDY}
+      BOUNCER_KEY_TRAEFIK: ${CROWDSEC_API_KEY_TRAEFIK}
+      BOUNCER_KEY_FIREWALL: ${CROWDSEC_API_KEY_FIREWALL}
+    volumes:
+      - crowdsec_data:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
+      - /opt/docker-proxy/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml
+      - /opt/docker-proxy/crowdsec/config.yaml:/etc/crowdsec/config.yaml
+      - /var/log:/var/log:ro
+      - /opt/docker-proxy/_logs:/var/logs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges=true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=5 http://localhost:8080/health > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 10s

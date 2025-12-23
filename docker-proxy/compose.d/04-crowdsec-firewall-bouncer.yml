@@ -1,0 +1,27 @@
+services:
+  crowdsec-firewall-bouncer:
+    image: ghcr.io/shgew/cs-firewall-bouncer-docker:latest
+    container_name: crowdsec_firewall_bouncer
+    network_mode: host
+    depends_on:
+      crowdsec:
+        condition: service_healthy
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      API_KEY: ${CROWDSEC_API_KEY_FIREWALL}
+      CROWDSEC_API: 127.0.0.1:8080
+    volumes:
+      - /opt/docker-proxy/_logs/crowdsec/firewall-bouncer.log:/var/log/crowdsec-firewall-bouncer.log
+      - /opt/docker-proxy/crowdsec/crowdsec-firewall-bouncer.yaml:/config/crowdsec-firewall-bouncer.yaml:ro
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "crowdsec-firewall-bouncer"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

@@ -1,5 +1,58 @@
+# === CrowdSec Firewall Bouncer configuration ===
+# Оптимизировано для: iptables + Docker + UFW + host network
+# ┌─────────────────────────┐
+# │   1. INPUT (policy DROP)│  ← начинается здесь
+# └─────────────┬───────────┘
+#               │
+#               ▼
+# ┌─────────────────────────┐
+# │ 2. CROWDSEC_CHAIN       │  ← вставлено бонсером
+# │    • ipset blacklist    │
+# │    • DROP (если в бане) │
+# └─────────────┬───────────┘
+#               │
+#               ▼
+# ┌─────────────────────────┐
+# │ 3. ufw-before-logging   │
+# └─────────────┬───────────┘
+#               │
+#               ▼
+# ┌─────────────────────────┐
+# │ 4. ufw-before-input     │  ← основной UFW filter
+# │    • allow established  │
+# │    • allow lo           │
+# │    • ICMP allow         │
+# │    • reject invalid     │
+# └─────────────┬───────────┘
+#               │
+#               ▼
+# ┌─────────────────────────┐
+# │ 5. ufw-user-input       │  ← пользовательские правила
+# │    • allow ssh          │
+# │    • allow 80/443       │
+# └─────────────┬───────────┘
+#               │
+#               ▼
+# ┌─────────────────────────┐
+# │ 6. ufw-after-input      │
+# └─────────────┬───────────┘
+#               │
+#               ▼
+# ┌─────────────────────────┐
+# │ 7. ufw-after-logging    │
+# └─────────────┬───────────┘
+#               │
+#               ▼
+# ┌─────────────────────────┐
+# │ 8. POLICY (DROP)        │ ← если ничего не разрешено
+# └─────────────────────────┘
+# ===============================================
+
+
 mode: iptables
+
 update_frequency: 10s
+
 log_mode: file
 log_dir: /var/log/
 log_level: info
@@ -7,54 +60,45 @@ log_compression: true
 log_max_size: 100
 log_max_backups: 3
 log_max_age: 30
+
 api_url: http://${CROWDSEC_API}/
 api_key: ${API_KEY}
-## TLS Authentication
-# cert_path: /etc/crowdsec/tls/cert.pem
-# key_path: /etc/crowdsec/tls/key.pem
-# ca_cert_path: /etc/crowdsec/tls/ca.crt
+
 insecure_skip_verify: false
 disable_ipv6: false
+
 deny_action: DROP
 deny_log: false
+
 supported_decisions_types:
   - ban
-#to change log prefix
-#deny_log_prefix: "crowdsec: "
-#to change the blacklists name
+
+# Имя ipset-наборов для блокировки
 blacklists_ipv4: crowdsec-blacklists
 blacklists_ipv6: crowdsec6-blacklists
-#type of ipset to use
+
 ipset_type: nethash
-#if present, insert rule in those chains
+
+# Цепочки iptables, в которые бонсер будет вставлять CROWDSEC_CHAIN
+# Важно: только INPUT + DOCKER-USER, т.к. FORWARD ломает Docker networking
 iptables_chains:
   - INPUT
 #  - FORWARD
-#  - DOCKER-USER
+  - DOCKER-USER
+
 iptables_add_rule_comments: true
 
-## nftables
+# nftables отключены, чтобы исключить дублирование и конфликты
 nftables:
   ipv4:
-    enabled: true
-    set-only: false
-    table: crowdsec
-    chain: crowdsec-chain
-    priority: -10
+    enabled: false
   ipv6:
-    enabled: true
-    set-only: false
-    table: crowdsec6
-    chain: crowdsec6-chain
-    priority: -10
+    enabled: false
 
-nftables_hooks:
-  - input
-  - forward
+nftables_hooks: []
 
-# packet filter
+# pf выключен
 pf:
-  # an empty string disables the anchor
   anchor_name: ""
 
 prometheus:

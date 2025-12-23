@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib/04_user.sh — User management module
+# lib/04_user.sh â€” User management module
 
 # === Global variables ===
 TEMPLATE_DIR=${TEMPLATE_DIR:-}
