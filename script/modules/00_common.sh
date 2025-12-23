@@ -119,6 +119,9 @@ update_and_upgrade_packages() {
     else
         log "INFO" "No upgrades available — system is up to date"
     fi
+
+    # Always configure unattended upgrades, even when there were no package updates
+    enable_auto_updates
 }
 
 
@@ -271,6 +274,34 @@ is_port_in_use() {
     else
         netstat -tuln | awk '{print $4}' | grep -qE "[:.]${port}\b"
     fi
+}
+
+# --- Wait for APT/dpkg locks to clear ---
+wait_for_apt_locks() {
+    local attempts="${1:-12}"
+    local sleep_secs="${2:-5}"
+    local locks=(
+        /var/lib/dpkg/lock-frontend
+        /var/lib/dpkg/lock
+        /var/cache/apt/archives/lock
+        /var/lib/apt/lists/lock
+    )
+
+    for ((i=1; i<=attempts; i++)); do
+        local busy=0
+        for lock in "${locks[@]}"; do
+            if fuser "$lock" &>/dev/null; then
+                busy=1
+                break
+            fi
+        done
+        if (( busy == 0 )); then
+            return 0
+        fi
+        log "WARN" "APT/dpkg lock detected, attempt $i/$attempts — waiting ${sleep_secs}s..."
+        sleep "$sleep_secs"
+    done
+    return 1
 }
 
 pick_fast_mirror() {
@@ -560,4 +591,82 @@ NEWLIST
 
   log INFO "=== Result test mirrors ==="
   print_results_table | column -t
+}
+
+# --- Enable automatic unattended upgrades (security | all) ---
+enable_auto_updates() {
+    log "INFO" "Enabling automatic Ubuntu updates (mode: $AUTO_UPDATES_MODE)"
+
+    declare -g -A required_commands=(
+        [unattended-upgrade]="unattended-upgrades"
+        [apt-get]="apt"
+    )
+
+    check_required_commands
+    install_packages
+
+    # --- 20auto-upgrades ---
+    local auto_file="/etc/apt/apt.conf.d/20auto-upgrades"
+    backup_file "$auto_file" "$SCRIPT_DIR"
+
+    cat >"$auto_file" <<EOF
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+
+    log "OK" "Configured $auto_file"
+
+    # --- 50unattended-upgrades ---
+    local unattended_file="/etc/apt/apt.conf.d/50unattended-upgrades"
+    backup_file "$unattended_file" "$SCRIPT_DIR"
+
+    # Перезаписываем конфиг, чтобы не копить дублирующиеся Allowed-Origins
+    cat >"$unattended_file" <<EOF
+// Managed by install.sh — keep this block minimal
+Unattended-Upgrade::Allowed-Origins {
+    "\${distro_id}:\${distro_codename}-security";
+$( [[ "$AUTO_UPDATES_MODE" == "all" ]] && echo '    "${distro_id}:${distro_codename}-updates";' )
+};
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+
+    if [[ "$AUTO_UPDATES_MODE" == "all" ]]; then
+        log "OK" "Enabled security + regular updates"
+    else
+        log "OK" "Enabled security-only updates (server mode)"
+    fi
+
+    # Ensure systemd timers are active so unattended upgrades actually run
+    if command_exists systemctl; then
+        local timers=(apt-daily.timer apt-daily-upgrade.timer)
+        for t in "${timers[@]}"; do
+            if systemctl list-unit-files --type=timer --no-legend 2>/dev/null | awk '{print $1}' | grep -Fxq "$t"; then
+                if systemctl enable --now "$t" &>/dev/null; then
+                    log "OK" "Enabled and started $t"
+                else
+                    log "WARN" "Failed to enable/start $t (check system logs)"
+                fi
+            else
+                log "DEBUG" "Timer $t not found; skipping"
+            fi
+        done
+    else
+        log "WARN" "systemctl not available; skipping apt timers"
+    fi
+
+    # --- Dry run ---
+    if ! wait_for_apt_locks 6 5; then
+        log "WARN" "APT/dpkg lock is still busy after waiting; skipping unattended-upgrade dry-run"
+        return
+    fi
+    log "INFO" "Running unattended-upgrades dry-run..."
+    if unattended-upgrade --dry-run --debug &>>"$LOG_FILE"; then
+        log "OK" "unattended-upgrades dry-run completed successfully"
+    else
+        local rc=$?
+        log "WARN" "unattended-upgrades dry-run reported issues (rc=$rc). Check $LOG_FILE or /var/log/unattended-upgrades/unattended-upgrades.log for details."
+    fi
 }
