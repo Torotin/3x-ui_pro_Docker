@@ -90,6 +90,9 @@
 
   const run = async () => {
     showLoading('Загрузка подписки…');
+    const loadingTimeout = setTimeout(() => {
+      showError('Долго загружается. Проверьте доступность ассетов и подписки.');
+    }, 12000);
     setDefaults();
 
     if (textarea) textarea.value = '';
@@ -136,12 +139,27 @@
     const withVer = (file) => assets.ver ? `${file}?${encodeURIComponent(assets.ver)}` : file;
     const subscriptionScript = new URL(withVer('js/subscription.js'), assetBaseUrl).toString();
 
+    // Добавляем глобальный миксин, чтобы popover/modal/drawer из manuals имели реактивные флаги
+    if (window.Vue && !window.__SUB_MANUAL_FLAGS_ADDED) {
+      Vue.mixin({
+        data() {
+          return {
+            showManualModal: false,
+            showManualDrawer: false
+          };
+        }
+      });
+      window.__SUB_MANUAL_FLAGS_ADDED = true;
+    }
+
     try {
       await loadScript(subscriptionScript);
       hideLoading();
+      clearTimeout(loadingTimeout);
     } catch (err) {
       console.error(err);
       showError(`Ошибка загрузки скрипта: ${err.message || err}`);
+      clearTimeout(loadingTimeout);
     }
   };
 

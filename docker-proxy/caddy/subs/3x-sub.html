@@ -66,8 +66,10 @@
           <a-row type="flex" justify="center" class="mt-2">
               <a-col :xs="24" :sm="22" :md="18" :lg="14" :xl="12">
                   <a-card hoverable class="subscription-card">
-                      {{ include "partials/subscription-header.html" }}
-                      {{ include "partials/subscription-body.html" }}
+                      {{ include "partials/header.html" }}
+                      {{ include "partials/body.html" }}
+                      {{ include "partials/manuals.html" }}
+                      {{ include "partials/footer.html" }}
                   </a-card>
               </a-col>
           </a-row>
@@ -84,8 +86,8 @@
       data-datepicker="gregorian"></template>
   <textarea id="subscription-links" style="display:none"></textarea>
 
-  <script src="/js/sub-bootstrap.js"></script>
-  <script src="/js/sub-theme.js"></script>
-  <script src="/js/sub-init.js"></script>
+  <script src="/subs/js/sub-bootstrap.js"></script>
+  <script src="/subs/js/sub-theme.js"></script>
+  <script src="/subs/js/sub-init.js"></script>
 </body>
 </html>
