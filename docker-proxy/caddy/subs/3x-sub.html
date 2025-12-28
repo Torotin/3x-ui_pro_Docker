@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="renderer" content="webkit" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <script>
+      (function () {
+        const rawSubPath = "{{env `URI_SUB_PATH`}}";
+        const rawJsonPath = "{{env `URI_JSON_PATH`}}";
+        const rawDomain = "{{env `WEBDOMAIN`}}";
+        const strip = (s) => String(s || "").replace(/^\/+|\/+$/g, "");
+        const segments = window.location.pathname
+          .replace(/\/+$/, "")
+          .split("/")
+          .filter(Boolean);
+        const params = new URLSearchParams(window.location.search);
+        let sid = params.get("name") || params.get("id") || "";
+        const subNeedle = strip(rawSubPath);
+        const jsonNeedle = strip(rawJsonPath || rawSubPath);
+        const resolveFromNeedle = (needle) => {
+          if (sid || !needle) return;
+          const idx = segments.indexOf(needle);
+          if (idx !== -1 && segments[idx + 1]) {
+            sid = decodeURIComponent(segments[idx + 1]);
+          }
+        };
+        resolveFromNeedle(subNeedle);
+        resolveFromNeedle(jsonNeedle);
+        if (!sid && segments.length) {
+          const last = segments[segments.length - 1];
+          if (last !== subNeedle && last !== jsonNeedle) {
+            sid = decodeURIComponent(last);
+          }
+        }
+        if (!sid) sid = "subscription-id";
+        const subPath = "/" + subNeedle;
+        const jsonPath = "/" + jsonNeedle;
+        const origin = window.location.origin || `https://${rawDomain}`;
+        const subUrl = `${origin}${subPath}/${encodeURIComponent(sid)}`;
+        const subJsonUrl = `${origin}${jsonPath}/${encodeURIComponent(sid)}`;
+        const baseHref = `${subPath}/${encodeURIComponent(sid)}/`;
+        const assetBase = `${baseHref}assets/`;
+        const baseEl = document.createElement("base");
+        baseEl.href = baseHref;
+        document.head.appendChild(baseEl);
+        window.__SUBPAGE = {
+          sid,
+          subPath,
+          jsonPath,
+          subUrl,
+          subJsonUrl,
+          domain: rawDomain,
+          origin,
+          baseHref,
+          assetBase,
+        };
+        if (rawDomain) {
+          document.title = `${rawDomain} – Информация о подписке`;
+        }
+      })();
+    </script>
+    <script>
+      (function () {
+        const ctx = window.__SUBPAGE || {};
+        const sid = ctx.sid || "subscription-id";
+        const assetBaseUrl = new URL(
+          ctx.assetBase ||
+            `${ctx.subPath || ""}/${encodeURIComponent(sid)}/assets/`,
+          window.location.origin
+        );
+
+        const cssFiles = ["ant-design-vue/antd.min.css", "css/custom.min.css"];
+        const jsFiles = [
+          "moment/moment.min.js",
+          "moment/moment-jalali.min.js",
+          "vue/vue.min.js",
+          "ant-design-vue/antd.min.js",
+          "js/util/index.js",
+          "js/util/date-util.js",
+          "qrcode/qrious2.min.js",
+        ];
+
+        const withVer = (file, ver) =>
+          ver ? `${file}?${encodeURIComponent(ver)}` : file;
+        const loadStyle = (file, ver) =>
+          new Promise((resolve, reject) => {
+            const href = new URL(withVer(file, ver), assetBaseUrl).toString();
+            const link = document.createElement("link");
+            link.rel = "preload";
+            link.as = "style";
+            link.href = href;
+            link.onload = () => {
+              link.rel = "stylesheet";
+              resolve();
+            };
+            link.onerror = () =>
+              reject(new Error(`Не удалось загрузить стиль ${file}`));
+            document.head.appendChild(link);
+          });
+        const loadScript = (file, ver) =>
+          new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = new URL(withVer(file, ver), assetBaseUrl).toString();
+            s.defer = true;
+            s.onload = resolve;
+            s.onerror = () =>
+              reject(new Error(`Не удалось загрузить скрипт ${file}`));
+            document.head.appendChild(s);
+          });
+
+        const detectVersion = () => {
+          const params = new URLSearchParams(window.location.search);
+          const fromQuery =
+            params.get("ver") || params.get("v") || params.get("version");
+          if (fromQuery) return String(fromQuery).trim();
+          const fromCtx = ctx.assetVersion || ctx.ver || "";
+          if (fromCtx) return String(fromCtx).trim();
+          return "";
+        };
+
+        window.__SUB_ASSETS_READY = (async () => {
+          const ver = detectVersion();
+          window.__SUB_ASSET_VERSION = ver;
+          window.__SUB_ASSET_BASE = assetBaseUrl.href;
+          for (const css of cssFiles) {
+            await loadStyle(css, ver);
+          }
+          for (const js of jsFiles) {
+            await loadScript(js, ver);
+          }
+          return { ver, assetBase: assetBaseUrl.href };
+        })();
+      })();
+    </script>
+    <style>
+      [v-cloak] {
+        display: none;
+      }
+
+      .loading-mask {
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(
+            circle at 20% 20%,
+            rgba(88, 86, 214, 0.08),
+            transparent 45%
+          ),
+          #0f1118;
+        color: #f0f0f0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.3s ease;
+      }
+
+      .loading-mask.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .loading-box {
+        text-align: center;
+        padding: 18px 22px;
+        border-radius: 12px;
+        background: rgba(30, 32, 44, 0.9);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+        min-width: 240px;
+      }
+
+      .spinner {
+        width: 36px;
+        height: 36px;
+        border: 4px solid rgba(255, 255, 255, 0.2);
+        border-top-color: #9254de;
+        border-radius: 50%;
+        margin: 0 auto 12px;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .loading-error {
+        color: #ff7875;
+        margin-top: 8px;
+        font-size: 14px;
+      }
+
+      .loading-retry {
+        margin-top: 10px;
+        padding: 6px 12px;
+        border: 1px solid #9254de;
+        background: transparent;
+        color: #fff;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      @font-face {
+        font-display: swap;
+        font-family: "Vazirmatn";
+        font-style: normal;
+        font-weight: 400;
+        src: url("assets/Vazirmatn-UI-NL-Regular.woff2") format("woff2");
+        unicode-range: U+0600-06FF, U+200C-200E, U+2010-2011, U+204F, U+2E41,
+          U+FB50-FDFF, U+FE80-FEFC, U+0030-0039;
+      }
+
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Vazirmatn",
+          "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
+          "Helvetica Neue", sans-serif;
+      }
+    </style>
+    <title>{{env `WEBDOMAIN`}} – Информация о подписке</title>
+  </head>
+
+  <body>
+    <div id="loading-mask" class="loading-mask">
+      <div class="loading-box">
+        <div class="spinner" aria-label="Загрузка"></div>
+        <div id="loading-text">Загрузка подписки…</div>
+        <div
+          id="loading-error"
+          class="loading-error"
+          style="display: none"
+        ></div>
+        <button id="loading-retry" class="loading-retry" style="display: none">
+          Повторить
+        </button>
+      </div>
+    </div>
+    <div id="message"></div>
+
+    <a-layout
+      id="app"
+      v-cloak
+      :class="themeSwitcher.currentTheme + ' subscription-page'"
+    >
+      <a-layout-content class="p-2">
+        <a-row type="flex" justify="center" class="mt-2">
+          <a-col :xs="24" :sm="22" :md="18" :lg="14" :xl="12">
+            <a-card hoverable class="subscription-card">
+              <template #title>
+                <a-space>
+                  <span>Информация о подписке</span>
+                  <a-tag v-text="app.sId"></a-tag>
+                </a-space>
+              </template>
+              <template #extra>
+                <a-popover
+                  :overlay-class-name="themeSwitcher.currentTheme"
+                  title="Настройки"
+                  placement="bottomRight"
+                  trigger="click"
+                >
+                  <template #content>
+                    <a-space direction="vertical" :size="10">
+                      <a-theme-switch-login></a-theme-switch-login>
+                      <span>Язык интерфейса</span>
+                      <a-select
+                        ref="selectLang"
+                        class="w-100"
+                        v-model="lang"
+                        @change="LanguageManager.setLanguage(lang)"
+                        :dropdown-class-name="themeSwitcher.currentTheme"
+                      >
+                        <a-select-option
+                          :value="l.value"
+                          label="English"
+                          v-for="l in LanguageManager.supportedLanguages"
+                          :key="l.value"
+                        >
+                          <span
+                            role="img"
+                            :aria-label="l.name"
+                            v-text="l.icon"
+                          ></span>
+                          &nbsp;&nbsp;<span v-text="l.name"></span>
+                        </a-select-option>
+                      </a-select>
+                    </a-space>
+                  </template>
+                  <a-button shape="circle" icon="setting"></a-button>
+                </a-popover>
+              </template>
+
+              <a-form layout="vertical">
+                <a-form-item>
+                  <a-space direction="vertical" align="center">
+                    <a-row
+                      type="flex"
+                      :gutter="[8,8]"
+                      justify="center"
+                      style="width: 100%"
+                    >
+                      <a-col
+                        :xs="24"
+                        :sm="app.subJsonUrl ? 12 : 24"
+                        style="text-align: center"
+                      >
+                        <tr-qr-box class="qr-box">
+                          <a-tag color="purple" class="qr-tag">
+                            <span>Подписка</span>
+                          </a-tag>
+                          <tr-qr-bg class="qr-bg-sub">
+                            <tr-qr-bg-inner class="qr-bg-sub-inner">
+                              <canvas
+                                id="qrcode"
+                                class="qr-cv"
+                                title="Копировать"
+                                @click="copy(app.subUrl)"
+                              ></canvas>
+                            </tr-qr-bg-inner>
+                          </tr-qr-bg>
+                        </tr-qr-box>
+                      </a-col>
+                      <a-col
+                        v-if="app.subJsonUrl"
+                        :xs="24"
+                        :sm="12"
+                        style="text-align: center"
+                      >
+                        <tr-qr-box class="qr-box">
+                          <a-tag color="purple" class="qr-tag">
+                            <span>Подписка Json</span>
+                          </a-tag>
+                          <tr-qr-bg class="qr-bg-sub">
+                            <tr-qr-bg-inner class="qr-bg-sub-inner">
+                              <canvas
+                                id="qrcode-subjson"
+                                class="qr-cv"
+                                title="Копировать"
+                                @click="copy(app.subJsonUrl)"
+                              ></canvas>
+                            </tr-qr-bg-inner>
+                          </tr-qr-bg>
+                        </tr-qr-box>
+                      </a-col>
+                    </a-row>
+                  </a-space>
+                </a-form-item>
+
+                <a-form-item>
+                  <a-collapse :default-active-key="[]">
+                    <a-collapse-panel key="info" header="Информация о подписке">
+                      <a-descriptions bordered :column="1" size="small">
+                        <a-descriptions-item label="ID подписки"
+                          >[[ app.sId ]]</a-descriptions-item
+                        >
+                        <a-descriptions-item label="Статус">
+                          <template v-if="isUnlimited">
+                            <a-tag color="purple">Безлимит</a-tag>
+                          </template>
+                          <template v-else>
+                            <a-tag :color="isActive ? 'green' : 'red'"
+                              >[[ isActive ? 'Активна' : 'Неактивна' ]]</a-tag
+                            >
+                          </template>
+                        </a-descriptions-item>
+                        <a-descriptions-item label="Загружено"
+                          >[[ app.download ]]</a-descriptions-item
+                        >
+                        <a-descriptions-item label="Отправлено"
+                          >[[ app.upload ]]</a-descriptions-item
+                        >
+                        <a-descriptions-item label="Использование"
+                          >[[ app.used ]]</a-descriptions-item
+                        >
+                        <a-descriptions-item label="Общий лимит"
+                          >[[ app.total ]]</a-descriptions-item
+                        >
+                        <a-descriptions-item
+                          v-if="app.totalByte > 0"
+                          label="Остаток"
+                          >[[ app.remained ]]</a-descriptions-item
+                        >
+                        <a-descriptions-item label="Был(а) в сети">
+                          <template v-if="app.lastOnlineMs > 0">
+                            <template v-if="app.datepicker === 'gregorian'">
+                              [[ DateUtil.formatMillis(app.lastOnlineMs) ]]
+                            </template>
+                            <template v-else>
+                              [[
+                              DateUtil.convertToJalalian(moment(app.lastOnlineMs))
+                              ]]
+                            </template>
+                          </template>
+                          <template v-else>
+                            <span>Никогда</span>
+                          </template>
+                        </a-descriptions-item>
+                        <a-descriptions-item label="Срок действия">
+                          <template v-if="app.expireMs === 0">
+                            Без срока
+                          </template>
+                          <template v-else>
+                            <template v-if="app.datepicker === 'gregorian'">
+                              [[ DateUtil.formatMillis(app.expireMs) ]]
+                            </template>
+                            <template v-else>
+                              [[
+                              DateUtil.convertToJalalian(moment(app.expireMs))
+                              ]]
+                            </template>
+                          </template>
+                        </a-descriptions-item>
+                      </a-descriptions>
+                    </a-collapse-panel>
+                  </a-collapse>
+                </a-form-item>
+              </a-form>
+
+              <a-form>
+                <a-form-item>
+                  <a-collapse :default-active-key="[]">
+                    <a-collapse-panel key="info" header="Мануал по подписке">
+                      <a-descriptions bordered :column="1" size="small">
+
+                      </a-descriptions>
+                    </a-collapse-panel>
+                  </a-collapse>
+                </a-form-item>
+              </a-form>
+
+              <br />
+              <a-list bordered>
+                <a-list-item v-for="(link, idx) in links" :key="link">
+                  <div style="width: 100%; text-align: center">
+                    <a-button
+                      type="primary"
+                      :block="isMobile"
+                      @click="copy(link)"
+                      >[[ linkName(link, idx) ]]</a-button
+                    >
+                  </div>
+                </a-list-item>
+              </a-list>
+              <br />
+
+              <a-form layout="vertical">
+                <a-form-item>
+                  <a-row
+                    type="flex"
+                    justify="center"
+                    :gutter="[8,8]"
+                    style="width: 100%"
+                  >
+                    <a-col :xs="24" :sm="12" style="text-align: center">
+                      <a-dropdown :trigger="['click']">
+                        <a-button
+                          icon="android"
+                          :block="isMobile"
+                          :style="{ marginTop: isMobile ? '6px' : 0 }"
+                          size="large"
+                          type="primary"
+                        >
+                          Android <a-icon type="down" />
+                        </a-button>
+                        <a-menu
+                          slot="overlay"
+                          :class="themeSwitcher.currentTheme"
+                        >
+                          <a-menu-item
+                            key="android-v2box"
+                            @click="open('v2box://install-sub?url=' + encodeURIComponent(app.subUrl) + '&name=' + encodeURIComponent(app.sId))"
+                            >V2Box</a-menu-item
+                          >
+                          <a-menu-item
+                            key="android-v2rayng"
+                            @click="open('v2rayng://install-config?url=' + encodeURIComponent(app.subUrl))"
+                            >V2RayNG</a-menu-item
+                          >
+                          <a-menu-item
+                            key="android-singbox"
+                            @click="copy(app.subUrl)"
+                            >Sing-box</a-menu-item
+                          >
+                          <a-menu-item
+                            key="android-v2raytun"
+                            @click="copy(app.subUrl)"
+                            >V2RayTun</a-menu-item
+                          >
+                          <a-menu-item
+                            key="android-npvtunnel"
+                            @click="copy(app.subUrl)"
+                            >NPV Tunnel</a-menu-item
+                          >
+                          <a-menu-item
+                            key="android-happ"
+                            @click="open('happ://add/' + encodeURIComponent(app.subUrl))"
+                            >Happ</a-menu-item
+                          >
+                        </a-menu>
+                      </a-dropdown>
+                    </a-col>
+                    <a-col :xs="24" :sm="12" style="text-align: center">
+                      <a-dropdown :trigger="['click']">
+                        <a-button
+                          icon="apple"
+                          :block="isMobile"
+                          :style="{ marginTop: isMobile ? '6px' : 0 }"
+                          size="large"
+                          type="primary"
+                        >
+                          iOS <a-icon type="down" />
+                        </a-button>
+                        <a-menu
+                          slot="overlay"
+                          :class="themeSwitcher.currentTheme"
+                        >
+                          <a-menu-item
+                            key="ios-shadowrocket"
+                            @click="open(shadowrocketUrl)"
+                            >Shadowrocket</a-menu-item
+                          >
+                          <a-menu-item key="ios-v2box" @click="open(v2boxUrl)"
+                            >V2Box</a-menu-item
+                          >
+                          <a-menu-item
+                            key="ios-streisand"
+                            @click="open(streisandUrl)"
+                            >Streisand</a-menu-item
+                          >
+                          <a-menu-item
+                            key="ios-v2raytun"
+                            @click="copy(v2raytunUrl)"
+                            >V2RayTun</a-menu-item
+                          >
+                          <a-menu-item
+                            key="ios-npvtunnel"
+                            @click="copy(npvtunUrl)"
+                            >NPV Tunnel
+                          </a-menu-item>
+                          <a-menu-item key="ios-happ" @click="open(happUrl)"
+                            >Happ</a-menu-item
+                          >
+                        </a-menu>
+                      </a-dropdown>
+                    </a-col>
+                  </a-row>
+                </a-form-item>
+              </a-form>
+            </a-card>
+          </a-col>
+        </a-row>
+      </a-layout-content>
+    </a-layout>
+
+    <template
+      id="subscription-data"
+      data-sid=""
+      data-sub-url=""
+      data-subjson-url=""
+      data-download=""
+      data-upload=""
+      data-used=""
+      data-total=""
+      data-remained=""
+      data-expire="0"
+      data-lastonline="0"
+      data-downloadbyte="0"
+      data-uploadbyte="0"
+      data-totalbyte="0"
+      data-datepicker="gregorian"
+    ></template>
+    <textarea id="subscription-links" style="display: none"></textarea>
+
+    <script>
+      window.__SUB_THEME_READY = (
+        window.__SUB_ASSETS_READY || Promise.resolve()
+      )
+        .then(() => {
+          function createThemeSwitcher() {
+            const isDarkTheme = localStorage.getItem("dark-mode") === "true";
+            const isUltra =
+              localStorage.getItem("isUltraDarkThemeEnabled") === "true";
+            if (isUltra) {
+              document.documentElement.setAttribute("data-theme", "ultra-dark");
+            }
+            const theme = isDarkTheme ? "dark" : "light";
+            document.querySelector("body").setAttribute("class", theme);
+            return {
+              animationsOff() {
+                document.documentElement.setAttribute(
+                  "data-theme-animations",
+                  "off"
+                );
+                const themeAnimations = document.querySelector("#change-theme");
+                themeAnimations.addEventListener("mouseleave", () => {
+                  document.documentElement.removeAttribute(
+                    "data-theme-animations"
+                  );
+                });
+                themeAnimations.addEventListener("touchend", () => {
+                  document.documentElement.removeAttribute(
+                    "data-theme-animations"
+                  );
+                });
+              },
+              animationsOffUltra() {
+                document.documentElement.setAttribute(
+                  "data-theme-animations",
+                  "off"
+                );
+                const themeAnimationsUltra = document.querySelector(
+                  "#change-theme-ultra"
+                );
+                themeAnimationsUltra.addEventListener("mouseleave", () => {
+                  document.documentElement.removeAttribute(
+                    "data-theme-animations"
+                  );
+                });
+                themeAnimationsUltra.addEventListener("touchend", () => {
+                  document.documentElement.removeAttribute(
+                    "data-theme-animations"
+                  );
+                });
+              },
+              isDarkTheme,
+              isUltra,
+              get currentTheme() {
+                return this.isDarkTheme ? "dark" : "light";
+              },
+              toggleTheme() {
+                this.isDarkTheme = !this.isDarkTheme;
+                localStorage.setItem("dark-mode", this.isDarkTheme);
+                document
+                  .querySelector("body")
+                  .setAttribute("class", this.isDarkTheme ? "dark" : "light");
+                document.getElementById("message").className =
+                  themeSwitcher.currentTheme;
+              },
+              toggleUltra() {
+                this.isUltra = !this.isUltra;
+                if (this.isUltra) {
+                  document.documentElement.setAttribute(
+                    "data-theme",
+                    "ultra-dark"
+                  );
+                } else {
+                  document.documentElement.removeAttribute("data-theme");
+                }
+                localStorage.setItem(
+                  "isUltraDarkThemeEnabled",
+                  this.isUltra.toString()
+                );
+              },
+            };
+          }
+          const themeSwitcher = (window.themeSwitcher = createThemeSwitcher());
+          Vue.component("a-theme-switch", {
+            template: `
+<template>
+  <a-menu :theme="themeSwitcher.currentTheme" mode="inline" selected-keys="">
+    <a-sub-menu>
+      <span slot="title">
+        <a-icon type="bulb" :theme="themeSwitcher.isDarkTheme ? 'filled' : 'outlined'"></a-icon>
+        <span>Тема</span>
+      </span>
+      <a-menu-item id="change-theme" class="ant-menu-theme-switch" @mousedown="themeSwitcher.animationsOff()">
+        <span>Темная</span>
+        <a-switch :style="{ marginLeft: '2px' }" size="small" :default-checked="themeSwitcher.isDarkTheme"
+          @change="themeSwitcher.toggleTheme()"></a-switch>
+      </a-menu-item>
+      <a-menu-item id="change-theme-ultra" v-if="themeSwitcher.isDarkTheme" class="ant-menu-theme-switch"
+        @mousedown="themeSwitcher.animationsOffUltra()">
+        <span>Очень темная</span>
+        <a-checkbox :style="{ marginLeft: '2px' }" :checked="themeSwitcher.isUltra"
+          @click="themeSwitcher.toggleUltra()"></a-checkbox>
+      </a-menu-item>
+    </a-sub-menu>
+  </a-menu>
+</template>
+`,
+            data: () => ({
+              themeSwitcher,
+            }),
+            mounted() {
+              this.$message.config({
+                getContainer: () => document.getElementById("message"),
+              });
+              document.getElementById("message").className =
+                themeSwitcher.currentTheme;
+            },
+          });
+          Vue.component("a-theme-switch-login", {
+            template: `
+<template>
+  <a-space @mousedown="themeSwitcher.animationsOff()" id="change-theme" direction="vertical" :size="10" :style="{ width: '100%' }">
+    <a-space direction="horizontal" size="small">
+      <a-switch size="small" :default-checked="themeSwitcher.isDarkTheme" @change="themeSwitcher.toggleTheme()"></a-switch>
+      <span>Темная</span>
+    </a-space>
+    <a-space v-if="themeSwitcher.isDarkTheme" direction="horizontal" size="small">
+      <a-checkbox :checked="themeSwitcher.isUltra" @click="themeSwitcher.toggleUltra()"></a-checkbox>
+      <span>Очень темная</span>
+    </a-space>
+  </a-space>
+</template>
+`,
+            data: () => ({
+              themeSwitcher,
+            }),
+            mounted() {
+              this.$message.config({
+                getContainer: () => document.getElementById("message"),
+              });
+              document.getElementById("message").className =
+                themeSwitcher.currentTheme;
+            },
+          });
+          return themeSwitcher;
+        })
+        .catch((err) => {
+          console.error("Не удалось инициализировать переключатель темы", err);
+        });
+    </script>
+
+    <script>
+      (async function () {
+        const ctx = window.__SUBPAGE || {};
+        const assetsPromise =
+          window.__SUB_ASSETS_READY ||
+          Promise.resolve({ ver: "", assetBase: ctx.assetBase || "assets/" });
+        const tpl = document.getElementById("subscription-data");
+        const textarea = document.getElementById("subscription-links");
+
+        const toInt = (v) => {
+          const n = parseInt(v || "0", 10);
+          return Number.isFinite(n) ? n : 0;
+        };
+        const fmtBytes = (bytes) => {
+          const units = ["B", "KB", "MB", "GB", "TB"];
+          let b = bytes;
+          let u = 0;
+          while (b >= 1024 && u < units.length - 1) {
+            b /= 1024;
+            u++;
+          }
+          return b === 0 ? "" : `${b.toFixed(u ? 2 : 0)}${units[u]}`;
+        };
+        const parseUserInfo = (headerVal) => {
+          if (!headerVal) return null;
+          const map = {};
+          headerVal.split(";").forEach((pair) => {
+            const [k, v] = pair.split("=").map((s) => s.trim());
+            if (k) map[k.toLowerCase()] = v;
+          });
+          const upload = toInt(map.upload);
+          const download = toInt(map.download);
+          const total = toInt(map.total);
+          const expire = toInt(map.expire);
+          return { upload, download, total, expire };
+        };
+
+        const mask = document.getElementById("loading-mask");
+        const loadingText = document.getElementById("loading-text");
+        const loadingError = document.getElementById("loading-error");
+        const loadingRetry = document.getElementById("loading-retry");
+
+        const showLoading = (msg) => {
+          if (!mask) return;
+          mask.classList.remove("hidden");
+          if (loadingText)
+            loadingText.textContent = msg || "Загрузка подписки…";
+          if (loadingError) loadingError.style.display = "none";
+          if (loadingRetry) loadingRetry.style.display = "none";
+        };
+        const showError = (msg) => {
+          if (!mask) return;
+          mask.classList.remove("hidden");
+          if (loadingError) {
+            loadingError.textContent = msg;
+            loadingError.style.display = "block";
+          }
+          if (loadingRetry) loadingRetry.style.display = "inline-block";
+        };
+        const hideLoading = () => {
+          if (mask) {
+            mask.classList.add("hidden");
+            setTimeout(() => (mask.style.display = "none"), 350);
+          }
+        };
+
+        if (loadingRetry) {
+          loadingRetry.onclick = () => window.location.reload();
+        }
+
+        showLoading("Загрузка подписки…");
+
+        if (tpl) {
+          tpl.setAttribute("data-sid", ctx.sid || "");
+          tpl.setAttribute("data-sub-url", ctx.subUrl || "");
+          tpl.setAttribute("data-subjson-url", ctx.subJsonUrl || "");
+          tpl.setAttribute("data-download", "—");
+          tpl.setAttribute("data-upload", "—");
+          tpl.setAttribute("data-used", "—");
+          tpl.setAttribute("data-total", "—");
+          tpl.setAttribute("data-remained", "—");
+          tpl.setAttribute("data-expire", "0");
+          tpl.setAttribute("data-lastonline", "0");
+          tpl.setAttribute("data-downloadbyte", "0");
+          tpl.setAttribute("data-uploadbyte", "0");
+          tpl.setAttribute("data-totalbyte", "0");
+          tpl.setAttribute("data-datepicker", "gregorian");
+        }
+
+        if (textarea) {
+          textarea.value = "";
+          if (ctx.subUrl) {
+            try {
+              const res = await fetch(ctx.subUrl, {
+                headers: { Accept: "text/plain" },
+              });
+              if (!res.ok) {
+                throw new Error(`${res.status} ${res.statusText}`);
+              }
+              const infoHeader =
+                res.headers.get("subscription-userinfo") ||
+                res.headers.get("subcription-userinfo") ||
+                res.headers.get("x-subscription-userinfo");
+              const info = parseUserInfo(infoHeader);
+              if (info && tpl) {
+                const usedByte = info.upload + info.download;
+                const remained =
+                  info.total > 0 ? Math.max(info.total - usedByte, 0) : 0;
+                tpl.setAttribute("data-downloadbyte", String(info.download));
+                tpl.setAttribute("data-uploadbyte", String(info.upload));
+                tpl.setAttribute("data-totalbyte", String(info.total));
+                tpl.setAttribute("data-expire", String(info.expire || 0));
+                tpl.setAttribute(
+                  "data-download",
+                  fmtBytes(info.download) || "0B"
+                );
+                tpl.setAttribute("data-upload", fmtBytes(info.upload) || "0B");
+                tpl.setAttribute("data-used", fmtBytes(usedByte) || "0B");
+                tpl.setAttribute(
+                  "data-total",
+                  info.total > 0 ? fmtBytes(info.total) : "Без лимита"
+                );
+                tpl.setAttribute(
+                  "data-remained",
+                  info.total > 0 ? fmtBytes(remained) : ""
+                );
+              }
+              const base64Body = (await res.text()).replace(/\s+/g, "");
+              const decoded = atob(base64Body);
+              textarea.value = decoded.trim();
+            } catch (err) {
+              console.error("Не удалось загрузить подписку", err);
+              showError(`Ошибка загрузки подписки: ${err.message || err}`);
+            }
+          }
+        }
+
+        const loadScript = (src) =>
+          new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = src;
+            s.onload = resolve;
+            s.onerror = () => reject(new Error(`Не удалось загрузить ${src}`));
+            document.body.appendChild(s);
+          });
+
+        const assets = await assetsPromise.catch((err) => {
+          console.error("Загрузка ассетов не удалась, пробуем без версии", err);
+          return { ver: "", assetBase: ctx.assetBase || "assets/" };
+        });
+        await (window.__SUB_THEME_READY || assetsPromise).catch(() => {});
+        const assetBaseUrl = new URL(
+          assets.assetBase || ctx.assetBase || "assets/",
+          window.location.origin
+        );
+        const withVer = (file) =>
+          assets.ver ? `${file}?${encodeURIComponent(assets.ver)}` : file;
+        const subscriptionScript = new URL(
+          withVer("js/subscription.js"),
+          assetBaseUrl
+        ).toString();
+        try {
+          await loadScript(subscriptionScript);
+          hideLoading();
+        } catch (err) {
+          console.error(err);
+          showError(`Ошибка загрузки скрипта: ${err.message || err}`);
+        }
+      })();
+    </script>
+  </body>
+</html>
