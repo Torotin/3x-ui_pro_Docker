@@ -35,10 +35,32 @@ import *.caddy
 		crowdsec
 		appsec
 
-		root * /srv/subs
-		# SPA-фоллбек: если файла нет — отдать /index.html с 200
-		try_files {path} /index.html
+		# sub2sing API напрямую
+		handle_path /{$URI_SUB2SING}/convert* {
+			reverse_proxy http://sub2sing:8080
+		}
+
+		# JSON-путь: браузерам отдаём кастомную страницу, остальным — прокси в 3x-ui
+		@json_html {
+			path {$URI_JSON_PATH}* /{$URI_JSON_PATH}*
+			header Accept *text/html*
+		}
+		@json_all {
+			path {$URI_JSON_PATH}* /{$URI_JSON_PATH}*
+		}
+
+		handle @json_html {
+			root * /srv/subs
+			# Сначала отдаём запрошенный файл, затем fallback на test-backend.html, далее index.html
+			try_files {path} /3x-sub.html /sub.html /test-backend.html
+			templates
+			file_server
+		}
+
+		handle @json_all {
+			reverse_proxy http://3x-ui:{$PORT_LOCAL_VLESS_SUBSCRIBE}
+		}
+
 		templates
-		file_server
 	}
 }
