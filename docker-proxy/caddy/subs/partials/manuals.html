@@ -1,0 +1,46 @@
+<a-collapse :default-active-key="[]">
+    <a-collapse-panel key="manual" header="Инструкции по настройке">
+        <p class="mb-2">Примеры использования всплывающих компонентов Ant Design Vue:</p>
+
+        <div class="mb-3">
+            <strong>1) Popover (inline)</strong><br />
+            <a-popover trigger="click" title="Шаг 1: Установка">
+                <template #content>
+                    <p class="mb-1">Скачайте приложение и вставьте ссылку подписки.</p>
+                    <p class="mb-0">Нажмите «Ок», чтобы продолжить.</p>
+                </template>
+                <a-button size="small" type="link">Показать popover</a-button>
+            </a-popover>
+        </div>
+
+        <div class="mb-3">
+            <strong>2) Modal (центральное окно)</strong><br />
+            <a-button size="small" type="primary" @click="showManualModal = true">Открыть модал</a-button>
+            <a-modal v-model="showManualModal" title="Полная инструкция" :footer="null">
+                <a-collapse accordion>
+                    <a-collapse-panel key="m1" header="Шаг 1: Скачать клиент">
+                        Откройте App Store/Google Play и установите приложение.
+                    </a-collapse-panel>
+                    <a-collapse-panel key="m2" header="Шаг 2: Добавить подписку">
+                        Скопируйте ссылку подписки и вставьте в клиент.
+                    </a-collapse-panel>
+                </a-collapse>
+            </a-modal>
+        </div>
+
+        <div>
+            <strong>3) Drawer (выдвижная панель)</strong><br />
+            <a-button size="small" @click="showManualDrawer = true">Открыть drawer</a-button>
+            <a-drawer
+              title="Справка"
+              placement="right"
+              :visible="showManualDrawer"
+              :width="360"
+              @close="showManualDrawer = false">
+                <p class="mb-1">• Проверяйте актуальность ссылки.</p>
+                <p class="mb-1">• Для iOS используйте Shadowrocket/V2Box.</p>
+                <p class="mb-0">• Для Android — V2RayNG/Sing-box.</p>
+            </a-drawer>
+        </div>
+    </a-collapse-panel>
+</a-collapse>
