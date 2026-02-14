@@ -1,39 +1,79 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru" data-bs-theme="dark">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>sub2sing-box demo</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" crossorigin="anonymous">
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      crossorigin="anonymous"
+    />
     <style>
-      body { background-color: #1c1d24; color: #f8f9fa; }
-      textarea { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
-      code { font-size: .85rem; }
+      body {
+        background-color: #1c1d24;
+        color: #f8f9fa;
+      }
+      textarea {
+        font-family: "JetBrains Mono", "SFMono-Regular", Consolas,
+          "Liberation Mono", Menlo, monospace;
+      }
+      code {
+        font-size: 0.85rem;
+      }
+      .code-box {
+        white-space: pre-wrap;
+      }
+      .btn-wrap {
+        flex-wrap: wrap;
+      }
     </style>
   </head>
   <body class="py-5">
     <main class="container-lg">
       <section class="mb-4">
         <h1 class="h3 mb-2">Проверка вызова sub2sing-box</h1>
-        <p class="text-secondary mb-0">Endpoint: <span class="badge bg-info" id="badge-endpoint"></span></p>
+        <p class="text-secondary mb-1">
+          Endpoint: <span class="badge bg-info" id="badge-endpoint"></span>
+        </p>
+        <p class="text-secondary small mb-0">
+          Передаем payload в URL-safe base64 без знаков <code>=</code>; запрос
+          отправляем на абсолютный URL (через текущий домен).
+        </p>
       </section>
 
       <section class="mb-5">
         <h2 class="h5 mb-3">1. Конфигурация запроса</h2>
-        <textarea id="payload-input" class="form-control bg-dark text-light mb-3" rows="12"></textarea>
+        <textarea
+          id="payload-input"
+          class="form-control bg-dark text-light mb-3"
+          rows="12"
+        ></textarea>
         <p class="text-secondary small" id="payload-source">—</p>
         <details class="mb-3">
           <summary class="text-secondary">Ответ источника payload</summary>
           <div class="card bg-dark border-secondary mt-2">
             <div class="card-body small">
-              <p class="mb-1">Статус: <span id="payload-source-status">—</span></p>
-              <pre id="payload-source-body" class="bg-black text-white p-3 rounded" style="min-height: 6rem; white-space: pre-wrap;">—</pre>
+              <p class="mb-1">
+                Статус: <span id="payload-source-status">—</span>
+              </p>
+              <pre
+                id="payload-source-body"
+                class="bg-black text-white p-3 rounded code-box"
+                style="min-height: 6rem"
+              >
+—</pre
+              >
             </div>
           </div>
         </details>
-        <div class="d-flex gap-3">
-          <button id="run-demo" class="btn btn-primary">Выполнить запрос</button>
-          <button id="reset-payload" class="btn btn-outline-secondary">Вернуть пример</button>
+        <div class="d-flex gap-2 btn-wrap mb-2">
+          <button id="run-demo" class="btn btn-primary">
+            Выполнить запрос
+          </button>
+          <button id="reset-payload" class="btn btn-outline-secondary">
+            Вернуть пример
+          </button>
         </div>
         <div id="payload-error" class="text-danger small mt-2 d-none"></div>
       </section>
@@ -42,9 +82,13 @@
         <h2 class="h5 mb-3">2. Отправленный запрос</h2>
         <div class="card bg-dark border-secondary">
           <div class="card-body small">
-            <p class="mb-1">Относительный URL: <code id="request-relative">—</code></p>
+            <p class="mb-1">
+              Относительный URL: <code id="request-relative">—</code>
+            </p>
             <p class="mb-1">Полный URL: <code id="request-absolute">—</code></p>
-            <p class="mb-0">Base64 payload: <code id="request-base64">—</code></p>
+            <p class="mb-0">
+              Base64 payload: <code id="request-base64">—</code>
+            </p>
           </div>
         </div>
       </section>
@@ -53,12 +97,30 @@
         <h2 class="h5 mb-3">3. Ответ сервера</h2>
         <div class="card bg-dark border-secondary">
           <div class="card-body small">
+            <p class="mb-2">
+              Статус: <span id="response-status">—</span> · Время:
+              <span id="response-latency">—</span>
+            </p>
             <div class="mt-3">
               <strong>Request debug</strong>
-              <pre id="debug-log" class="bg-black text-warning p-3 rounded" style="min-height: 7rem; white-space: pre-wrap;">—</pre>
+              <pre
+                id="debug-log"
+                class="bg-black text-warning p-3 rounded code-box"
+                style="min-height: 7rem"
+              >
+—</pre
+              >
             </div>
-            <p class="mb-2">Статус: <span id="response-status">—</span> · Время: <span id="response-latency">—</span></p>
-            <pre id="response-body" class="bg-black text-white p-3 rounded" style="min-height: 9rem;">—</pre>
+            <div class="mt-3">
+              <strong>Response body</strong>
+              <pre
+                id="response-body"
+                class="bg-black text-white p-3 rounded code-box"
+                style="min-height: 9rem"
+              >
+—</pre
+              >
+            </div>
           </div>
         </div>
       </section>
@@ -66,27 +128,36 @@
 
     <script>
       (function () {
-        const URI_SUB_PATH_RAW = '{{env `URI_SUB_PATH`}}';
-        const URI_JSON_PATH_RAW = '{{env `URI_JSON_PATH`}}';
-        const URI_SUB2SING_RAW = '{{env `URI_SUB2SING`}}';
-        const WEBDOMAIN = '{{env `WEBDOMAIN`}}';
+      const URI_SUB_PATH_RAW = "{{env `URI_SUB_PATH`}}";
+      const URI_SUB2SING_RAW = "{{env `URI_SUB2SING`}}";
+      const WEBDOMAIN = "{{env `WEBDOMAIN`}}";
+      const DEFAULT_TEMPLATE = "https://github.com/legiz-ru/sb-rule-sets/raw/main/.github/sub2sing-box/ru-bundle-refilter.json";
 
-        const norm = s => '/' + String(s || '').replace(/^\/|\/$/g, '');
-        const strip = s => String(s || '').replace(/^\/|\/$/g, '');
+        const strip = (s) => String(s || "").replace(/^\/+|\/+$/g, "");
+        const norm = (s) => "/" + strip(s || "");
+        const safeOrigin = () =>
+          window.location.origin || (WEBDOMAIN ? `https://${WEBDOMAIN}` : "");
 
-        const URI_SUB_PATH = norm(URI_SUB_PATH_RAW);
-        const URI_JSON_PATH = norm(URI_JSON_PATH_RAW || URI_SUB_PATH_RAW);
-        const URI_SUB2SING = norm(URI_SUB2SING_RAW || URI_SUB_PATH_RAW);
-        const origin = window.location.origin || `https://${WEBDOMAIN}`;
+      const URI_SUB_PATH = norm(URI_SUB_PATH_RAW);
+      const URI_SUB2SING = norm(URI_SUB2SING_RAW);
+
+        const origin = safeOrigin();
         const endpointRelative = `${URI_SUB2SING}/convert`;
+        const endpointFull = origin
+          ? `${origin}${endpointRelative}`
+          : endpointRelative;
 
-        document.getElementById('badge-endpoint').textContent = endpointRelative;
+        document.getElementById("badge-endpoint").textContent =
+          endpointRelative;
 
-        const segments = window.location.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-        const fromQuery = new URLSearchParams(window.location.search).get('name');
-        let subscriptionId = fromQuery ? decodeURIComponent(fromQuery) : '';
+        const params = new URLSearchParams(window.location.search);
+        const segments = window.location.pathname
+          .replace(/\/+$/, "")
+          .split("/")
+          .filter(Boolean);
+        let subscriptionId = params.get("name") || params.get("id") || "";
 
-        const resolveFromNeedle = needle => {
+        const resolveFromNeedle = (needle) => {
           if (subscriptionId || !needle) return;
           const idx = segments.indexOf(needle);
           if (idx !== -1 && segments[idx + 1]) {
@@ -94,86 +165,115 @@
           }
         };
 
-        resolveFromNeedle(strip(URI_JSON_PATH));
-        resolveFromNeedle(strip(URI_SUB_PATH));
+      resolveFromNeedle(strip(URI_SUB_PATH));
 
-        if (!subscriptionId && segments.length) {
+        const isOnSubPath = window.location.pathname.startsWith(URI_SUB_PATH);
+        if (!subscriptionId && isOnSubPath && segments.length) {
           const last = segments[segments.length - 1];
-          if (last !== strip(URI_JSON_PATH) && last !== strip(URI_SUB_PATH) && last !== strip(URI_SUB2SING)) {
+          if (![
+            strip(URI_SUB_PATH),
+            strip(URI_SUB2SING),
+          ].includes(last)) {
             subscriptionId = decodeURIComponent(last);
           }
         }
+        if (!subscriptionId) subscriptionId = "subscription-id";
 
-        if (!subscriptionId) {
-          subscriptionId = 'subscription-uri-here';
-        }
+      const subscriptionUrl = `${origin}${URI_SUB_PATH}/${encodeURIComponent(
+          subscriptionId
+        )}`;
 
-        const subscriptionUrl = `${origin}${URI_SUB_PATH}/${encodeURIComponent(subscriptionId)}`;
-        const subJsonUrl = `${origin}${URI_JSON_PATH}/${encodeURIComponent(subscriptionId)}`;
-
-        const payloadInput = document.getElementById('payload-input');
-        const errorBox = document.getElementById('payload-error');
-        const requestRelative = document.getElementById('request-relative');
-        const requestAbsolute = document.getElementById('request-absolute');
-        const requestBase64 = document.getElementById('request-base64');
-        const responseStatus = document.getElementById('response-status');
-        const responseLatency = document.getElementById('response-latency');
-        const responseBody = document.getElementById('response-body');
-        const debugLog = document.getElementById('debug-log');
-        const payloadSource = document.getElementById('payload-source');
-        const payloadSourceStatus = document.getElementById('payload-source-status');
-        const payloadSourceBody = document.getElementById('payload-source-body');
-        const runButton = document.getElementById('run-demo');
-        const resetButton = document.getElementById('reset-payload');
+        const payloadInput = document.getElementById("payload-input");
+        const errorBox = document.getElementById("payload-error");
+        const requestRelative = document.getElementById("request-relative");
+        const requestAbsolute = document.getElementById("request-absolute");
+        const requestBase64 = document.getElementById("request-base64");
+        const responseStatus = document.getElementById("response-status");
+        const responseLatency = document.getElementById("response-latency");
+        const responseBody = document.getElementById("response-body");
+        const debugLog = document.getElementById("debug-log");
+        const payloadSource = document.getElementById("payload-source");
+        const payloadSourceStatus = document.getElementById(
+          "payload-source-status"
+        );
+        const payloadSourceBody = document.getElementById(
+          "payload-source-body"
+        );
+        const runButton = document.getElementById("run-demo");
+        const resetButton = document.getElementById("reset-payload");
 
         let payloadSourceUrl = subscriptionUrl;
         let payloadSourceText = `Источник payload: SUB ${subscriptionUrl}`;
 
-        const defaultPayload = () => ({
-          subscription: [payloadSourceUrl],
-          proxy: [],
-          delete: '',
-          template: '',
-          rename: {},
-          'group-type': 'selector',
-          sort: 'tag',
-          'sort-type': 'asc'
+        const cleanArr = (arr) =>
+          Array.isArray(arr)
+            ? arr.map((v) => String(v || "").trim()).filter(Boolean)
+            : [];
+
+        const buildPayload = (options = {}) => ({
+          subscription: cleanArr(options.subscription || [payloadSourceUrl]),
+          proxy: cleanArr(options.proxy),
+          delete: options.delete ?? "",
+          template: options.template ?? DEFAULT_TEMPLATE,
+          rename:
+            options.rename && typeof options.rename === "object"
+              ? options.rename
+              : {},
+          "group-type": options["group-type"] ?? "selector",
+          sort: options.sort ?? "tag",
+          "sort-type": options["sort-type"] ?? "asc",
         });
+
+        const defaultPayload = () => buildPayload();
 
         function loadDefaultPayload() {
           payloadInput.value = JSON.stringify(defaultPayload(), null, 2);
-          errorBox.classList.add('d-none');
+          errorBox.classList.add("d-none");
           payloadSource.textContent = payloadSourceText;
         }
 
         function toBase64Url(str) {
           return btoa(str)
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_');
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
         }
 
         async function runDemo() {
-          errorBox.classList.add('d-none');
-          let body;
+          errorBox.classList.add("d-none");
+          let parsed;
           try {
-            body = JSON.parse(payloadInput.value);
+            parsed = JSON.parse(payloadInput.value);
           } catch (err) {
             errorBox.textContent = `Некорректный JSON: ${err.message}`;
-            errorBox.classList.remove('d-none');
+            errorBox.classList.remove("d-none");
             return;
           }
 
-          const payloadString = JSON.stringify(body);
+          const normalized = buildPayload(parsed);
+          const hasSubs = normalized.subscription.length > 0;
+          const hasProxy = normalized.proxy.length > 0;
+          if (!hasSubs && !hasProxy) {
+            errorBox.textContent =
+              "Нужно указать хотя бы одну ссылку в subscription или proxy.";
+            errorBox.classList.remove("d-none");
+            return;
+          }
+
+          const payloadString = JSON.stringify(normalized);
           const payloadBase64 = toBase64Url(payloadString);
-          const relativeUrl = `${endpointRelative}?data=${encodeURIComponent(payloadBase64)}`;
-          const absoluteUrl = `${origin}${relativeUrl}`;
-          const headers = { Accept: 'application/json' };
+          const relativeUrl = `${endpointRelative}?data=${encodeURIComponent(
+            payloadBase64
+          )}`;
+          const absoluteUrl = `${endpointFull}?data=${encodeURIComponent(
+            payloadBase64
+          )}`;
+          const headers = { Accept: "application/json" };
 
           requestRelative.textContent = relativeUrl;
           requestAbsolute.textContent = absoluteUrl;
           requestBase64.textContent = payloadBase64;
-          debugLog.textContent =
-`Method: GET
+          debugLog.textContent = `Method: GET
 Accept: ${headers.Accept}
 Relative URL: ${relativeUrl}
 Absolute URL: ${absoluteUrl}
@@ -181,22 +281,24 @@ Decoded JSON:
 ${payloadString}`;
 
           runButton.disabled = true;
-          responseStatus.textContent = 'запрос…';
-          responseLatency.textContent = '—';
-          responseBody.textContent = '—';
+          responseStatus.textContent = "запрос…";
+          responseLatency.textContent = "—";
+          responseBody.textContent = "—";
 
           const started = performance.now();
           try {
-            const res = await fetch(relativeUrl, { headers });
+            const res = await fetch(absoluteUrl, { headers });
             const duration = performance.now() - started;
             const text = await res.text();
 
-            responseStatus.textContent = `${res.status} ${res.statusText || ''}`.trim();
+            responseStatus.textContent = `${res.status} ${
+              res.statusText || ""
+            }`.trim();
             responseLatency.textContent = `${duration.toFixed(1)} ms`;
-            responseBody.textContent = text || '(пустой ответ)';
+            responseBody.textContent = text || "(пустой ответ)";
           } catch (err) {
-            responseStatus.textContent = 'ошибка';
-            responseLatency.textContent = '—';
+            responseStatus.textContent = "ошибка";
+            responseLatency.textContent = "—";
             responseBody.textContent = String(err);
             debugLog.textContent += `\n\nFetch error: ${err}`;
           } finally {
@@ -205,15 +307,20 @@ ${payloadString}`;
         }
 
         async function initPayloadSource() {
-          const setSourcePreview = (statusText, bodyText) => {
-            payloadSourceStatus.textContent = statusText;
-            payloadSourceBody.textContent = bodyText;
-          };
+        const setSourcePreview = (statusText, bodyText) => {
+          payloadSourceStatus.textContent = statusText;
+          payloadSourceBody.textContent = bodyText;
+        };
 
-          setSourcePreview('—', '—');
+        setSourcePreview("—", "—");
+        payloadSourceUrl = subscriptionUrl;
+        payloadSourceText = `Источник payload: SUB ${subscriptionUrl}`;
+        loadDefaultPayload();
 
-          try {
-            const res = await fetch(subJsonUrl, { headers: { Accept: 'application/json' } });
+        try {
+          const res = await fetch(subscriptionUrl, {
+            headers: { Accept: "text/plain" },
+          });
             if (res.ok) {
               const text = await res.text();
               let parsed;
@@ -223,38 +330,32 @@ ${payloadString}`;
                 parsed = null;
               }
 
-              if (parsed) {
-                payloadSourceUrl = subJsonUrl;
-                payloadSourceText = `Источник payload: JSON ${subJsonUrl} (200, распарсили)`;
-                payloadInput.value = JSON.stringify(parsed, null, 2);
-              } else {
-                payloadSourceUrl = subscriptionUrl;
-                payloadSourceText = `JSON ${subJsonUrl} (200), но не JSON — используем SUB`;
-                payloadInput.value = JSON.stringify(defaultPayload(), null, 2);
-              }
+            payloadSourceText = parsed
+              ? `SUB ${subscriptionUrl} (200, распарсили как JSON — нетипичный формат)`
+              : `SUB ${subscriptionUrl} (200)`;
 
-              setSourcePreview(`${res.status} ${res.statusText || ''}`, text || '(пусто)');
-              errorBox.classList.add('d-none');
-              payloadSource.textContent = payloadSourceText;
-              return;
+            setSourcePreview(
+              `${res.status} ${res.statusText || ""}`,
+              text || "(пусто)"
+            );
+          } else {
+              payloadSourceText = `SUB недоступен (${res.status})`;
+              setSourcePreview(
+                `${res.status} ${res.statusText || ""}`,
+                "(не прочитано)"
+              );
             }
-
-            payloadSourceText = `JSON недоступен (${res.status}), используем SUB ${subscriptionUrl}`;
-            setSourcePreview(`${res.status} ${res.statusText || ''}`, '(не прочитано)');
           } catch (e) {
-            payloadSourceText = `JSON недоступен (ошибка ${e}), используем SUB ${subscriptionUrl}`;
-            setSourcePreview('fetch error', String(e));
+            payloadSourceText = `SUB недоступен (ошибка ${e})`;
+            setSourcePreview("fetch error", String(e));
           }
 
-          payloadSourceUrl = subscriptionUrl;
-          payloadInput.value = JSON.stringify(defaultPayload(), null, 2);
-          errorBox.classList.add('d-none');
+          errorBox.classList.add("d-none");
           payloadSource.textContent = payloadSourceText;
-          setSourcePreview('SUB fallback', 'Источник: подписка SUB');
         }
 
-        runButton.addEventListener('click', runDemo);
-        resetButton.addEventListener('click', loadDefaultPayload);
+        runButton.addEventListener("click", runDemo);
+        resetButton.addEventListener("click", loadDefaultPayload);
         initPayloadSource();
       })();
     </script>

@@ -3,10 +3,15 @@ services:
     image: blacklabelops/logrotate:1.3
     container_name: logrotate
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       TZ: ${TZ}
-      # cron: каждые 5 минут
-      LOGROTATE_CRONSCHEDULE: "*/5 * * * *"
+      # cron: каждый час
+      LOGROTATE_CRONSCHEDULE: "0 0 */1 * * *"
       # директории с логами (через пробел)
       LOGS_DIRECTORIES: "/logs"
       # какие файлы ротировать (через пробел)
