@@ -81,10 +81,10 @@ services:
       - traefik.http.routers.caddy-catchall.service=caddy-error
 
       # Кастомная страница для JSON-подписок
-      - traefik.http.routers.caddy-jsonpage.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
-      - traefik.http.routers.caddy-jsonpage.entrypoints=websecure
-      - traefik.http.routers.caddy-jsonpage.middlewares=caddy-chain
-      - traefik.http.routers.caddy-jsonpage.tls.certresolver=le
-      - traefik.http.routers.caddy-jsonpage.priority=10001
-      - traefik.http.routers.caddy-jsonpage.service=caddy-jsonpage-svc
-      - traefik.http.services.caddy-jsonpage-svc.loadbalancer.server.port=${PORT_TEST}
+      # - traefik.http.routers.caddy-jsonpage.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
+      # - traefik.http.routers.caddy-jsonpage.entrypoints=websecure
+      # - traefik.http.routers.caddy-jsonpage.middlewares=caddy-chain
+      # - traefik.http.routers.caddy-jsonpage.tls.certresolver=le
+      # - traefik.http.routers.caddy-jsonpage.priority=10001
+      # - traefik.http.routers.caddy-jsonpage.service=caddy-jsonpage-svc
+      # - traefik.http.services.caddy-jsonpage-svc.loadbalancer.server.port=${PORT_TEST}
