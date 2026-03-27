@@ -32,13 +32,19 @@ import *.caddy
 	encode gzip zstd
 
 	route {
-		crowdsec
-		appsec
+		# JSON-путь: браузерам отдаём кастомную страницу, остальным — прокси в 3x-ui
+		@html {
+			path {$URI_JSON_PATH}* /{$URI_JSON_PATH}*
+			header Accept *text/html*
+		}
 
-		root * /srv/subs
-		# SPA-фоллбек: если файла нет — отдать /index.html с 200
-		try_files {path} /index.html
-		templates
-		file_server
+		handle @html {
+			root * /srv/subs
+			# Сначала отдаём запрошенный файл, затем fallback на test-backend.html, далее index.html
+			# try_files {path} /3x-sub.html 
+			try_files {path} /test-backend.html
+			templates
+			file_server
+		}
 	}
 }

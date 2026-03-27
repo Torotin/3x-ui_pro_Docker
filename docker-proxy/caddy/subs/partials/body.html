@@ -1,0 +1,81 @@
+<a-form layout="vertical">
+    <a-form-item>
+        <a-space direction="vertical" align="center">
+            <a-row type="flex" :gutter="[8,8]" justify="center" style="width:100%">
+                <a-col :xs="24" :sm="app.subJsonUrl ? 12 : 24" style="text-align:center;">
+                    <tr-qr-box class="qr-box">
+                        <a-tag color="purple" class="qr-tag">
+                            <span>Подписка</span>
+                        </a-tag>
+                        <tr-qr-bg class="qr-bg-sub">
+                            <tr-qr-bg-inner class="qr-bg-sub-inner">
+                                <canvas id="qrcode" class="qr-cv" title='Копировать' @click="copy(app.subUrl)"></canvas>
+                            </tr-qr-bg-inner>
+                        </tr-qr-bg>
+                    </tr-qr-box>
+                </a-col>
+                <a-col v-if="app.subJsonUrl" :xs="24" :sm="12" style="text-align:center;">
+                    <tr-qr-box class="qr-box">
+                        <a-tag color="purple" class="qr-tag">
+                            <span>Подписка Json</span>
+                        </a-tag>
+                        <tr-qr-bg class="qr-bg-sub">
+                            <tr-qr-bg-inner class="qr-bg-sub-inner">
+                                <canvas id="qrcode-subjson" class="qr-cv" title='Копировать' @click="copy(app.subJsonUrl)"></canvas>
+                            </tr-qr-bg-inner>
+                        </tr-qr-bg>
+                    </tr-qr-box>
+                </a-col>
+            </a-row>
+        </a-space>
+    </a-form-item>
+
+    <a-form-item>
+        <a-collapse :default-active-key="[]">
+            <a-collapse-panel key="info" header="Информация о подписке">
+                <a-descriptions bordered :column="1" size="small">
+                    <a-descriptions-item label='ID подписки'>[[ app.sId ]]</a-descriptions-item>
+                    <a-descriptions-item label='Статус'>
+                        <template v-if="isUnlimited">
+                            <a-tag color="purple">Безлимит</a-tag>
+                        </template>
+                        <template v-else>
+                            <a-tag :color="isActive ? 'green' : 'red'">[[ isActive ? 'Активна' : 'Неактивна' ]]</a-tag>
+                        </template>
+                    </a-descriptions-item>
+                    <a-descriptions-item label='Загружено'>[[ app.download ]]</a-descriptions-item>
+                    <a-descriptions-item label='Отправлено'>[[ app.upload ]]</a-descriptions-item>
+                    <a-descriptions-item label='Использование'>[[ app.used ]]</a-descriptions-item>
+                    <a-descriptions-item label='Общий лимит'>[[ app.total ]]</a-descriptions-item>
+                    <a-descriptions-item v-if="app.totalByte > 0" label='Остаток'>[[ app.remained ]]</a-descriptions-item>
+                    <a-descriptions-item label='Был(а) в сети'>
+                        <template v-if="app.lastOnlineMs > 0">
+                            <template v-if="app.datepicker === 'gregorian'">
+                                [[ DateUtil.formatMillis(app.lastOnlineMs) ]]
+                            </template>
+                            <template v-else>
+                                [[ DateUtil.convertToJalalian(moment(app.lastOnlineMs)) ]]
+                            </template>
+                        </template>
+                        <template v-else>
+                            <span>Никогда</span>
+                        </template>
+                    </a-descriptions-item>
+                    <a-descriptions-item label='Срок действия'>
+                        <template v-if="app.expireMs === 0">
+                            Без срока
+                        </template>
+                        <template v-else>
+                            <template v-if="app.datepicker === 'gregorian'">
+                                [[ DateUtil.formatMillis(app.expireMs) ]]
+                            </template>
+                            <template v-else>
+                                [[ DateUtil.convertToJalalian(moment(app.expireMs)) ]]
+                            </template>
+                        </template>
+                    </a-descriptions-item>
+                </a-descriptions>
+            </a-collapse-panel>
+        </a-collapse>
+    </a-form-item>
+</a-form>

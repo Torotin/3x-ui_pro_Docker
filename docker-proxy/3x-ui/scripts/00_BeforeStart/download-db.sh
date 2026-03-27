@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu
+set -e; set -u
 
 # ——— Конфиг через ENV ———
 : "${XUI_BIN_FOLDER:=/app/bin}"

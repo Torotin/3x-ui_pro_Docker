@@ -1,0 +1,23 @@
+<template #title>
+    <a-space>
+        <span>Информация о подписке</span>
+        <a-tag v-text="app.sId"></a-tag>
+    </a-space>
+</template>
+<template #extra>
+    <a-popover :overlay-class-name="themeSwitcher.currentTheme" title='Настройки' placement="bottomRight" trigger="click">
+        <template #content>
+            <a-space direction="vertical" :size="10">
+                <a-theme-switch-login></a-theme-switch-login>
+                <span>Язык интерфейса</span>
+                <a-select ref="selectLang" class="w-100" v-model="lang" @change="LanguageManager.setLanguage(lang)" :dropdown-class-name="themeSwitcher.currentTheme">
+                    <a-select-option :value="l.value" label="English" v-for="l in LanguageManager.supportedLanguages" :key="l.value">
+                        <span role="img" :aria-label="l.name" v-text="l.icon"></span>
+                        &nbsp;&nbsp;<span v-text="l.name"></span>
+                    </a-select-option>
+                </a-select>
+            </a-space>
+        </template>
+        <a-button shape="circle" icon="setting"></a-button>
+    </a-popover>
+</template>

@@ -20,7 +20,6 @@ services:
       - /opt/docker-proxy/_logs/caddy:/var/log/caddy
       - /opt/docker-proxy/caddy/config:/etc/caddy
       - /opt/docker-proxy/caddy/subs:/srv/subs:ro
-      # - /opt/docker-proxy/caddy/site:/srv
     env_file:
       - /opt/docker-proxy/compose.d/.env
     security_opt:
@@ -72,13 +71,6 @@ services:
       - traefik.http.middlewares.caddy-chain.chain.middlewares=bouncer@file,error-pages,redirect-to-caddy,compress
 
       # ---------- Routers ----------
-      # favicon обрабатываем через статическую цепочку
-      - traefik.http.routers.caddy-favicon.rule=Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)
-      - traefik.http.routers.caddy-favicon.entrypoints=websecure
-      - traefik.http.routers.caddy-favicon.middlewares=static-chain
-      - traefik.http.routers.caddy-favicon.tls.certresolver=le
-      - traefik.http.routers.caddy-favicon.priority=1
-      - traefik.http.routers.caddy-favicon.service=caddy-error
 
       # Общий catch-all роутер — передаём всё в Caddy
       - traefik.http.routers.caddy-catchall.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/`)
@@ -87,3 +79,12 @@ services:
       - traefik.http.routers.caddy-catchall.tls.certresolver=le
       - traefik.http.routers.caddy-catchall.priority=-1
       - traefik.http.routers.caddy-catchall.service=caddy-error
+
+      # Кастомная страница для JSON-подписок
+      # - traefik.http.routers.caddy-jsonpage.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
+      # - traefik.http.routers.caddy-jsonpage.entrypoints=websecure
+      # - traefik.http.routers.caddy-jsonpage.middlewares=caddy-chain
+      # - traefik.http.routers.caddy-jsonpage.tls.certresolver=le
+      # - traefik.http.routers.caddy-jsonpage.priority=10001
+      # - traefik.http.routers.caddy-jsonpage.service=caddy-jsonpage-svc
+      # - traefik.http.services.caddy-jsonpage-svc.loadbalancer.server.port=${PORT_TEST}
