@@ -34,12 +34,59 @@ if [[ ${#DOMAINS[@]} -eq 0 ]]; then
 fi
 
 NAMESERVERS=(
+  # Cloudflare
   "1.1.1.1:Cloudflare"
   "1.0.0.1:Cloudflare-2"
+
+  # Google
   "8.8.8.8:Google"
   "8.8.4.4:Google-2"
+
+  # Quad9
   "9.9.9.9:Quad9"
   "149.112.112.112:Quad9-2"
+
+  # OpenDNS (Cisco)
+  "208.67.222.222:OpenDNS"
+  "208.67.220.220:OpenDNS-2"
+
+  # AdGuard DNS
+  "94.140.14.14:AdGuard"
+  "94.140.15.15:AdGuard-2"
+
+  # CleanBrowsing
+  "185.228.168.9:CleanBrowsing"
+  "185.228.169.9:CleanBrowsing-2"
+
+  # DNS.WATCH (Germany)
+  "84.200.69.80:DNSWatch"
+  "84.200.70.40:DNSWatch-2"
+
+  # UncensoredDNS (Denmark)
+  "91.239.100.100:UncensoredDNS"
+  "89.233.43.71:UncensoredDNS-2"
+
+  # Comodo Secure DNS
+  "8.26.56.26:Comodo"
+  "8.20.247.20:Comodo-2"
+
+  # Level3 / Lumen
+  "4.2.2.1:Level3"
+  "4.2.2.2:Level3-2"
+
+  # --- РФ сегмент ---
+
+  # Яндекс DNS
+  "77.88.8.8:Yandex"
+  "77.88.8.1:Yandex-2"
+
+  # Ростелеком (часто используется как ISP DNS)
+  # "194.85.92.10:Rostelecom"
+  # "194.85.92.20:Rostelecom-2"
+
+  # МГТС / МТС (вариативно, но часто доступны)
+  # "212.1.224.6:MTS"
+  # "212.1.244.6:MTS-2"
 )
 
 INTERVAL=15  # секунд между проверками

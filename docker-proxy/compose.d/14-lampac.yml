@@ -1,6 +1,7 @@
 services:
   lampac:
-    image: immisterio/lampac:latest
+    # image: immisterio/lampac:latest
+    image: ghcr.io/lampac-talks/lampac:amd64
     container_name: lampac
     restart: unless-stopped
     mem_reservation: 1g
