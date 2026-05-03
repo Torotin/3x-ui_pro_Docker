@@ -1,0 +1,121 @@
+services:
+  dockcheck:
+    image: alpine:3.20
+    container_name: dockcheck
+    hostname: ${WEBDOMAIN}
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: ${TZ}
+      DOCKCHECK_INTERVAL: ${DOCKCHECK_INTERVAL:-24h}
+      DOCKCHECK_INITIAL_DELAY_SECONDS: ${DOCKCHECK_INITIAL_DELAY_SECONDS:-30}
+      DOCKCHECK_SELF_UPDATE: ${DOCKCHECK_SELF_UPDATE:-true}
+      DOCKCHECK_ARGS: ${DOCKCHECK_ARGS:--y -p -x 10 -t 10 -e dockcheck}
+      REGCTL_VERSION: ${REGCTL_VERSION:-latest}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/docker-proxy/compose.d:/opt/docker-proxy/compose.d:ro
+      - /opt/docker-proxy/dockcheck:/opt/dockcheck
+      - /etc/localtime:/etc/localtime:ro
+    security_opt:
+      - no-new-privileges=true
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        apk add --no-cache \
+          bash \
+          ca-certificates \
+          coreutils \
+          curl \
+          docker-cli \
+          docker-cli-compose \
+          findutils \
+          jq \
+          tzdata
+
+        mkdir -p /opt/dockcheck
+
+        if [ "$${DOCKCHECK_SELF_UPDATE}" = "true" ] || [ ! -x /opt/dockcheck/dockcheck.sh ]; then
+          curl -fsSL \
+            https://raw.githubusercontent.com/mag37/dockcheck/main/dockcheck.sh \
+            -o /opt/dockcheck/dockcheck.sh
+          chmod +x /opt/dockcheck/dockcheck.sh
+        fi
+
+        if [ ! -x /opt/dockcheck/regctl ]; then
+          case "$(uname -m)" in
+            x86_64) regctl_arch="amd64" ;;
+            aarch64|arm64) regctl_arch="arm64" ;;
+            *)
+              echo "[dockcheck] unsupported architecture for regctl: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ "$${REGCTL_VERSION}" = "latest" ]; then
+            regctl_url="https://github.com/regclient/regclient/releases/latest/download/regctl-linux-$${regctl_arch}"
+          else
+            regctl_url="https://github.com/regclient/regclient/releases/download/$${REGCTL_VERSION}/regctl-linux-$${regctl_arch}"
+          fi
+
+          curl -fsSL "$${regctl_url}" -o /opt/dockcheck/regctl
+          chmod +x /opt/dockcheck/regctl
+        fi
+
+        export PATH="/opt/dockcheck:$${PATH}"
+        dockcheck_interval_seconds="$$(awk -v interval="$${DOCKCHECK_INTERVAL}" 'BEGIN {
+          gsub(",", ".", interval)
+          if (interval !~ /^[0-9]+([.][0-9]+)?[hms]?$$/) {
+            exit 1
+          }
+
+          unit = substr(interval, length(interval), 1)
+          value = interval
+          if (unit ~ /[hms]/) {
+            value = substr(interval, 1, length(interval) - 1)
+          } else {
+            unit = "h"
+          }
+
+          if (value <= 0) {
+            exit 1
+          }
+          if (unit == "h") {
+            seconds = int((value * 3600) + 0.5)
+          } else if (unit == "m") {
+            seconds = int((value * 60) + 0.5)
+          } else {
+            if (value !~ /^[0-9]+$$/) {
+              exit 1
+            }
+            seconds = value
+          }
+          if (seconds < 1) {
+            seconds = 1
+          }
+          print seconds
+        }')" || {
+          echo "[dockcheck] invalid DOCKCHECK_INTERVAL: $${DOCKCHECK_INTERVAL}" >&2
+          exit 1
+        }
+
+        if [ "$${DOCKCHECK_INITIAL_DELAY_SECONDS}" -gt 0 ]; then
+          echo "[dockcheck] initial delay: $${DOCKCHECK_INITIAL_DELAY_SECONDS}s"
+          sleep "$${DOCKCHECK_INITIAL_DELAY_SECONDS}"
+        fi
+
+        while true; do
+          echo "[dockcheck] run started: $(date -Iseconds)"
+          if /bin/bash /opt/dockcheck/dockcheck.sh $${DOCKCHECK_ARGS}; then
+            echo "[dockcheck] run finished successfully"
+          else
+            rc=$?
+            echo "[dockcheck] run failed with rc=$${rc}" >&2
+          fi
+          echo "[dockcheck] next run in $${DOCKCHECK_INTERVAL} ($${dockcheck_interval_seconds}s)"
+          sleep "$${dockcheck_interval_seconds}"
+        done
+    labels:
+      - traefik.enable=false
+      - mag37.dockcheck.update=false
