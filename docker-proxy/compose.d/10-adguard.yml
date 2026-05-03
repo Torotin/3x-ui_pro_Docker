@@ -26,13 +26,12 @@ services:
       - -c
       - |
         set -e
-        apk add --no-cache bind-tools curl
         if [ -f /opt/adguardhome/update-pass.sh ]; then
           sh /opt/adguardhome/update-pass.sh || echo "[adguard-entrypoint] password update skipped"
         fi
         exec /opt/adguardhome/AdGuardHome -s run --config /opt/adguardhome/conf/AdGuardHome.yaml --work-dir /opt/adguardhome/work
     healthcheck:
-      test: ["CMD-SHELL", "dig @127.0.0.1 -p 53 example.com +short | grep -q '.'"]
+      test: ["CMD-SHELL", "nslookup example.com 127.0.0.1 >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -150,15 +150,31 @@ show_selected() {
   fi
 }
 
+clear_menu_screen() {
+  if [[ -t 0 && -t 1 ]]; then
+    clear
+  fi
+}
+
+menu_mark() {
+  local action="$1"
+
+  if contains_action "$action"; then
+    printf '[x]'
+  else
+    printf '[ ]'
+  fi
+}
+
 menu() {
   while true; do
-    echo
+    clear_menu_screen
     echo "Docker reset menu"
-    echo "1) Toggle containers removal"
-    echo "2) Toggle images removal"
-    echo "3) Toggle volumes removal"
-    echo "4) Toggle build cache prune"
-    echo "5) Toggle networks removal"
+    printf "1) %s Toggle containers removal\n" "$(menu_mark containers)"
+    printf "2) %s Toggle images removal\n" "$(menu_mark images)"
+    printf "3) %s Toggle volumes removal\n" "$(menu_mark volumes)"
+    printf "4) %s Toggle build cache prune\n" "$(menu_mark cache)"
+    printf "5) %s Toggle networks removal\n" "$(menu_mark networks)"
     echo "6) Select all except networks"
     echo "7) Select everything"
     echo "8) Clear selection"
@@ -192,9 +208,20 @@ confirm() {
   echo
   echo "WARNING: selected actions will DELETE Docker resources."
   show_selected
-  echo "Press Ctrl+C now to cancel, or type YES to continue."
+  echo "Press Enter or type yes to continue. Type no or press Ctrl+C to cancel."
   read -r answer
-  [[ "$answer" == "YES" ]] || die "Cancelled"
+
+  case "${answer,,}" in
+    ""|y|yes|д|да)
+      return
+      ;;
+    n|no|н|нет)
+      die "Cancelled"
+      ;;
+    *)
+      die "Cancelled"
+      ;;
+  esac
 }
 
 run_cmd() {
