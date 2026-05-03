@@ -102,9 +102,9 @@ alias netstat-all='netstat -tulpen'      # Сеть: все соединения
 alias trace-route='traceroute'           # Трассировка маршрута
 alias dns-status='resolvectl status'     # Статус DNS
 
+# Красивый вывод прослушивающих портов с PID/Process
 alias ss-ports='echo "Netid State  Recv-Q Send-Q   Local_Address:Port     Peer:Port    Process,PID,FD"; \
 sudo ss -tulpn | tail -n +2 | sort -t: -k2,2n | sed -E "s/users:\(\((.*)\)\)/\1/" | sed -E "s/[\"()]//g"'
-# Красивый вывод прослушивающих портов с PID/Process
 
 ############################################################
 #                  MISC                                   #
