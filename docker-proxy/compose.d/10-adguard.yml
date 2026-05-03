@@ -51,6 +51,9 @@ services:
       - traefik.http.middlewares.rate-limit.ratelimit.average=50
       - traefik.http.middlewares.rate-limit.ratelimit.burst=100
       - traefik.http.middlewares.compress.compress=true
+      - traefik.http.middlewares.adguard-doh-rate-limit.ratelimit.average=300
+      - traefik.http.middlewares.adguard-doh-rate-limit.ratelimit.burst=600
+      - traefik.http.middlewares.adguard-doh-path.replacepath.path=/dns-query
       - traefik.http.middlewares.adguard-basic-auth.basicauth.users=${HT_PASS_ENCODED}
       - traefik.http.middlewares.adguard-basic-auth.basicauth.realm=AdGuardHome
 
@@ -64,11 +67,20 @@ services:
 
       # Общая цепочка для AdGuard
       - traefik.http.middlewares.adguard-chain.chain.middlewares=bouncer@file,adguard-basic-auth,strip-adguard-prefix,redirect-adguard-panel,compress
+      - traefik.http.middlewares.adguard-doh-chain.chain.middlewares=bouncer@file,adguard-doh-rate-limit,adguard-doh-path
 
-      # Router
+      # Panel router
       - traefik.http.routers.adguard-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_PANEL}`)
       - traefik.http.routers.adguard-panel.entrypoints=websecure
       - traefik.http.routers.adguard-panel.middlewares=adguard-chain
       - traefik.http.routers.adguard-panel.tls.certresolver=le
       - traefik.http.routers.adguard-panel.service=adguard-panel
       - traefik.http.routers.adguard-panel.priority=1000
+
+      # Public DoH router. Plain DNS remains internal on 172.19.0.10:53.
+      - traefik.http.routers.adguard-doh.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_ADGUARD_DOH}`)
+      - traefik.http.routers.adguard-doh.entrypoints=websecure
+      - traefik.http.routers.adguard-doh.middlewares=adguard-doh-chain
+      - traefik.http.routers.adguard-doh.tls.certresolver=le
+      - traefik.http.routers.adguard-doh.service=adguard-panel
+      - traefik.http.routers.adguard-doh.priority=11000
