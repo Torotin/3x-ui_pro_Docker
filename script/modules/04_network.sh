@@ -9,7 +9,7 @@
 : "${PROJECT_ROOT:=/mnt/share}"
 : "${BACKUP_DIR:=${PROJECT_ROOT}/backup}"
 : "${TEMPLATE_DIR:=${PROJECT_ROOT}/template}"
-: "${SYSCTL_CONF:=/etc/sysctl.conf}"
+: "${SYSCTL_CONF:=/etc/sysctl.d/99-xray.conf}"
 : "${NETWORK_TEMPLATE:=${TEMPLATE_DIR}/99-xray-network.conf.template}"
 
 # === Проверка версии ядра ===
@@ -47,21 +47,6 @@ network_check_bbr_support() {
     fi
 }
 
-# === Удаление старых сетевых настроек (BBR) ===
-network_remove_bbr_settings() {
-    local settings=("net.core.default_qdisc" "net.ipv4.tcp_congestion_control")
-    local sed_script
-    sed_script=$(mktemp)
-
-    for setting in "${settings[@]}"; do
-        echo "\|^\s*${setting}\s*=.*|d" >> "$sed_script"
-    done
-
-    sed -i -f "$sed_script" "$SYSCTL_CONF"
-    rm "$sed_script"
-    log "INFO" "Старые сетевые настройки удалены из $SYSCTL_CONF."
-}
-
 # === Генерация и применение сетевого конфига через шаблон ===
 network_apply_template_settings() {
     local template_file="${1:-$NETWORK_TEMPLATE}"
@@ -84,30 +69,19 @@ network_apply_template_settings() {
         cp "$template_file" "$tmp_conf"
     fi
 
-    # Бэкапим старый конфиг
-    backup_file "$sysctl_conf" || return 1
+    mkdir -p "$(dirname "$sysctl_conf")"
 
-    # Удаляем старые BBR-настройки
-    network_remove_bbr_settings
+    # Бэкапим только наш модульный конфиг, если он уже существует.
+    if [[ -f "$sysctl_conf" ]]; then
+        backup_file "$sysctl_conf" || return 1
+    fi
 
-    # Добавляем/заменяем параметры из шаблона
-    while IFS= read -r line; do
-        # Пропускаем комментарии и пустые строки
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "$line" ]] && continue
-        local key="${line%%=*}"
-        key="${key// /}"
-        if grep -q "^\s*${key}\s*=" "$sysctl_conf"; then
-            sed -i "s|^\s*${key}\s*=.*|${line}|" "$sysctl_conf"
-        else
-            echo "$line" >> "$sysctl_conf"
-        fi
-        log "DEBUG" "Применена настройка: $line"
-    done < "$tmp_conf"
+    install -m 0644 "$tmp_conf" "$sysctl_conf"
+    log "INFO" "Сетевые настройки записаны в $sysctl_conf."
 
     rm "$tmp_conf"
 
-    sysctl_output=$(sysctl -p 2>&1)
+    sysctl_output=$(sysctl -p "$sysctl_conf" 2>&1)
     sysctl_exit_code=$?
 
     # В лог DEBUG или INFO пишем только успешные строки (без 'sysctl:')
@@ -181,6 +155,20 @@ network_verify_bbr_activation() {
 # === Основная функция для применения сетевого шаблона ===
 network_config_modify() {
     local template_file="${1:-$NETWORK_TEMPLATE}"
+    local had_sysctl_conf="false"
+
+    if [[ -f "$SYSCTL_CONF" ]]; then
+        had_sysctl_conf="true"
+    fi
+
+    restore_network_sysctl_conf() {
+        if [[ "$had_sysctl_conf" == "true" ]]; then
+            restore_backup_file "$SYSCTL_CONF"
+        else
+            rm -f "$SYSCTL_CONF"
+            log "INFO" "Удален новый модульный sysctl-конфиг после ошибки: $SYSCTL_CONF"
+        fi
+    }
 
     log "INFO" "Включение BBR и оптимизация сетевых настроек через шаблон..."
 
@@ -189,12 +177,12 @@ network_config_modify() {
     network_check_bbr_support || return 1
 
     network_apply_template_settings "$template_file" "$SYSCTL_CONF" || {
-        restore_backup_file "$SYSCTL_CONF"
+        restore_network_sysctl_conf
         return 1
     }
 
     network_verify_bbr_activation || {
-        restore_backup_file "$SYSCTL_CONF"
+        restore_network_sysctl_conf
         return 1
     }
 
