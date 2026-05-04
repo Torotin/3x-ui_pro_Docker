@@ -54,11 +54,11 @@ update_xray_routing_warp() {
 
     TAG_WARP="warp"
     TAG_SOCKS="warp-docker"
-    TAG_SOCKS_V5="warp_socks_v5"
+    TAG_USQUE="warp-usque"
     WARP="warp"
     WARP_PORT=1080
-    WARP_V5="warp_socks_v5"
-    WARP_PORT_V5=9091
+    USQUE_IMAGENAME="usque"
+    USQUE_PORT=1080
 
     # 1) Убедимся, что outbound wireguard:warp существует. Если нет — регистрируем WARP и создаём outbound.
     exists_warp=$(echo "$XRAY_SETTINGS_JSON" | jq --arg tag "$TAG_WARP" '
@@ -135,30 +135,55 @@ update_xray_routing_warp() {
 
     # 2) Проверяем socks-концы и добавляем outbounds
     ensure_socks_outbound "$WARP" "$WARP_PORT" "$TAG_SOCKS"
-    ensure_socks_outbound "$WARP_V5" "$WARP_PORT_V5" "$TAG_SOCKS_V5"
+    ensure_socks_outbound "$USQUE_IMAGENAME" "$USQUE_PORT" "$TAG_USQUE"
     # 3) Добавляем routing.rule с balancerTag и 4) раздел балансировщика + 5) observatory
     desired_domains=$(
         jq -nc --arg webdomain "$WEBDOMAIN" '
             [
-                "ext:geosite_RU.dat:category-gov-ru",
-                "ext:geosite_RU.dat:yandex",
-                "ext:geosite_RU.dat:steam",
-                "ext:geosite_RU.dat:vk",
-                "regexp:\\.ru",
-                "regexp:\\.org",
-                "regexp:\\.su",
-                "regexp:\\.xn--d1acj3b$",
-                "regexp:\\.xn--80adxhks$",
-                "regexp:\\.xn--80asehdb$",
-                "regexp:\\.xn--c1avg$",
-                "regexp:\\.xn--80aswg$",
-                "regexp:\\.p1ai$",
-                "regexp:\\.xn--j1amh$",
-                "regexp:\\.xn--90ae$",
-                "regexp:\\.xn--90a3ac$",
-                "regexp:\\.xn--l1acc$",
-                "regexp:\\.xn--d1alf$",
-                "regexp:\\.xn--90ais$"
+                // service domains
+                "domain:easebar.com",
+                "domain:habrastorage.org",
+
+                // geosite groups
+                "ext:geosite_v2fly.dat:category-bank-ru",
+                "ext:geosite_v2fly.dat:category-betting-ru",
+                "ext:geosite_v2fly.dat:category-ecommerce-ru",
+                "ext:geosite_v2fly.dat:category-entertainment-ru",
+                "ext:geosite_v2fly.dat:category-gov-ru",
+                "ext:geosite_v2fly.dat:category-media-ru",
+                "ext:geosite_v2fly.dat:category-medicine-ru",
+                "ext:geosite_v2fly.dat:category-retail-ru",
+                "ext:geosite_v2fly.dat:category-ru",
+                "ext:geosite_v2fly.dat:category-travel-ru",
+                "ext:geosite_v2fly.dat:genotek-ru",
+                "ext:geosite_v2fly.dat:gismeteo-ru",
+                "ext:geosite_v2fly.dat:ideco-ru",
+                "ext:geosite_v2fly.dat:myoffice-ru",
+                "ext:geosite_v2fly.dat:tbank-ru",
+                "ext:geosite_v2fly.dat:tld-ru",
+                "ext:geosite_v2fly.dat:ucoz-ru",
+                "ext:geosite_v2fly.dat:private",
+                "ext:geosite_v2fly.dat:yandex",
+                "ext:geosite_v2fly.dat:steam",
+                "ext:geosite_v2fly.dat:vk",
+
+                // TLD regex
+                "regexp:^([\\w\\-\\.]+\\.)ru$",            // .ru (Россия)
+                "regexp:^([\\w\\-\\.]+\\.)su$",            // .su (СССР, устаревшая зона, но используется)
+                "regexp:^([\\w\\-\\.]+\\.)xn--p1ai$",      // .рф (Россия, кириллица)
+                "regexp:^([\\w\\-\\.]+\\.)xn--p1acf$",     // .рус (кириллическая зона)
+                "regexp:^([\\w\\-\\.]+\\.)xn--80asehdb$",  // .онлайн
+                "regexp:^([\\w\\-\\.]+\\.)xn--c1avg$",     // .орг (кириллический аналог .org)
+                "regexp:^([\\w\\-\\.]+\\.)xn--80aswg$",    // .сайт
+                "regexp:^([\\w\\-\\.]+\\.)xn--80adxhks$",  // .москва
+                "regexp:^([\\w\\-\\.]+\\.)moscow$",        // .moscow (латиница)
+                "regexp:^([\\w\\-\\.]+\\.)xn--d1acj3b$",   // .дети
+                "regexp:^([\\w\\-\\.]+\\.)xn--90ais$",     // .бел (Беларусь)
+                "regexp:^([\\w\\-\\.]+\\.)xn--j1amh$",     // .укр (Украина, кириллица)
+                "regexp:^([\\w\\-\\.]+\\.)xn--90ae$",      // .бг (Болгария)
+                "regexp:^([\\w\\-\\.]+\\.)xn--l1acc$",     // .мон (Монголия, кириллица)
+                "regexp:^([\\w\\-\\.]+\\.)xn--d1alf$",     // .мкд (Северная Македония)
+                "regexp:^([\\w\\-\\.]+\\.)xn--90ais$"      // .срб (Сербия)
             ]
             + (if ($webdomain // "") != "" then ["domain:" + $webdomain] else [] end)
         '
