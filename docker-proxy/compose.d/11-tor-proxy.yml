@@ -1,25 +1,49 @@
 services:
+  # tor-proxy:
+  #   container_name: tor-proxy
+  #   image: dperson/torproxy
+  #   restart: unless-stopped
+  #   # ports:
+  #   ## SOCKS
+  #   #   - 127.0.0.1:9150:9150/tcp
+  #   ## DNS
+  #   #   - 127.0.0.1:8853:8853/tcp
+  #   healthcheck:
+  #     test: >
+  #       curl --fail --silent --socks5-hostname tor-proxy:9050 https://check.torproject.org/api/ip
+  #       | grep '"IsTor":true'
+  #     interval: 30s
+  #     timeout: 30s
+  #     retries: 3
+  #     start_period: 30s
+  #   networks:
+  #     traefik-proxy:
+  #       ipv4_address: 172.18.0.11
+  #     dns-net:
+  #       ipv4_address: 172.19.0.11
+  #   security_opt:
+  #     - no-new-privileges=true
+
   tor-proxy:
+    image: ghcr.io/shahradelahi/torproxy
     container_name: tor-proxy
-    image: dperson/torproxy
     restart: unless-stopped
+  networks:
+        traefik-proxy:
+          ipv4_address: 172.18.0.11
+    # volumes:
+    #   - persist-data:/var/lib/tor
     # ports:
-    ## SOCKS
-    #   - 127.0.0.1:9150:9150/tcp
-    ## DNS
-    #   - 127.0.0.1:8853:8853/tcp
-    healthcheck:
-      test: >
-        curl --fail --silent --socks5-hostname tor-proxy:9050 https://check.torproject.org/api/ip
-        | grep '"IsTor":true'
-      interval: 30s
-      timeout: 30s
-      retries: 3
-      start_period: 30s
-    networks:
-      traefik-proxy:
-        ipv4_address: 172.18.0.11
-      dns-net:
-        ipv4_address: 172.19.0.11
-    security_opt:
-      - no-new-privileges=true
+    #   - "1080:1080"
+    #   - "8080:8080"
+    #   - "8338:8338"
+    #  - "53:53/udp"
+    #  - "53:53/tcp"
+    # command:
+      # - -L="http://:8080"
+      # - -L="socks5://username:secure-password@:1080"
+      # - -L="ss://aes-256-cfb:secure-password@:8338"
+
+# volumes:
+#   persist-data:
+#     driver: local
