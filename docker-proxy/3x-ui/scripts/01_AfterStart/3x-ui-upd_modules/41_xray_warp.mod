@@ -210,7 +210,7 @@ update_xray_routing_warp() {
     fi
 
     # Добавим/обновим routing.balancers и observatory
-    balancer_json=$(jq -nc '{ tag:"warp-balancer", selector:["warp-docker","warp_socks_v5"], fallbackTag:"warp", strategy:{type:"leastPing"} }')
+    balancer_json=$(jq -nc '{ tag:"warp-balancer", selector:["warp-docker","warp-usque"], fallbackTag:"warp", strategy:{type:"leastPing"} }')
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --argjson bal "$balancer_json" '
         .xraySetting.routing.balancers = (
           (.xraySetting.routing.balancers // [])
@@ -222,7 +222,7 @@ update_xray_routing_warp() {
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq '
         .xraySetting.observatory = (
           .xraySetting.observatory // {
-            subjectSelector:["warp","warp-docker","warp_socks_v5"],
+            subjectSelector:["warp","warp-docker","warp-usque"],
             probeURL:"http://www.google.com/gen_204",
             probeInterval:"10m",
             enableConcurrency:true
