@@ -24,8 +24,9 @@ services:
     dns:
       - 172.19.0.10
     volumes:
-      - /opt/docker-proxy/3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart
-      - /opt/docker-proxy/3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart
+      - /opt/docker-proxy/3x-ui/scripts/lib:/mnt/sh/lib:rw
+      - /opt/docker-proxy/3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
+      - /opt/docker-proxy/3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
       - /opt/docker-proxy/3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
       - /opt/docker-proxy/3x-ui/configs/config.json:/app/bin/config.json:rw
       - /opt/docker-proxy/_logs/xray/access.log:/app/access.log

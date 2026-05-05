@@ -1,10 +1,10 @@
 #!/bin/bash
 update_xray_tor() {
-    # Добавляем SOCKS outbound на tor-proxy:1080 и правило маршрутизации для .onion
+    # Добавляем SOCKS outbound на tor-proxy:9050 и правило маршрутизации для .onion
 
     TAG_TOR="tor-proxy"
     HOST="tor-proxy"
-    PORT=1080
+    PORT=9050
 
     # 0) Удаляем все существующие outbounds с тегом или адресом tor-proxy
     removed_tor=$(printf '%s' "$XRAY_SETTINGS_JSON" | jq --arg tag "$TAG_TOR" --arg host "$HOST" '
@@ -26,7 +26,7 @@ update_xray_tor() {
         log INFO "Удалены старые outbounds с тегом '$TAG_TOR' или адресом '$HOST': $removed_tor"
     fi
 
-    # 1) Добавляем свежий socks-outbound на tor-proxy:1080 (только если хост доступен)
+    # 1) Добавляем свежий socks-outbound на tor-proxy:9050 (только если хост доступен)
     if nc -z -w2 "$HOST" "$PORT" 2>/dev/null; then
         new_tor_ob=$(jq -nc --arg tag "$TAG_TOR" --arg host "$HOST" --argjson port "$PORT" '{
             tag:$tag, protocol:"socks", settings:{ servers:[{ address:$host, port:$port }] }

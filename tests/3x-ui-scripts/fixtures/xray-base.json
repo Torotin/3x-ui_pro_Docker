@@ -1,0 +1,26 @@
+{
+  "xraySetting": {
+    "outbounds": [
+      {
+        "tag": "direct",
+        "protocol": "freedom",
+        "settings": {}
+      }
+    ],
+    "routing": {
+      "rules": [],
+      "balancers": []
+    },
+    "dns": {
+      "hosts": {
+        "example.local": "127.0.0.1"
+      },
+      "disableCache": true,
+      "servers": [
+        {
+          "address": "legacy"
+        }
+      ]
+    }
+  }
+}
