@@ -1,72 +1,84 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+	exec /usr/bin/env bash "$0" "$@"
+fi
+set -Eeuo pipefail
 
-log() {
-    level=$1; shift
-    level=$(printf '%s' "$level" | tr -d '[:space:]')
-    [ -z "$level" ] && level=INFO
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    case "$level" in
-        ERROR) current=1 ;; WARN*) current=2 ;; INFO) current=3 ;; DEBUG) current=4 ;; *) current=3 ;; 
-    esac
-    case "$LOGLEVEL" in
-        ERROR) active=1 ;; WARN*) active=2 ;; INFO) active=3 ;; DEBUG) active=4 ;; *) active=3 ;; 
-    esac
-    [ "$current" -gt "$active" ] && return
-    case "$level" in
-        INFO)   color='\033[1;34m' ;; WARN*)  color='\033[1;33m' ;; ERROR) color='\033[1;31m' ;; DEBUG) color='\033[1;36m' ;; *) color='\033[0m' ;; 
-    esac
-    reset='\033[0m'
-    printf '%s %b%s%b - %s\n' \
-        "$timestamp" "$color" "$level" "$reset" "$*" >&2
-}
-
-arch=$(uname -m)
-case "$arch" in
-    x86_64)
-        ARCH="64"
-        FNAME="amd64"
-        ;;
-    aarch64)
-        ARCH="arm64-v8a"
-        FNAME="arm64"
-        ;;
-    armv7l)
-        ARCH="arm32-v7a"
-        FNAME="arm"
-        ;;
-    *)
-        log INFO "Неизвестная архитектура: $arch"
-        exit 1
-        ;;
-esac
-
-xray_url="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${ARCH}.zip"
-xray_zip="Xray-linux-${ARCH}.zip"
-target_dir="${XUI_BIN_FOLDER:-/app/bin}"
-target_file="${target_dir}/xray-linux-${FNAME}"
-
-# Используем временный каталог
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
-
-log INFO "Загрузка: $xray_url"
-wget -O "$tmpdir/$xray_zip" "$xray_url"
-
-log INFO "Распаковка: $xray_zip"
-cd "$tmpdir"
-unzip -q "$xray_zip"
-
-rm -f "$xray_zip" geoip.dat geosite.dat
-
-if [ ! -f xray ]; then
-    log INFO "Ошибка: бинарный файл 'xray' не найден после распаковки."
-    exit 1
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIB_DIR=${LIB_DIR:-"$SCRIPT_DIR/../lib"}
+if [[ ! -f "$LIB_DIR/log.bash" && -f /mnt/sh/lib/log.bash ]]; then
+	LIB_DIR=/mnt/sh/lib
 fi
 
-mkdir -p "$target_dir"
+# shellcheck source=../lib/log.bash
+. "$LIB_DIR/log.bash"
+# shellcheck source=../lib/download.bash
+. "$LIB_DIR/download.bash"
 
-# Кладём с заменой
-mv -f xray "$target_file"
-chmod +x "$target_file"
-log INFO "Готово. Бинарник: $target_file"
+: "${XUI_BIN_FOLDER:=/app/bin}"
+: "${XRAY_VERSION:=latest}"
+: "${XRAY_SHA256:=}"
+XRAY_TMPDIR=
+
+cleanup_xray_tmpdir() {
+	[[ -n "${XRAY_TMPDIR:-}" ]] && rm -rf "$XRAY_TMPDIR"
+	return 0
+}
+trap cleanup_xray_tmpdir EXIT
+
+detect_xray_arch() {
+	case "$(uname -m)" in
+	x86_64)
+		XRAY_ARCH=64
+		XRAY_FNAME=amd64
+		;;
+	aarch64)
+		XRAY_ARCH=arm64-v8a
+		XRAY_FNAME=arm64
+		;;
+	armv7l)
+		XRAY_ARCH=arm32-v7a
+		XRAY_FNAME=arm
+		;;
+	*) die "Unsupported architecture: $(uname -m)" ;;
+	esac
+}
+
+xray_download_url() {
+	if [[ "$XRAY_VERSION" == "latest" ]]; then
+		printf 'https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-%s.zip' "$XRAY_ARCH"
+	else
+		printf 'https://github.com/XTLS/Xray-core/releases/download/%s/Xray-linux-%s.zip' "$XRAY_VERSION" "$XRAY_ARCH"
+	fi
+}
+
+main() {
+	local tmp zip target backup url version_output
+	detect_xray_arch
+	url=$(xray_download_url)
+	tmp=$(mktemp -d)
+	XRAY_TMPDIR=$tmp
+	zip="$tmp/xray.zip"
+	target="$XUI_BIN_FOLDER/xray-linux-$XRAY_FNAME"
+	backup="$target.bak"
+
+	mkdir -p "$XUI_BIN_FOLDER"
+	download_file_atomic "$url" "$zip" "$XRAY_SHA256"
+	unzip -q "$zip" -d "$tmp"
+	[[ -s "$tmp/xray" ]] || die "Archive did not contain xray binary."
+	chmod +x "$tmp/xray"
+	version_output=$("$tmp/xray" version 2>/dev/null | head -n1 || true)
+	[[ -n "$version_output" ]] || die "Downloaded xray binary does not report a version."
+
+	[[ -f "$target" ]] && cp -f "$target" "$backup"
+	if ! mv -f "$tmp/xray" "$target"; then
+		[[ -f "$backup" ]] && mv -f "$backup" "$target"
+		die "Failed to install xray binary; previous binary restored."
+	fi
+	chmod +x "$target"
+	log INFO "Xray installed at $target: $version_output"
+	cleanup_xray_tmpdir
+	XRAY_TMPDIR=
+}
+
+main "$@"
