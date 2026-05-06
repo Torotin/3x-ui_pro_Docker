@@ -33,7 +33,11 @@ init_defaults() {
 	: "${PORT_LOCAL_VISION:=443}"
 	: "${PORT_LOCAL_XHTTP:=8443}"
 	: "${PORT_LOCAL_TRAEFIK:=4443}"
-	: "${URI_VLESS_XHTTP:=/xhttp}"
+	: "${VISION_FALLBACK_HOST:=traefik}"
+	: "${VISION_FALLBACK_PORT:=$PORT_LOCAL_TRAEFIK}"
+	: "${VISION_FALLBACK_XVER:=1}"
+	: "${URI_VLESS_XHTTP:=}"
+	: "${URI_CLASH_PATH:=}"
 	: "${CLIENT_EMAIL_PREFIX:=autogen}"
 	: "${CLIENT_EMAIL_VISION:=${CLIENT_EMAIL_PREFIX}-vision}"
 	: "${CLIENT_EMAIL_XHTTP:=${CLIENT_EMAIL_PREFIX}-xhttp}"
@@ -43,6 +47,7 @@ init_defaults() {
 	: "${XRAY_LOCAL_RESTART:=true}"
 	: "${XRAY_MANAGED_DNS:=true}"
 	: "${XRAY_MANAGED_WARP:=true}"
+	: "${XRAY_MANAGED_WARP_CONSOLE:=false}"
 	: "${XRAY_MANAGED_TOR:=true}"
 	: "${WARP_REUSE_PANEL_CONFIG:=false}"
 	: "${WARP_ENDPOINT_HOST:=engage.cloudflareclient.com:2408}"
@@ -59,6 +64,8 @@ init_defaults() {
 	: "${GEOFILES_UPDATE_ON_START:=true}"
 	: "${CUSTOM_GEO_RESOURCES:=}"
 	: "${DOWNLOAD_GEO_DIRECT:=false}"
+	: "${XRAY_RESTART_SETTLE_SECONDS:=5}"
+	: "${XRAY_RESTART_PORT_TIMEOUT:=30}"
 }
 
 load_runtime_env() {
@@ -70,7 +77,7 @@ load_runtime_env() {
 
 check_dependencies() {
 	local missing=() cmd
-	for cmd in bash curl jq mktemp sed tr sort head; do
+	for cmd in bash curl jq mktemp sed tr sort head awk base64 od; do
 		command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 	done
 	if ((${#missing[@]} > 0)); then

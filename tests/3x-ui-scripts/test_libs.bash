@@ -138,6 +138,9 @@ test_panel_keys_restore_old_cert_fields() {
 	keys=$(desired_panel_keys)
 	grep -qx webCertFile <<<"$keys" || fail "webCertFile is missing from desired panel keys"
 	grep -qx webKeyFile <<<"$keys" || fail "webKeyFile is missing from desired panel keys"
+	grep -qx subClashEnable <<<"$keys" || fail "subClashEnable is missing from desired panel keys"
+	grep -qx subSupportUrl <<<"$keys" || fail "subSupportUrl is missing from desired panel keys"
+	grep -qx ldapEnable <<<"$keys" || fail "ldapEnable is missing from desired panel keys"
 }
 
 test_warp_domains_restore_old_ru_rules() {
@@ -167,14 +170,16 @@ test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs() {
 }
 
 test_xhttp_stream_restores_old_headers_and_sockopt() {
-	local stream server access_origin tproxy
+	local stream server access_origin tproxy force_tls
 	stream=$(build_xhttp_stream_json /xhttp screenhub.linkpc.net)
 	server=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers.Server')
 	access_origin=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Access-Control-Allow-Origin"]')
 	tproxy=$(printf '%s' "$stream" | jq -r '.sockopt.tproxy')
+	force_tls=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
 	assert_eq nginx "$server" "old XHTTP Server header was not restored"
 	assert_eq https://screenhub.linkpc.net "$access_origin" "old XHTTP CORS origin was not restored"
 	assert_eq tproxy "$tproxy" "old XHTTP sockopt tproxy was not restored"
+	assert_eq tls "$force_tls" "XHTTP externalProxy must publish TLS subscription links through Traefik"
 }
 
 test_vision_stream_restores_old_reality_external_proxy() {
@@ -184,6 +189,21 @@ test_vision_stream_restores_old_reality_external_proxy() {
 	short_id_count=$(printf '%s' "$stream" | jq '.realitySettings.shortIds | length')
 	assert_eq same "$force_tls" "old Vision externalProxy forceTls was not restored"
 	assert_eq 2 "$short_id_count" "Vision shortIds were not preserved"
+}
+
+test_vision_settings_include_traefik_fallback_preserving_clients() {
+	local inbound settings fallback_dest clients decryption
+	export VISION_FALLBACK_HOST=traefik
+	export VISION_FALLBACK_PORT=4443
+	export VISION_FALLBACK_XVER=1
+	inbound='{"settings":"{\"clients\":[{\"id\":\"client-id\",\"email\":\"a@example.test\"}],\"decryption\":\"none\",\"encryption\":\"none\"}"}'
+	settings=$(build_vless_settings_json vision "$inbound")
+	fallback_dest=$(printf '%s' "$settings" | jq -r '.fallbacks[0].dest')
+	clients=$(printf '%s' "$settings" | jq '.clients | length')
+	decryption=$(printf '%s' "$settings" | jq -r '.decryption')
+	assert_eq traefik:4443 "$fallback_dest" "Vision fallback must point to Traefik websecure"
+	assert_eq 1 "$clients" "Vision update must preserve existing clients"
+	assert_eq none "$decryption" "Vision VLESS settings must keep decryption=none"
 }
 
 test_tor_balancer_uses_two_available_hosts() {
@@ -199,24 +219,37 @@ test_tor_balancer_uses_two_available_hosts() {
 	assert_eq "tor-proxy:1080,torproxy:9050" "$ports" "TOR outbound endpoints mismatch"
 }
 
-test_warp_balancer_uses_console_docker_and_usque() {
+test_warp_balancer_uses_docker_and_usque_without_console_warp() {
 	local base dns updated selectors protocols usque_port burst_subjects observatory fallback
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[]}}}'
 	dns='[]'
-	warp_console='{"tag":"warp","protocol":"wireguard","settings":{"secretKey":"test","address":["172.16.0.2/32"],"peers":[{"publicKey":"peer","allowedIPs":["0.0.0.0/0"],"endpoint":"engage.cloudflareclient.com:2408"}]}}'
-	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false true "screenhub.linkpc.net" '[]' "$warp_console")
+	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false true "screenhub.linkpc.net" '[]')
 	selectors=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .selector | sort | join(",")')
 	protocols=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="warp" or .tag=="warp-docker" or .tag=="usque") | "\(.tag):\(.protocol)"] | sort | join(",")')
 	usque_port=$(printf '%s' "$updated" | jq -r '.xraySetting.outbounds[] | select(.tag=="usque") | .settings.servers[0].port')
 	burst_subjects=$(printf '%s' "$updated" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
 	observatory=$(printf '%s' "$updated" | jq -r '.xraySetting.observatory')
 	fallback=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .fallbackTag')
-	assert_eq "usque,warp,warp-docker" "$selectors" "WARP balancer selectors mismatch"
-	assert_eq "usque:socks,warp-docker:socks,warp:wireguard" "$protocols" "WARP outbound protocols mismatch"
+	assert_eq "usque,warp-docker" "$selectors" "WARP balancer selectors mismatch"
+	assert_eq "usque:socks,warp-docker:socks" "$protocols" "WARP outbound protocols mismatch"
 	assert_eq 1080 "$usque_port" "usque outbound port mismatch"
-	assert_eq "usque,warp,warp-docker" "$burst_subjects" "WARP burstObservatory selectors mismatch"
+	assert_eq "usque,warp-docker" "$burst_subjects" "WARP burstObservatory selectors mismatch"
 	assert_eq null "$observatory" "legacy observatory must not be used with managed balancers"
 	assert_eq blocked "$fallback" "WARP balancer fallbackTag mismatch"
+}
+
+test_warp_balancer_can_opt_in_console_warp() {
+	local base dns updated selectors protocols burst_subjects warp_console
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[]}}}'
+	dns='[]'
+	warp_console='{"tag":"warp","protocol":"wireguard","settings":{"secretKey":"test","address":["172.16.0.2/32"],"peers":[{"publicKey":"peer","allowedIPs":["0.0.0.0/0"],"endpoint":"engage.cloudflareclient.com:2408"}]}}'
+	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false true "screenhub.linkpc.net" '[]' "$warp_console")
+	selectors=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .selector | sort | join(",")')
+	protocols=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="warp" or .tag=="warp-docker" or .tag=="usque") | "\(.tag):\(.protocol)"] | sort | join(",")')
+	burst_subjects=$(printf '%s' "$updated" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
+	assert_eq "usque,warp,warp-docker" "$selectors" "Console WARP opt-in selectors mismatch"
+	assert_eq "usque:socks,warp-docker:socks,warp:wireguard" "$protocols" "Console WARP opt-in protocols mismatch"
+	assert_eq "usque,warp,warp-docker" "$burst_subjects" "Console WARP opt-in burstObservatory selectors mismatch"
 }
 
 test_managed_burst_observatory_preserves_custom_subjects() {
@@ -232,12 +265,12 @@ test_managed_burst_observatory_preserves_custom_subjects() {
 
 test_warp_outbound_from_registration_prefers_panel_host_endpoint() {
 	local config outbound endpoint reserved
-	config='{"peers":[{"public_key":"peer-pub","endpoint":{"v4":"162.159.192.10:0","host":"engage.cloudflareclient.com:2408"}}],"interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8e67:a9a4:3ae0:2482:245b"}}}'
-	outbound=$(warp_outbound_from_config "$config" "private-key" '[55,87,0]')
+	config='{"client_id":"N1cA","peers":[{"public_key":"peer-pub","endpoint":{"v4":"162.159.192.10:0","host":"engage.cloudflareclient.com:2408"}}],"interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8e67:a9a4:3ae0:2482:245b"}}}'
+	outbound=$(warp_outbound_from_config "$config" "private-key" '[1,2,3]')
 	endpoint=$(printf '%s' "$outbound" | jq -r '.settings.peers[0].endpoint')
 	reserved=$(printf '%s' "$outbound" | jq -r '.settings.reserved | join(",")')
 	assert_eq engage.cloudflareclient.com:2408 "$endpoint" "WARP registration endpoint must match panel GUI host endpoint"
-	assert_eq 55,87,0 "$reserved" "WARP reserved bytes mismatch"
+	assert_eq 55,87,0 "$reserved" "WARP reserved bytes must be derived from panel client_id"
 }
 
 test_existing_warp_outbound_endpoint_is_normalized() {
@@ -261,8 +294,10 @@ test_warp_domains_restore_old_ru_rules
 test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs
 test_xhttp_stream_restores_old_headers_and_sockopt
 test_vision_stream_restores_old_reality_external_proxy
+test_vision_settings_include_traefik_fallback_preserving_clients
 test_tor_balancer_uses_two_available_hosts
-test_warp_balancer_uses_console_docker_and_usque
+test_warp_balancer_uses_docker_and_usque_without_console_warp
+test_warp_balancer_can_opt_in_console_warp
 test_managed_burst_observatory_preserves_custom_subjects
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
