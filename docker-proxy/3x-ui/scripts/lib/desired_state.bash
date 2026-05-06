@@ -50,7 +50,22 @@ build_desired_state() {
 }
 
 desired_panel_keys() {
-	printf '%s\n' webListen webDomain webPort webCertFile webKeyFile webBasePath sessionMaxAge pageSize expireDiff trafficDiff remarkModel datepicker tgBotEnable tgBotToken tgBotProxy tgBotAPIServer tgBotChatId tgRunTime tgBotBackup tgBotLoginNotify tgCpu tgLang twoFactorEnable twoFactorToken xrayTemplateConfig subEnable subTitle subListen subPort subPath subJsonPath subDomain externalTrafficInformEnable externalTrafficInformURI subCertFile subKeyFile subUpdates subEncrypt subShowInfo subURI subJsonURI subJsonFragment subJsonNoises subJsonMux subJsonRules subJsonEnable timeLocation
+	printf '%s\n' \
+		webListen webDomain webPort webCertFile webKeyFile webBasePath \
+		sessionMaxAge pageSize expireDiff trafficDiff remarkModel datepicker \
+		tgBotEnable tgBotToken tgBotProxy tgBotAPIServer tgBotChatId tgRunTime \
+		tgBotBackup tgBotLoginNotify tgCpu tgLang timeLocation \
+		twoFactorEnable twoFactorToken xrayTemplateConfig \
+		subEnable subJsonEnable subTitle subSupportUrl subProfileUrl subAnnounce \
+		subEnableRouting subRoutingRules subListen subPort subPath subDomain \
+		externalTrafficInformEnable externalTrafficInformURI subCertFile subKeyFile \
+		subUpdates subEncrypt subShowInfo subURI subJsonPath subJsonURI \
+		subClashEnable subClashPath subClashURI \
+		subJsonFragment subJsonNoises subJsonMux subJsonRules \
+		ldapEnable ldapHost ldapPort ldapUseTLS ldapBindDN ldapPassword ldapBaseDN \
+		ldapUserFilter ldapUserAttr ldapVlessField ldapSyncCron ldapFlagField \
+		ldapTruthyValues ldapInvertFlag ldapInboundTags ldapAutoCreate ldapAutoDelete \
+		ldapDefaultTotalGB ldapDefaultExpiryDays ldapDefaultLimitIP
 }
 
 custom_geo_default_resources() {
@@ -82,12 +97,25 @@ custom_geo_resources_json() {
 	printf '%s' "$out"
 }
 
+warp_reserved_json_from_config() {
+	local config=$1 client_id decoded bytes
+	client_id=$(jq -r '.client_id // .config.client_id // .config.config.client_id // empty' <<<"$config")
+	[[ -n "$client_id" ]] || return 1
+	decoded=$(printf '%s' "$client_id" | base64 -d 2>/dev/null | od -An -t u1 -N3 | awk '{$1=$1; print}' || true)
+	[[ -n "$decoded" ]] || return 1
+	read -r -a bytes <<<"$decoded"
+	((${#bytes[@]} == 3)) || return 1
+	jq -nc --argjson b1 "${bytes[0]}" --argjson b2 "${bytes[1]}" --argjson b3 "${bytes[2]}" '[$b1,$b2,$b3]'
+}
+
 warp_outbound_from_config() {
 	local config=$1 private_key=$2 reserved_json=${3:-'[10,14,188]'}
-	local v4 v6 peer_pub endpoint ep_v4
+	local v4 v6 peer_pub endpoint ep_v4 config_reserved
 	v4=$(jq -r '.interface.addresses.v4 // .config.interface.addresses.v4 // empty' <<<"$config")
 	v6=$(jq -r '.interface.addresses.v6 // .config.interface.addresses.v6 // empty' <<<"$config")
 	peer_pub=$(jq -r '.peers[0].public_key // .config.peers[0].public_key // empty' <<<"$config")
+	config_reserved=$(warp_reserved_json_from_config "$config" || true)
+	[[ -n "$config_reserved" ]] && reserved_json=$config_reserved
 	endpoint=$(jq -r '.peers[0].endpoint.host // .config.peers[0].endpoint.host // empty' <<<"$config")
 	if [[ -z "$endpoint" ]]; then
 		endpoint=${WARP_ENDPOINT_HOST:-engage.cloudflareclient.com:2408}
@@ -140,6 +168,49 @@ normalize_warp_outbound_endpoint() {
     ' <<<"$outbound"
 }
 
+json_field_object() {
+	local object=$1 field=$2
+	jq -c --arg field "$field" '.[$field] | fromjson? // . // {}' <<<"$object"
+}
+
+build_vless_settings_json() {
+	local kind=$1 current=${2:-} existing='{}' clients='[]' dec enc label fallback_dest
+	if [[ -n "$current" && "$current" != "null" ]]; then
+		existing=$(json_field_object "$current" settings)
+		clients=$(jq -c '.clients // []' <<<"$existing")
+		dec=$(jq -r '.decryption // empty' <<<"$existing")
+		enc=$(jq -r '.encryption // empty' <<<"$existing")
+		label=$(jq -r '.selectedAuth // empty' <<<"$existing")
+	fi
+	if [[ -z "${dec:-}" || -z "${enc:-}" ]]; then
+		get_vless_auth || true
+		dec=${dec:-${VLESS_DEC:-none}}
+		enc=${enc:-${VLESS_ENC:-none}}
+		label=${label:-${VLESS_LABEL:-}}
+	fi
+	if [[ "${USE_VLESS_PQ:-true}" != "true" ]]; then
+		dec=none
+		enc=none
+		label=
+	fi
+	fallback_dest="${VISION_FALLBACK_HOST:-traefik}:${VISION_FALLBACK_PORT:-4443}"
+	jq -nc \
+		--arg kind "$kind" \
+		--arg dec "$dec" \
+		--arg enc "$enc" \
+		--arg label "${label:-}" \
+		--arg fallbackDest "$fallback_dest" \
+		--argjson fallbackXver "${VISION_FALLBACK_XVER:-1}" \
+		--argjson clients "$clients" '
+        if $kind == "vision" then
+          {clients:$clients, decryption:"none", fallbacks:[{dest:$fallbackDest,xver:$fallbackXver}]}
+        else
+          {clients:$clients, decryption:$dec, encryption:$enc}
+          | if ($label|length)>0 then . + {selectedAuth:$label} else . end
+        end
+      '
+}
+
 build_sockopt_json() {
 	local accept_proxy=${1:-false} domain_strategy=${2:-AsIs} tproxy=${3:-off}
 	jq -nc --argjson acceptProxyProtocol "$accept_proxy" --arg domainStrategy "$domain_strategy" --arg tproxy "$tproxy" '{
@@ -163,11 +234,11 @@ build_sockopt_json() {
 }
 
 build_external_proxy_json() {
-	local host=$1
+	local host=$1 force_tls=${2:-same}
 	if [[ -z "$host" ]]; then
 		printf '[]'
 	else
-		jq -nc --arg dest "$host" '[{forceTls:"same",dest:$dest,port:443,remark:""}]'
+		jq -nc --arg dest "$host" --arg forceTls "$force_tls" '[{forceTls:$forceTls,dest:$dest,port:443,remark:""}]'
 	fi
 }
 
@@ -215,7 +286,7 @@ build_vision_stream_json() {
 build_xhttp_stream_json() {
 	local path=$1 host=$2 sockopt external_proxy
 	sockopt=$(build_sockopt_json false UseIP tproxy)
-	external_proxy=$(build_external_proxy_json "$host")
+	external_proxy=$(build_external_proxy_json "$host" tls)
 	jq -nc --arg path "$path" --arg host "$host" --argjson sockopt "$sockopt" --argjson externalProxy "$external_proxy" '{
       network:"xhttp",
       security:"none",

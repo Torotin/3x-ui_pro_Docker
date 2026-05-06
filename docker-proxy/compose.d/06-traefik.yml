@@ -6,9 +6,27 @@ services:
     depends_on:
       crowdsec:
         condition: service_healthy
+      crowdsec-firewall-bouncer:
+        condition: service_healthy
       caddy:
         condition: service_healthy
       dozzle:
+        condition: service_healthy
+      warp:
+        condition: service_healthy
+      usque:
+        condition: service_healthy
+      adguard:
+        condition: service_healthy
+      torproxy:
+        condition: service_healthy
+      tor-proxy:
+        condition: service_healthy
+      3x-ui:
+        condition: service_healthy
+      homepage:
+        condition: service_healthy
+      lampac:
         condition: service_healthy
     env_file:
       - /opt/docker-proxy/compose.d/.env

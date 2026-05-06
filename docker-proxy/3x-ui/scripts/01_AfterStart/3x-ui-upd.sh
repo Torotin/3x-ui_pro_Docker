@@ -13,6 +13,7 @@ TMP_ROOT=
 CHANGE_COUNT=0
 RESTART_PANEL_REQUIRED=0
 RESTART_XRAY_REQUIRED=0
+ENSURE_INBOUND_ID=
 
 # shellcheck source=../lib/log.bash
 . "$LIB_DIR/log.bash"
@@ -310,6 +311,18 @@ ensure_warp_console_outbound() {
 	local current=$1 existing obj config outbound private_key
 	existing=$(jq -c '.xraySetting.outbounds[]? | select(.tag=="warp" and .protocol=="wireguard")' <<<"$current" | head -n1)
 	if [[ -n "$existing" ]]; then
+		xui_warp_config || true
+		if http_success_json; then
+			obj=$(extract_warp_obj "$HTTP_BODY_FILE")
+			if [[ -n "$obj" && "$obj" != "null" ]]; then
+				config=$(warp_config_json_from_obj "$obj")
+				private_key=$(jq -r '.settings.secretKey // empty' <<<"$existing")
+				if [[ -n "$private_key" ]] && outbound=$(warp_outbound_from_config "$config" "$private_key"); then
+					printf '%s' "$outbound"
+					return 0
+				fi
+			fi
+		fi
 		normalize_warp_outbound_endpoint "$existing"
 		return 0
 	fi
@@ -344,8 +357,11 @@ ensure_warp_console_outbound() {
 
 get_vless_auth() {
 	if [[ "$USE_VLESS_PQ" != "true" ]]; then
+		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
 		VLESS_DEC=none
+		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
 		VLESS_ENC=none
+		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
 		VLESS_LABEL=
 		return 0
 	fi
@@ -358,8 +374,11 @@ get_vless_auth() {
 		VLESS_ENC=$(jq -r '.encryption // "none"' <<<"$picked")
 		VLESS_LABEL=$(jq -r '.label // ""' <<<"$picked")
 	else
+		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
 		VLESS_DEC=none
+		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
 		VLESS_ENC=none
+		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
 		VLESS_LABEL=
 		log WARN "VLESS auth API failed; falling back to none."
 	fi
@@ -373,43 +392,85 @@ get_x25519_keys() {
 	[[ -n "$X25519_PRIVATE_KEY" && -n "$X25519_PUBLIC_KEY" ]]
 }
 
-build_inbound_payload() {
-	local kind=$1 desired=$2
+build_inbound_stream_json() {
+	local kind=$1 current=${2:-}
+	if [[ -n "$current" && "$current" != "null" && "$kind" == "vision" ]]; then
+		json_field_object "$current" streamSettings
+		return 0
+	fi
+
+	if [[ "$kind" == "vision" ]]; then
+		get_x25519_keys || die "Failed to get X25519 keys for Vision inbound."
+		build_vision_stream_json "traefik:$PORT_LOCAL_TRAEFIK" "$WEBDOMAIN" "$X25519_PRIVATE_KEY" "$X25519_PUBLIC_KEY" "$(generate_short_ids_json 8 8)" "$(build_sockopt_json false AsIs off)" "" ""
+	else
+		build_xhttp_stream_json "$URI_VLESS_XHTTP" "$WEBDOMAIN"
+	fi
+}
+
+build_inbound_components_json() {
+	local kind=$1 desired=$2 current=${3:-}
 	local settings stream sniffing allocate port remark protocol
 	port=$(jq -r ".inbounds.$kind.port" <<<"$desired")
 	remark=$(jq -r ".inbounds.$kind.remark" <<<"$desired")
 	protocol=$(jq -r ".inbounds.$kind.protocol" <<<"$desired")
-	get_vless_auth || true
-	settings=$(jq -nc --arg dec "${VLESS_DEC:-none}" --arg enc "${VLESS_ENC:-none}" --arg label "${VLESS_LABEL:-}" \
-		'{clients: [], decryption: $dec, encryption: $enc} | if ($label|length)>0 then . + {selectedAuth:$label} else . end')
+	settings=$(build_vless_settings_json "$kind" "$current")
+	stream=$(build_inbound_stream_json "$kind" "$current")
 	sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}')
-	allocate=$(jq -nc '{strategy:"always",refresh:5,concurrency:3}')
+	allocate=$(jq -nc '{}')
+	jq -nc \
+		--argjson port "$port" \
+		--arg remark "$remark" \
+		--arg protocol "$protocol" \
+		--argjson settings "$settings" \
+		--argjson stream "$stream" \
+		--argjson sniffing "$sniffing" \
+		--argjson allocate "$allocate" '{
+          up:0, down:0, total:0, remark:$remark, enable:true, expiryTime:0,
+          listen:"", port:$port, protocol:$protocol, settings:$settings,
+          streamSettings:$stream, sniffing:$sniffing, allocate:$allocate
+        }'
+}
 
-	if [[ "$kind" == "vision" ]]; then
-		get_x25519_keys || die "Failed to get X25519 keys for Vision inbound."
-		stream=$(build_vision_stream_json "traefik:$PORT_LOCAL_TRAEFIK" "$WEBDOMAIN" "$X25519_PRIVATE_KEY" "$X25519_PUBLIC_KEY" "$(generate_short_ids_json 8 8)" "$(build_sockopt_json false AsIs off)" "" "")
-	else
-		stream=$(build_xhttp_stream_json "$URI_VLESS_XHTTP" "$WEBDOMAIN")
-	fi
-
+inbound_components_payload() {
+	local components=$1
 	printf '%s\0' \
 		--data-urlencode "up=0" \
 		--data-urlencode "down=0" \
 		--data-urlencode "total=0" \
-		--data-urlencode "remark=$remark" \
+		--data-urlencode "remark=$(jq -r '.remark' <<<"$components")" \
 		--data-urlencode "enable=true" \
 		--data-urlencode "expiryTime=0" \
 		--data-urlencode "listen=" \
-		--data-urlencode "port=$port" \
-		--data-urlencode "protocol=$protocol" \
-		--data-urlencode "settings=$settings" \
-		--data-urlencode "streamSettings=$stream" \
-		--data-urlencode "sniffing=$sniffing" \
-		--data-urlencode "allocate=$allocate"
+		--data-urlencode "port=$(jq -r '.port' <<<"$components")" \
+		--data-urlencode "protocol=$(jq -r '.protocol' <<<"$components")" \
+		--data-urlencode "settings=$(jq -c '.settings' <<<"$components")" \
+		--data-urlencode "streamSettings=$(jq -c '.streamSettings' <<<"$components")" \
+		--data-urlencode "sniffing=$(jq -c '.sniffing' <<<"$components")" \
+		--data-urlencode "allocate=$(jq -c '.allocate' <<<"$components")"
+}
+
+current_inbound_components_json() {
+	local inbound=$1
+	jq -c '{
+      up:(.up // 0),
+      down:(.down // 0),
+      total:(.total // 0),
+      remark:(.remark // ""),
+      enable:(.enable // true),
+      expiryTime:(.expiryTime // 0),
+      listen:(.listen // ""),
+      port:(.port|tonumber),
+      protocol:(.protocol // ""),
+      settings:(.settings | fromjson? // . // {}),
+      streamSettings:(.streamSettings | fromjson? // . // {}),
+      sniffing:(.sniffing | fromjson? // . // {}),
+      allocate:(.allocate | fromjson? // . // {})
+    }' <<<"$inbound"
 }
 
 ensure_inbound() {
-	local kind=$1 desired=$2 inbounds id port protocol remark inbound args
+	local kind=$1 desired=$2 inbounds id port protocol remark inbound args desired_components current_components
+	ENSURE_INBOUND_ID=
 	inbounds=$(inbounds_json)
 	port=$(jq -r ".inbounds.$kind.port" <<<"$desired")
 	protocol=$(jq -r ".inbounds.$kind.protocol" <<<"$desired")
@@ -419,20 +480,29 @@ ensure_inbound() {
 	managed_conflict_check "$inbound" "$remark" "$port"
 
 	if [[ -n "$id" ]]; then
-		log INFO "$kind inbound already exists id=$id port=$port."
-		printf '%s' "$id"
+		desired_components=$(build_inbound_components_json "$kind" "$desired" "$inbound")
+		current_components=$(current_inbound_components_json "$inbound")
+		if json_equal "$current_components" "$desired_components"; then
+			log INFO "$kind inbound already exists id=$id port=$port."
+		elif plan_or_apply "$kind inbound updated id=$id port=$port"; then
+			mapfile -d '' -t args < <(inbound_components_payload "$desired_components")
+			xui_update_inbound "$id" "${args[@]}" || die "Failed to update $kind inbound."
+			http_success_json || die "$kind inbound update failed: $(http_body)"
+			RESTART_XRAY_REQUIRED=1
+		fi
+		ENSURE_INBOUND_ID=$id
 	else
-		mapfile -d '' -t args < <(build_inbound_payload "$kind" "$desired")
+		desired_components=$(build_inbound_components_json "$kind" "$desired")
+		mapfile -d '' -t args < <(inbound_components_payload "$desired_components")
 		if [[ "$MODE" == "plan" ]]; then
 			record_change "PLAN: $kind inbound created port=$port"
-			printf ''
 			return 0
 		fi
 		record_change "APPLY: $kind inbound created port=$port"
 		xui_add_inbound "${args[@]}" || die "Failed to add $kind inbound."
 		http_success_json || die "$kind inbound add failed: $(http_body)"
 		RESTART_XRAY_REQUIRED=1
-		jq -r '.obj.id // empty' "$HTTP_BODY_FILE"
+		ENSURE_INBOUND_ID=$(jq -r '.obj.id // empty' "$HTTP_BODY_FILE")
 	fi
 }
 
@@ -541,8 +611,12 @@ apply_managed_xray() {
 	[[ -n "$raw" ]] || die "Xray response obj is empty."
 	current=$(jq -c . <<<"$raw")
 
-	if [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
+	if [[ "$XRAY_MANAGED_WARP" == "true" && "$XRAY_MANAGED_WARP_CONSOLE" == "true" ]]; then
 		warp_console_ob=$(ensure_warp_console_outbound "$current" || true)
+	elif [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
+		log INFO "Console WARP outbound is disabled; managed WARP balancer will use external SOCKS outbounds only."
+	fi
+	if [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
 		if endpoint_available warp 1080; then
 			warp_socks_available=true
 		else
@@ -579,7 +653,7 @@ apply_managed_xray() {
 		printf '%s' "$obj" >"$tmp_file"
 		xui_update_xray_settings "$tmp_file" || die "Failed to update Xray settings."
 		http_success_json || die "Xray update failed: $(http_body)"
-		RESTART_XRAY_REQUIRED=1
+		RESTART_PANEL_REQUIRED=1
 	fi
 }
 
@@ -610,20 +684,49 @@ cleanup_managed_xray_artifacts() {
 		printf '%s' "$obj" >"$tmp_file"
 		xui_update_xray_settings "$tmp_file" || die "Failed to cleanup managed Xray settings."
 		http_success_json || die "Managed Xray cleanup failed: $(http_body)"
-		RESTART_XRAY_REQUIRED=1
+		RESTART_PANEL_REQUIRED=1
 	fi
 }
 
+wait_tcp_port() {
+	local host=$1 port=$2 timeout=${3:-30} elapsed=0 label
+	label=${4:-"$host:$port"}
+	while ((elapsed < timeout)); do
+		if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
+			exec 3<&-
+			exec 3>&-
+			return 0
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+	log WARN "Timed out waiting for $label after ${timeout}s."
+	return 1
+}
+
+wait_managed_xray_ports() {
+	local timeout=${XRAY_RESTART_PORT_TIMEOUT:-30} failed=0
+	wait_tcp_port 127.0.0.1 "$PORT_LOCAL_VISION" "$timeout" "Vision inbound ${PORT_LOCAL_VISION}" || failed=1
+	wait_tcp_port 127.0.0.1 "$PORT_LOCAL_XHTTP" "$timeout" "XHTTP inbound ${PORT_LOCAL_XHTTP}" || failed=1
+	return "$failed"
+}
+
 restart_if_needed() {
+	local restart_sent=0
 	if [[ "$MODE" != "apply" ]]; then
 		log INFO "Restart skipped in MODE=$MODE."
 		return 0
 	fi
 	if ((RESTART_PANEL_REQUIRED == 1)); then
 		xui_restart_panel || log WARN "Panel restart request failed: $(http_body)"
-	fi
-	if ((RESTART_XRAY_REQUIRED == 1)); then
+		restart_sent=1
+	elif ((RESTART_XRAY_REQUIRED == 1)); then
 		xui_restart_xray || log WARN "Xray restart request failed: $(http_body)"
+		restart_sent=1
+	fi
+	if ((restart_sent == 1)); then
+		sleep "${XRAY_RESTART_SETTLE_SECONDS:-5}"
+		wait_managed_xray_ports || log WARN "One or more managed Xray inbounds are not listening after restart."
 	fi
 }
 
@@ -649,8 +752,10 @@ main() {
 	ensure_custom_geo_resources
 	update_builtin_geofiles_if_enabled
 
-	vision_id=$(ensure_inbound vision "$desired")
-	xhttp_id=$(ensure_inbound xhttp "$desired")
+	ensure_inbound vision "$desired"
+	vision_id=$ENSURE_INBOUND_ID
+	ensure_inbound xhttp "$desired"
+	xhttp_id=$ENSURE_INBOUND_ID
 	ensure_client vision "$vision_id" "$desired"
 	ensure_client xhttp "$xhttp_id" "$desired"
 	apply_managed_xray
