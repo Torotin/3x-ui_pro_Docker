@@ -31,7 +31,7 @@ services:
         fi
         exec /opt/adguardhome/AdGuardHome -s run --config /opt/adguardhome/conf/AdGuardHome.yaml --work-dir /opt/adguardhome/work
     healthcheck:
-      test: ["CMD-SHELL", "nslookup example.com 127.0.0.1 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=5 http://127.0.0.1/ || nc -z 127.0.0.1 80"]
       interval: 30s
       timeout: 10s
       retries: 3

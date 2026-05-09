@@ -14,8 +14,8 @@ services:
         | grep '"IsTor":true'
       interval: 30s
       timeout: 30s
-      retries: 3
-      start_period: 30s
+      retries: 10
+      start_period: 5m
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.11
