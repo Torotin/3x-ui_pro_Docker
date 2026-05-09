@@ -584,8 +584,16 @@ test_final_summary_prints_details() {
 	make_fixture
 	run_installer run final
 	assert_contains "INSTALLATION SUMMARY" "$tmpdir/stdout" "final step must print summary"
-	assert_contains "Domain: example.test" "$tmpdir/stdout" "final summary must include domain"
-	assert_contains "SSH: deployer@127.0.0.1:22022" "$tmpdir/stdout" "final summary must include SSH target"
+	assert_contains "Domain           : example.test" "$tmpdir/stdout" "final summary must include domain"
+	assert_contains "Target           : deployer@127.0.0.1:22022" "$tmpdir/stdout" "final summary must include SSH target"
+	assert_contains "Homepage         : https://example.test/" "$tmpdir/stdout" "final summary must include service URLs"
+	assert_contains "Traefik Dashboard: https://example.test/dashboard/#/" "$tmpdir/stdout" "final summary must include dashboard suffix even when URI is missing"
+	assert_contains "Compose validate : $INSTALL_ROOT/compose.d/run-compose.sh validate" "$tmpdir/stdout" "final summary must include operational commands"
+	assert_contains "Summary saved: $INSTALL_STATE_DIR/install.summary" "$tmpdir/stdout" "final summary must print saved summary path"
+	assert_contains "INSTALLATION SUMMARY" "$INSTALL_STATE_DIR/install.summary" "final step must persist summary file"
+	assert_contains "Password         : configured, not printed" "$INSTALL_STATE_DIR/install.summary" "final summary must not print web password"
+	assert_not_contains "$PASS_WEB" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak web password"
+	assert_not_contains "$PASS_SSH" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak SSH password"
 }
 
 test_doctor_rejects_unsupported_os() {
