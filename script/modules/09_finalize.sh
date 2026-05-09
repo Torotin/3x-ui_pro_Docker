@@ -1,91 +1,64 @@
-#!/bin/bash
-# lib/render.sh — универсальный движок шаблонов на bash + awk
+#!/usr/bin/env bash
+# Final summary and self-update command domain.
 
-render_template() {
-  local tpl="$1"
-  local out="${2:-/dev/stdout}"
+install_final_command() {
+	install_load_state_env
+	run_cmd final.summary printf 'installation summary rendered\n'
+	cat <<SUMMARY
+===== INSTALLATION SUMMARY =====
+Domain: ${WEBDOMAIN:-unspecified}
+Public IPv4: ${PUBLIC_IPV4:-unspecified}
+Public IPv6: ${PUBLIC_IPV6:-unspecified}
+SSH: ${USER_SSH:-unspecified}@${PUBLIC_IPV4:-127.0.0.1}:${PORT_REMOTE_SSH:-unspecified}
 
-  awk '
-    BEGIN { skip = 0 }
-    # хелпер: получить окружение
-    function getenv(n,   v) {
-      v = ENVIRON[n]
-      return (v == "" ? "" : v)
-    }
-    {
-      # 1) Обработка {{#if VAR}}
-      if ($0 ~ /^\{\{#if[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)\}\}$/) {
-        match($0, /^\{\{#if[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)\}\}$/, m)
-        val = getenv(m[1])
-        if (val == "" || val == "false") skip = 1
-        else skip = 0
-        next
-      }
-      # 2) {{else}} / {{/if}}
-      if ($0 == "{{else}}") { skip = !skip; next }
-      if ($0 == "{{/if}}")  { skip = 0;      next }
-      if (skip) next
-
-      line = $0
-      out_line = ""
-
-      # 3) Подстановка {{VAR:-default}} и {{VAR}}
-      while (match(line, /\{\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]+)?\}\}/)) {
-        token  = substr(line, RSTART, RLENGTH)
-        prefix = substr(line, 1, RSTART-1)
-        suffix = substr(line, RSTART+RLENGTH)
-
-        # внутри без {{ }}
-        inner = token; sub(/^\{\{/, "", inner); sub(/\}\}$/, "", inner)
-
-        # разбиваем на имя и дефолт по ":-"
-        split(inner, parts, ":-")
-        name  = parts[1]
-        defval = ""
-        if (length(parts) > 1) defval = parts[2]
-
-        value = getenv(name)
-        if (value == "") value = defval
-
-        out_line = out_line prefix value
-        line     = suffix
-      }
-      # остаток строки
-      out_line = out_line line
-      print out_line
-    }
-  ' "$tpl" > "$out"
+Service URLs:
+- Homepage: https://${WEBDOMAIN:-example.invalid}/${URI_HOMEPAGE:-}
+- 3X-UI Panel: https://${WEBDOMAIN:-example.invalid}/${URI_PANEL_PATH:-}
+- AdGuard Home: https://${WEBDOMAIN:-example.invalid}/${URI_ADGUARD_PANEL:-}
+- Dozzle: https://${WEBDOMAIN:-example.invalid}/${URI_DOZZLE:-}
+- Traefik Dashboard: https://${WEBDOMAIN:-example.invalid}/${URI_TRAEFIK_DASHBOARD:-}/dashboard/#/
+SUMMARY
 }
 
-
-# msg_final: render install summary and emit each non-empty line via log
-msg_final() {
-    local PROJECT_ROOT="${PROJECT_ROOT:-.}"
-    local tpl="$PROJECT_ROOT/template/install.summary.template"
-    local out="$PROJECT_ROOT/install.summary"
-
-    log "INFO" "Preparing final summary"
-    log "DEBUG" "Summary template: $tpl"
-    : > "$out"
-
-    # determine flags
-    export SSH_ENABLED=$(
-      [[ -n "$PORT_REMOTE_SSH" && -n "$USER_SSH" ]] && echo true || echo false
-    )
-    export IPV6_ENABLED=$(
-      [[ -n "$PUBLIC_IPV6" && "$PUBLIC_IPV6" != "::" && "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] \
-        && echo true || echo false
-    )
-    log "DEBUG" "SSH_ENABLED=$SSH_ENABLED, IPV6_ENABLED=$IPV6_ENABLED"
-
-    # render and capture
-    render_template "$tpl" "$out"
-
-    # log each non-empty line from summary
-    log "INFO" "Installation summary:"
-    while IFS= read -r line; do
-        [[ -n "$line" ]] && log "INFO" "$line"
-    done < "$out"
-
-    log "OK" "Final summary delivered"
+install_self_update_command() {
+	local branch check=0 yes=0 arg
+	branch=$(config_get update.branch "$INSTALL_DEFAULT_BRANCH")
+	while (($# > 0)); do
+		arg=$1
+		shift
+		case "$arg" in
+		--branch)
+			(($# > 0)) || die "--branch requires a value"
+			branch=$1
+			shift
+			;;
+		--check) check=1 ;;
+		--yes) yes=1 ;;
+		*) die "unknown self-update option: $arg" ;;
+		esac
+	done
+	config_set update.branch "$branch"
+	if ((check)); then
+		run_cmd self-update.check git ls-remote --heads "$INSTALL_REPO_URL" "$branch"
+		printf 'self-update: checked %s\n' "$branch"
+		return 0
+	fi
+	if ((yes == 0)) && [[ "$INSTALL_NONINTERACTIVE" == "1" ]]; then
+		die "self-update apply requires --yes in non-interactive mode"
+	fi
+	local tmp
+	tmp=$(mktemp -d)
+	run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp"
+	local diff_rc
+	set +e
+	run_cmd self-update.diff diff -ruN "$SCRIPT_DIR" "$tmp/script"
+	diff_rc=$?
+	set -e
+	if ((diff_rc > 1)); then
+		rm -rf "$tmp"
+		die "self-update diff failed"
+	fi
+	run_cmd self-update.apply rsync -a --delete --exclude install-state "$tmp/script/" "$SCRIPT_DIR/"
+	rm -rf "$tmp"
+	printf 'self-update: applied %s\n' "$branch"
 }
