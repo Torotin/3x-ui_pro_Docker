@@ -1,306 +1,154 @@
-#!/bin/bash
-# lib/01_env.sh
-# Bash utilities for .env file management and environment variable handling
+#!/usr/bin/env bash
+# Environment rendering command.
 
-# --- CONFIGURABLES ---
-PROFILE_FILE="/etc/profile.d/custom_env.sh"
-
-# --- RANDOM GENERATORS (STUBS, TO BE IMPLEMENTED) ---
-generate_random_string() {
-    local min_len="${1:-16}"
-    local max_len="${2:-32}"
-    local len=$((RANDOM % (max_len - min_len + 1) + min_len))
-    tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len"
+template_dir() {
+	printf '%s/template\n' "$SCRIPT_DIR"
 }
 
-generate_random_port() {
-    # Returns a random port in the range 20000-65000
-    echo $((RANDOM % 45000 + 20000))
+render_env_template() {
+	local template=$1 output=$2
+	mkdir -p "$(dirname "$output")"
+	if command -v envsubst >/dev/null 2>&1; then
+		envsubst <"$template" >"$output"
+	else
+		cp -- "$template" "$output"
+	fi
 }
 
-# --- ENV FILE GENERATION ---
-generate_env_file() {
-    local template_file="$1"
-    local output_file="$2"
-
-    if [[ ! -f "$template_file" ]]; then
-        log "ERROR" "Template not found: $template_file"
-        return 1
-    fi
-
-    log "INFO" "Generating $output_file from template $template_file"
-    envsubst < "$template_file" > "$output_file"
-
-    if [[ ! -s "$output_file" ]]; then
-        log "ERROR" "File $output_file is empty or was not created"
-        return 1
-    fi
-
-    log "OK" "File generated: $output_file"
+detect_public_ip() {
+	local family=$1 label="ip.detect.ipv4" url="https://api.ipify.org"
+	if [[ "$family" == "6" ]]; then
+		label="ip.detect.ipv6"
+		url="https://api6.ipify.org"
+	fi
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd "$label" curl -fsSL "$url"
+		if [[ "$family" == "6" ]]; then
+			printf '2001:db8::10\n'
+		else
+			printf '198.51.100.10\n'
+		fi
+		return 0
+	fi
+	curl -fsSL --max-time 5 "$url" 2>/dev/null || true
 }
 
-# --- PERSIST VARIABLE TO PROFILE ---
-update_profile_custom_env() {
-    local var_name="$1"
-    local var_value="${!var_name}"
-
-    [[ "$PERSIST_ENV" == true ]] || return 0
-
-    # Create file if missing
-    if [[ ! -f "$PROFILE_FILE" ]]; then
-        touch "$PROFILE_FILE"
-        chmod +x "$PROFILE_FILE"
-        log "INFO" "Created profile file: $PROFILE_FILE"
-    fi
-
-    # Remove old value and append new
-    sed -i "/^export ${var_name}=/d" "$PROFILE_FILE"
-    echo "export ${var_name}=\"${var_value}\"" >> "$PROFILE_FILE"
-    log "DEBUG" "Exported to $PROFILE_FILE: $var_name=${var_value}"
-
-    # Remove duplicates
-    sort -u "$PROFILE_FILE" -o "$PROFILE_FILE"
+ensure_env_defaults() {
+	: "${WEBDOMAIN:=example.invalid}"
+	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
+		PUBLIC_IPV4=$(detect_public_ip 4)
+		: "${PUBLIC_IPV4:=127.0.0.1}"
+	fi
+	if [[ -z "${PUBLIC_IPV6:-}" ]]; then
+		PUBLIC_IPV6=$(detect_public_ip 6)
+	fi
+	: "${PUBLIC_IPV6:=$PUBLIC_IPV4}"
+	: "${USER_WEB:=}"
+	: "${PASS_WEB:=}"
+	: "${USER_SSH:=}"
+	: "${PASS_SSH:=}"
+	: "${SSH_PBK:=}"
+	: "${PORT_REMOTE_SSH:=$(generate_random_port 20000 65000)}"
+	: "${URI_TRAEFIK_DASHBOARD:=$(generate_random_string 12 16)}"
+	: "${URI_DOZZLE:=$(generate_random_string 12 16)}"
+	: "${URI_PANEL_PATH:=$(generate_random_string 12 16)}"
+	: "${URI_SUB_PATH:=$(generate_random_string 12 16)}"
+	: "${URI_JSON_PATH:=$(generate_random_string 12 16)}"
+	: "${URI_CLASH_PATH:=$(generate_random_string 12 16)}"
+	: "${URI_VLESS_XHTTP:=$(generate_random_string 12 16)}"
+	: "${URI_SUB2SING:=$(generate_random_string 12 16)}"
+	: "${URI_ADGUARD_PANEL:=$(generate_random_string 12 16)}"
+	: "${URI_ADGUARD_DOH:=$(generate_random_string 12 16)}"
+	: "${URI_HOMEPAGE:=$(generate_random_string 12 16)}"
+	: "${URI_TEST:=$(generate_random_string 12 16)}"
+	: "${PORT_LOCAL_CADDYWEB:=$(generate_random_port)}"
+	: "${PORT_LOCAL_SUB2SING:=$(generate_random_port)}"
+	: "${PORT_LOCAL_DOZZLE:=$(generate_random_port)}"
+	: "${PORT_LOCAL_VLESS_SUBSCRIBE:=$(generate_random_port)}"
+	: "${PORT_LOCAL_VLESS_PANEL:=$(generate_random_port)}"
+	: "${PORT_LOCAL_XHTTP:=$(generate_random_port)}"
+	: "${PORT_LOCAL_VISION:=$(generate_random_port)}"
+	: "${PORT_LOCAL_CROWDSEC_API:=$(generate_random_port)}"
+	: "${PORT_LOCAL_CROWDSEC_CADDY:=$(generate_random_port)}"
+	: "${PORT_LOCAL_CROWDSEC_APPSEC:=$(generate_random_port)}"
+	: "${PORT_LOCAL_CROWDSEC_PROMETHEUS:=$(generate_random_port)}"
+	: "${PORT_TEST:=$(generate_random_port)}"
+	: "${CROWDSEC_API_KEY_CADDY:=$(generate_random_string 32 48)}"
+	: "${CROWDSEC_API_KEY_TRAEFIK:=$(generate_random_string 32 48)}"
+	: "${CROWDSEC_API_KEY_FIREWALL:=$(generate_random_string 32 48)}"
+	: "${HT_PASS_ENCODED:=}"
+	: "${ADGUARD_ADMIN_HASH:=}"
+	export WEBDOMAIN PUBLIC_IPV4 PUBLIC_IPV6 USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
+	export URI_TRAEFIK_DASHBOARD URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
+	export URI_VLESS_XHTTP URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TEST
+	export PORT_LOCAL_CADDYWEB PORT_LOCAL_SUB2SING PORT_LOCAL_DOZZLE PORT_LOCAL_VLESS_SUBSCRIBE
+	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_CROWDSEC_API
+	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
+	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 }
 
-# --- PROMPT FOR REQUIRED VARIABLE ---
-read_required_var() {
-    local var_name="$1"
-    local prompt_text="$2"
-    local default_value="${3:-}"
-    local input
-
-    [[ -n "${!var_name:-}" ]] && return 0
-
-    echo -ne "$prompt_text"
-    [[ -n "$default_value" ]] && echo -n " [$default_value]"
-    echo -n ": "
-    IFS= read -r input
-
-    [[ -z "$input" && -n "$default_value" ]] && input="$default_value"
-
-    if [[ -n "$input" ]]; then
-        export "$var_name"="$input"
-        return 0
-    fi
-
-    log "WARN" "$var_name not set"
-    return 1
+generate_htpasswd_if_needed() {
+	[[ -n "${USER_WEB:-}" ]] || return 0
+	if [[ -n "${HT_PASS_ENCODED:-}" ]]; then
+		generate_adguard_hash_from_htpasswd
+		return 0
+	fi
+	[[ -n "${PASS_WEB:-}" ]] || die "PASS_WEB is required to generate HT_PASS_ENCODED"
+	local raw_htpasswd
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		raw_htpasswd="${USER_WEB}"':$2y$05$mockhash'
+	elif command -v htpasswd >/dev/null 2>&1; then
+		if ! raw_htpasswd=$(htpasswd -nBb "$USER_WEB" "$PASS_WEB" 2>/dev/null); then
+			die "htpasswd failed to generate hash"
+		fi
+		raw_htpasswd=$(printf '%s' "$raw_htpasswd" | tr -d '\r\n')
+		verify_htpasswd_entry "$raw_htpasswd"
+	else
+		die "htpasswd is required to generate HT_PASS_ENCODED"
+	fi
+	HT_PASS_ENCODED=${raw_htpasswd//$/\$\$}
+	generate_adguard_hash_from_htpasswd
+	export HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 }
 
-# --- LOAD EXISTING ENV FILE ---
-load_existing_env_file() {
-    local env_file="$1"
-    if [[ -f "$env_file" ]]; then
-        log "INFO" "Loading variables from: $env_file"
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            line="${line#"${line%%[![:space:]]*}"}"   # trim leading spaces
-            [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-            [[ "$line" =~ ^export[[:space:]]+ ]] && line="${line#export }"
-
-            if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-                local key="${BASH_REMATCH[1]}"
-                local value="${BASH_REMATCH[2]}"
-
-                # Strip surrounding quotes if present
-                if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
-                    value="${value:1:${#value}-2}"
-                elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
-                    value="${value:1:${#value}-2}"
-                fi
-
-                export "$key"="$value"
-            else
-                log "WARN" "Skipping malformed line in $env_file: $line"
-            fi
-        done < "$env_file"
-    else
-        log "WARN" "File $env_file not found. Will create a new one."
-    fi
+verify_htpasswd_entry() {
+	local raw_htpasswd=$1 tmpfile verify_output
+	tmpfile=$(mktemp) || die "could not create temporary htpasswd verification file"
+	printf '%s\n' "$raw_htpasswd" >"$tmpfile"
+	if ! verify_output=$(htpasswd -vb "$tmpfile" "$USER_WEB" "$PASS_WEB" 2>&1); then
+		rm -f "$tmpfile"
+		if grep -qiE 'unknown option|illegal option|usage' <<<"$verify_output"; then
+			log WARN "htpasswd verification unsupported; using generated hash"
+			return 0
+		fi
+		die "htpasswd verification failed"
+	fi
+	rm -f "$tmpfile"
 }
 
-# --- DETECT PUBLIC IP ADDRESSES ---
-detect_public_ips() {
-    export PUBLIC_IPV4=$(curl -s --max-time 3 -4 ifconfig.me || echo "")
-    export PUBLIC_IPV6=$(curl -s --max-time 3 -6 ifconfig.me || echo "")
-
-    if [[ -z "$PUBLIC_IPV4" ]]; then
-        exit_error "Could not determine external IPv4 address"
-    fi
-    if [[ -z "$PUBLIC_IPV6" || "$PUBLIC_IPV6" == "::" ]]; then
-        export PUBLIC_IPV6="$PUBLIC_IPV4"
-        log "WARN" "IPv6 not obtained or invalid (::), using IPv4 instead"
-    fi
-    log "DEBUG" "PUBLIC_IPV4: $PUBLIC_IPV4"
-    log "DEBUG" "PUBLIC_IPV6: $PUBLIC_IPV6"
+generate_adguard_hash_from_htpasswd() {
+	[[ -z "${ADGUARD_ADMIN_HASH:-}" ]] || return 0
+	[[ -n "${HT_PASS_ENCODED:-}" ]] || return 0
+	ADGUARD_ADMIN_HASH=${HT_PASS_ENCODED#*:}
+	ADGUARD_ADMIN_HASH=${ADGUARD_ADMIN_HASH//\$\$/\$}
+	export ADGUARD_ADMIN_HASH
 }
 
-# --- POPULATE ENV VARS FROM TEMPLATE ---
-populate_env_vars_from_template() {
-    local template_file="$1"
-
-    # Extract all variable names from template
-    local vars
-    vars=$(grep -oP '\$\{?\K[A-Za-z_][A-Za-z0-9_]*(?=\}?)' "$template_file" | sort -u)
-
-    for var in $vars; do
-        if [[ -z "${!var}" ]]; then
-            case "$var" in
-                CROWDSEC_API_KEY_*|crowdsec_api_key_*)
-                    export "$var"="$(generate_random_string 32 48)"
-                    ;;
-                URI_*)
-                    export "$var"="$(generate_random_string 16 32)"
-                    ;;
-                PORT_*)
-                    export "$var"="$(generate_random_port)"
-                    ;;
-                USER_*)
-                    read_required_var "$var" "Enter username ($var)" || {
-                        export "$var"="$(generate_random_string 8 12)"
-                        log "WARN" "$var not set, generated automatically: ${!var}"
-                    }
-                    ;;
-                PASS_*)
-                    read_required_var "$var" "Enter password ($var)" || {
-                        export "$var"="$(generate_random_string 16 24)"
-                        log "WARN" "$var not set, generated automatically: ${!var}"
-                    }
-                    ;;
-                SSH_PBK)
-                    read_required_var "$var" "Enter public key ($var)" || {
-                        export "$var"=""
-                        log "WARN" "Empty data set for $var. Replace manually in .env"
-                    }
-                    ;;
-                WEBDOMAIN)
-                    read_required_var "$var" "Enter domain ($var)"
-                    ;;
-                *)
-                    export "$var"=""
-                    ;;
-            esac
-            log "INFO" "[AUTO] Set: $var=${!var}"
-        else
-            log "DEBUG" "Variable already set: $var=${!var}"
-        fi
-
-        update_profile_custom_env "$var"
-    done
+install_env_command() {
+	require_writable_target "$INSTALL_STATE_DIR" "installer state directory"
+	require_writable_target "$INSTALL_STATE_DIR/backups" "installer backup directory"
+	require_writable_target "$INSTALL_ROOT/compose.d" "compose env directory"
+	install_load_state_env
+	ensure_env_defaults
+	generate_htpasswd_if_needed
+	local templates install_env compose_env
+	templates=$(template_dir)
+	install_env="$INSTALL_STATE_DIR/install.env"
+	compose_env="$INSTALL_ROOT/compose.d/.env"
+	backup_file "$install_env"
+	backup_file "$compose_env"
+	render_env_template "$templates/install.env.template" "$install_env"
+	render_env_template "$templates/docker.env.template" "$compose_env"
+	run_cmd env.render printf 'rendered env files\n'
+	printf 'rendered:\n- %s\n- %s\n' "$install_env" "$compose_env"
 }
-
-generate_htpasswd() {
-  if [[ -n "$USER_WEB" ]]; then
-    if [[ -n "$HT_PASS_ENCODED" ]]; then
-      if [[ "$HT_PASS_ENCODED" =~ ^[^:]+:.*\$ ]]; then
-        log "DEBUG" "HT_PASS_ENCODED already set — skipping htpasswd generation."
-        return 0
-      else
-        log "WARN" "HT_PASS_ENCODED looks invalid; regenerating htpasswd."
-        HT_PASS_ENCODED=""
-      fi
-    fi
-
-    if [[ -z "$PASS_WEB" ]]; then
-      log "ERROR" "USER_WEB is set but PASS_WEB is missing or empty."
-      return 1
-    fi
-
-    if ! command -v htpasswd >/dev/null 2>&1; then
-      log "ERROR" "htpasswd binary not found; cannot generate htpasswd."
-      return 1
-    fi
-
-    log "INFO" "Generating htpasswd for user $USER_WEB..."
-    local raw_htpasswd
-    # Use bcrypt; trim newlines in case htpasswd outputs them (e.g., on some platforms).
-    if ! raw_htpasswd=$(htpasswd -nBb "$USER_WEB" "$PASS_WEB" 2>/dev/null); then
-      log "ERROR" "htpasswd failed to generate hash."
-      return 1
-    fi
-    raw_htpasswd=$(printf '%s' "$raw_htpasswd" | tr -d '\r\n')
-
-    # Verify the generated entry matches the provided credentials when supported.
-    local verify_status=0
-    local verify_output=""
-    local tmpfile=""
-    local verify_attempted=false
-    if ! tmpfile=$(mktemp); then
-      log "ERROR" "Could not create temp file for htpasswd verification."
-      return 1
-    fi
-    printf '%s\n' "$raw_htpasswd" > "$tmpfile"
-
-    verify_output=$(htpasswd -vb "$tmpfile" "$USER_WEB" "$PASS_WEB" 2>&1)
-    verify_attempted=true
-    if [[ $? -ne 0 ]]; then
-      if grep -qiE 'unknown option|illegal option|usage' <<<"$verify_output"; then
-        log "WARN" "htpasswd binary does not support verification; using generated hash without verification."
-        verify_status=2
-      else
-        log "WARN" "htpasswd verification failed; regenerating hash and retrying..."
-        if ! raw_htpasswd=$(htpasswd -nBb "$USER_WEB" "$PASS_WEB" 2>/dev/null); then
-          rm -f "$tmpfile"
-          log "ERROR" "htpasswd failed to regenerate hash during verification."
-          return 1
-        fi
-        raw_htpasswd=$(printf '%s' "$raw_htpasswd" | tr -d '\r\n')
-        printf '%s\n' "$raw_htpasswd" > "$tmpfile"
-        verify_output=$(htpasswd -vb "$tmpfile" "$USER_WEB" "$PASS_WEB" 2>&1)
-        if [[ $? -ne 0 ]]; then
-          log "WARN" "htpasswd verification failed after retry; using generated hash without verification."
-          verify_status=1
-        else
-          verify_status=0
-        fi
-      fi
-    fi
-    rm -f "$tmpfile"
-    # Escape $ so docker compose does not try to expand $apr1... when substituting variables;
-    # compose will convert $$ back to $ inside the container.
-    HT_PASS_ENCODED="${raw_htpasswd//$/\$\$}"
-
-    if [[ $verify_status -eq 0 ]]; then
-      $verify_attempted && log "INFO" "htpasswd verification passed."
-      log "OK" "htpasswd successfully generated."
-    elif [[ $verify_status -eq 2 ]]; then
-      log "OK" "htpasswd generated; verification skipped (unsupported by binary)."
-    else
-      log "OK" "htpasswd generated without verified credentials."
-    fi
-  else
-    log "DEBUG" "USER_WEB is not set — skipping htpasswd generation."
-  fi
-}
-
-# --- MAIN SCRIPT FUNCTION ---
-envfile_script() {
-    : "${PERSIST_ENV:=false}"  # Default to false if not set
-
-    local ENV_FILE="${1:-$ENV_FILE}"
-    local ENV_TEMPLATE_FILE="${2:-$ENV_TEMPLATE_FILE}"
-
-    log "INFO" "Processing .env file: $ENV_FILE"
-
-    [[ -f "$ENV_TEMPLATE_FILE" ]] || exit_error "Template not found: $ENV_TEMPLATE_FILE"
-    log "INFO" "Template found: $ENV_TEMPLATE_FILE"
-
-    load_existing_env_file "$ENV_FILE"
-    detect_public_ips
-    populate_env_vars_from_template "$ENV_TEMPLATE_FILE"
-    generate_htpasswd
-    backup_file "$ENV_FILE"
-    generate_env_file "$ENV_TEMPLATE_FILE" "$ENV_FILE"
-    log "INFO" ".env file updated: $ENV_FILE"
-}
-
-# --- SANITIZE ENV FILE (REMOVE COLORS, DATES) ---
-sanitize_env_file() {
-    local env_file="$1"
-    sed -i \
-        -e 's/\\033\[[0-9;]*m//g' \
-        -e 's/\x1b\[[0-9;]*m//g' \
-        -e 's/\[202[0-9]-[0-9]\{2\}-[0-9]\{2\}.*$//' \
-        "$env_file"
-}
-
-# --- END OF FILE ---

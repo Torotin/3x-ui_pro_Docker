@@ -1,521 +1,253 @@
-#!/bin/bash
-# lib/02_docker.sh
-# Enhanced Docker management functions: install, uninstall, clear, compose, and network setup.
+#!/usr/bin/env bash
+# Docker command domain.
 
-# === Глобальные переменные проекта ===
-: "${PROJECT_ROOT:=/mnt/share}"
-: "${BACKUP_DIR:=${PROJECT_ROOT}/backup}"
-: "${TEMPLATE_DIR:=${PROJECT_ROOT}/template}"
-: "${DOCKER_DAEMON_FILE:=/etc/docker/daemon.json}"
-: "${DOCKER_NETWORK_NAME:=my-ipv6-network}"
-: "${DOCKER_IPV6_SUBNET:=fd00:dead:beef::/64}"
-
-# --- Ensure Docker directory exists ---
-ensure_docker_dir() {
-  if [[ ! -d "$DOCKER_DIR" ]]; then
-    mkdir -p "$DOCKER_DIR" || exit_error "Failed to create directory: $DOCKER_DIR"
-    log "INFO" "Docker directory created: $DOCKER_DIR"
-  else
-    log "INFO" "$DOCKER_DIR already exists"
-  fi
+install_docker_command() {
+	require_opt_in --destroy-docker-data "$@"
+	printf 'WARNING: Docker data will be destroyed\n'
+	install_docker_setup_repository
+	if install_docker_available; then
+		printf 'Docker found; destroying existing Docker data\n'
+		install_docker_wipe
+	else
+		printf 'Docker command not found; installing Docker engine\n'
+	fi
+	install_docker_stop_services
+	install_docker_purge_data_dirs
+	install_docker_install_packages
+	install_docker_configure_daemon
+	run_cmd docker.service.enable systemctl enable docker
+	run_cmd docker.service.restart systemctl restart docker
+	install_docker_networks
 }
 
-# --- Get Linux distribution ---
-get_linux_distro() {
-    lsb_release -si | tr '[:upper:]' '[:lower:]'
+install_docker_available() {
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		[[ "${INSTALL_MOCK_DOCKER_PRESENT:-1}" == "1" ]]
+		return
+	fi
+	command -v docker >/dev/null 2>&1
 }
 
-# --- Docker Repository Setup ---
-docker_install_repo() {
-    local distro
-    distro=$(get_linux_distro)
-    case "$distro" in
-        ubuntu|debian)
-            log "INFO" "Setting up Docker repository for Ubuntu/Debian."
-            mkdir -p /etc/apt/keyrings
-            if [ -f /etc/apt/keyrings/docker.gpg ]; then
-                log "INFO" "Key file /etc/apt/keyrings/docker.gpg exists. Removing before download."
-                rm -f /etc/apt/keyrings/docker.gpg || log "ERROR" "Failed to remove old key file."
-            fi
-            curl -fsSL "https://download.docker.com/linux/$distro/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg || log "ERROR" "Failed to set up Docker GPG key."
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-            apt update &>/dev/null || log "ERROR" "Failed to update packages after repo setup."
-            ;;
-        centos|fedora)
-            log "INFO" "Setting up Docker repository for CentOS/Fedora."
-            yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo || log "ERROR" "Failed to add Docker repo."
-            ;;
-        *)
-            log "ERROR" "Distribution $distro not supported."
-            exit 1
-            ;;
-    esac
+install_docker_os_id() {
+	local id
+	id=$(apt_os_id)
+	case "$id" in
+	ubuntu | debian) printf '%s\n' "$id" ;;
+	*) die "unsupported Docker OS: $id" ;;
+	esac
 }
 
-# --- Docker Uninstall and Cleanup ---
-docker_uninstall() {
-    log "INFO" "Starting Docker uninstall."
-    if command_exists docker; then
-        docker_clear
-    else
-        log "INFO" "Docker not installed. Skipping removal."
-    fi
-
-    local distro
-    distro=$(get_linux_distro)
-    case "$distro" in
-        ubuntu|debian)
-            log "INFO" "Removing Docker packages."
-            apt remove -y docker-ce docker-ce-cli containerd.io &>/dev/null || log "ERROR" "Failed to remove Docker."
-            ;;
-        centos|fedora)
-            log "INFO" "Removing Docker packages via yum."
-            yum remove -y docker-ce docker-ce-cli containerd.io &>/dev/null || log "ERROR" "Failed to remove Docker."
-            ;;
-        *)
-            log "ERROR" "Distribution $distro not supported."
-            exit 1
-            ;;
-    esac
-
-    log "INFO" "Removing Docker data."
-    rm -rf /var/lib/docker /var/lib/containerd &>/dev/null || log "ERROR" "Failed to remove Docker data."
+install_docker_setup_repository() {
+	local os_id codename arch source_line keyring=/etc/apt/keyrings/docker.gpg source_file=/etc/apt/sources.list.d/docker.list
+	os_id=$(install_docker_os_id)
+	codename=$(apt_os_codename)
+	[[ -n "$codename" ]] || die "could not detect OS codename for Docker repository"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		arch="${INSTALL_MOCK_ARCH:-amd64}"
+	else
+		arch=$(dpkg --print-architecture)
+	fi
+	source_line="deb [arch=$arch signed-by=$keyring] https://download.docker.com/linux/$os_id $codename stable"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.repo.prereqs env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg lsb-release
+		run_cmd docker.repo.keyrings install -d -m 0755 /etc/apt/keyrings
+		install_docker_write_repo_key "$os_id" "$keyring"
+		run_cmd docker.repo.write printf '%s\n' "$source_line"
+		run_cmd docker.repo.update apt-get update
+		printf 'Docker APT repository configured for %s %s\n' "$os_id" "$codename"
+		return 0
+	fi
+	run_cmd docker.repo.prereqs env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg lsb-release
+	run_cmd docker.repo.keyrings install -d -m 0755 /etc/apt/keyrings
+	run_cmd docker.repo.key.remove rm -f "$keyring"
+	install_docker_write_repo_key "$os_id" "$keyring"
+	run_cmd docker.repo.key.chmod chmod a+r "$keyring"
+	local tmp
+	tmp=$(mktemp)
+	printf '%s\n' "$source_line" >"$tmp"
+	run_cmd docker.repo.write install -m 0644 "$tmp" "$source_file"
+	rm -f "$tmp"
+	run_cmd docker.repo.update apt-get update
+	printf 'Docker APT repository configured for %s %s\n' "$os_id" "$codename"
 }
 
-docker_clear() {
-    log "INFO" "Starting full Docker cleanup."
-    if ! command_exists docker; then
-        log "WARN" "Docker command not available. Skipping cleanup."
-        return 1
-    fi
-
-    # Stop all containers
-    local containers
-    containers=$(docker ps -aq)
-    if [ -n "$containers" ]; then
-        log "INFO" "Stopping all containers..."
-        docker stop $containers &>/dev/null || log "INFO" "Some containers could not be stopped."
-        log "INFO" "Removing all containers..."
-        docker rm $containers &>/dev/null || log "INFO" "Some containers could not be removed."
-    else
-        log "INFO" "No containers to stop or remove."
-    fi
-
-    # Remove all images
-    local images
-    images=$(docker images -q)
-    if [ -n "$images" ]; then
-        log "INFO" "Removing all images..."
-        docker rmi $images --force &>/dev/null || log "INFO" "Some images could not be removed."
-    else
-        log "INFO" "No images to remove."
-    fi
-
-    # Remove all volumes
-    local volumes
-    volumes=$(docker volume ls -q)
-    if [ -n "$volumes" ]; then
-        log "INFO" "Removing all volumes..."
-        docker volume rm $volumes &>/dev/null || log "INFO" "Some volumes could not be removed."
-    else
-        log "INFO" "No volumes to remove."
-    fi
-
-    # Remove all custom networks
-    local networks
-    networks=$(docker network ls --filter type=custom -q)
-    if [ -n "$networks" ]; then
-        log "INFO" "Removing all custom networks..."
-        docker network rm $networks &>/dev/null || log "INFO" "Some networks could not be removed."
-    else
-        log "INFO" "No custom networks to remove."
-    fi
-
-    # Prune system
-    log "INFO" "Pruning Docker system (cache, temp data)..."
-    docker system prune -a --volumes --force &>/dev/null || log "ERROR" "Error during Docker system prune."
-
-    # Restart Docker
-    log "INFO" "Restarting Docker service..."
-    systemctl restart docker &>/dev/null || log "ERROR" "Failed to restart Docker service."
-
-    log "INFO" "Docker cleanup complete."
+install_docker_write_repo_key() {
+	local os_id=$1 keyring=$2 url
+	url="https://download.docker.com/linux/$os_id/gpg"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.repo.gpg printf 'curl -fsSL %s | gpg --dearmor -o %s\n' "$url" "$keyring"
+		return 0
+	fi
+	runner_log docker.repo.gpg bash -c 'curl -fsSL "$1" | gpg --dearmor -o "$2"' _ "$url" "$keyring"
+	curl -fsSL "$url" | gpg --dearmor -o "$keyring"
 }
 
-# --- Docker Installation ---
-docker_install() {
-    log "INFO" "Starting Docker installation."
-
-    if command_exists docker; then
-        log "INFO" "Docker already installed. Removing..."
-        docker_clear
-        docker_uninstall
-    else
-        log "INFO" "Docker not found. Proceeding with installation..."
-    fi
-
-    local distro
-    distro=$(get_linux_distro)
-    case "$distro" in
-        ubuntu|debian)
-            log "INFO" "🔄 Updating package list..."
-            apt-get update -qq >/dev/null || exit_error "Error updating packages!"
-
-            log "INFO" "📦 Installing dependencies..."
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            ca-certificates curl gnupg lsb-release >/dev/null || \
-            exit_error "Failed to install dependencies!"
-
-            log "INFO" "⚙ Setting up Docker repository..."
-            docker_install_repo
-            docker_install_packages
-            ;;
-
-        centos|fedora|rocky|almalinux|amazonlinux)
-            log "INFO" "🔄 Installing yum-utils and setting up repository..."
-            yum install -y -q yum-utils >/dev/null || \
-              exit_error "Failed to install yum-utils!"
-            docker_install_repo
-            docker_install_packages
-            ;;
-
-        *)
-            exit_error "Distribution '$distro' not supported."
-            ;;
-    esac
-
-    log "INFO" "🚀 Enabling Docker to start on boot..."
-    if systemctl enable --now docker >/dev/null 2>&1; then
-        log "INFO" "Docker started and enabled at boot."
-    else
-        log "ERROR" "Error starting Docker!"
-        systemctl status docker --no-pager -l
-        exit 1
-    fi
-
-    log "INFO" "Docker installed successfully!"
+install_docker_install_packages() {
+	run_cmd docker.install.packages env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
-docker_install_packages() {
-    local distro
-    distro=$(get_linux_distro)
-    case "$distro" in
-        ubuntu|debian)
-            log "INFO" "Installing Docker and related components for Ubuntu/Debian."
-            apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin &>/dev/null || log "ERROR" "Failed to install Docker."
-            ;;
-        centos|fedora)
-            log "INFO" "Installing Docker and related components for CentOS/Fedora."
-            yum install -y docker-ce docker-ce-cli containerd.io &>/dev/null || log "ERROR" "Failed to install Docker."
-            ;;
-        *)
-            log "ERROR" "Distribution $distro not supported."
-            exit 1
-            ;;
-    esac
+install_docker_stop_services() {
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.service.stop systemctl stop docker containerd
+		return 0
+	fi
+	run_cmd docker.service.stop systemctl stop docker containerd || true
 }
 
-# --- Docker IPv6 Setup ---
-docker_setup_ipv6() {
-    log "INFO" "Configuring IPv6 for Docker."
-    local daemon_file="$DOCKER_DAEMON_FILE"
-    if [ -f "$daemon_file" ]; then
-        log "WARN" "$daemon_file exists. Creating backup."
-        cp "$daemon_file" "${daemon_file}.bak.$(date +"%Y%m%d%H%M%S")"
-    fi
-    mkdir -p "$(dirname "$daemon_file")"
-    cat > "$daemon_file" <<EOF
+install_docker_configure_daemon() {
+	local daemon_file="${INSTALL_DOCKER_DAEMON_CONFIG:-/etc/docker/daemon.json}"
+	local config
+	config=$(install_docker_daemon_json)
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.daemon.backup printf 'backup %s\n' "$daemon_file"
+		run_cmd docker.daemon.write printf '%s\n' "$config"
+		printf '%s\n' "$config" | python3 -m json.tool >/dev/null || die "invalid Docker daemon JSON"
+		run_cmd docker.daemon.json.validate printf 'python3 -m json.tool %s\n' "$daemon_file"
+		return 0
+	fi
+	[[ -f "$daemon_file" ]] && backup_file "$daemon_file"
+	run_cmd docker.daemon.dir install -d -m 0755 "$(dirname "$daemon_file")"
+	local tmp
+	tmp=$(mktemp)
+	printf '%s\n' "$config" >"$tmp"
+	run_cmd docker.daemon.json.validate python3 -m json.tool "$tmp" >/dev/null
+	run_cmd docker.daemon.write install -m 0644 "$tmp" "$daemon_file"
+	rm -f "$tmp"
+	run_cmd docker.daemon.json.validate python3 -m json.tool "$daemon_file" >/dev/null
+	printf 'Docker daemon configured: %s\n' "$daemon_file"
+}
+
+install_docker_daemon_json() {
+	local ipv6_subnet="${DOCKER_IPV6_SUBNET:-fd00:dead:aaaa::/64}"
+	if [[ "${DOCKER_ENABLE_IPV6:-1}" == "1" ]]; then
+		cat <<JSON
 {
   "ipv6": true,
-  "fixed-cidr-v6": "fd00:dead:aaaa::/64"
+  "fixed-cidr-v6": "$ipv6_subnet",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
 }
-EOF
-    log "INFO" "Restarting Docker to apply IPv6 settings."
-    systemctl restart docker || log "ERROR" "Failed to restart Docker service."
+JSON
+	else
+		cat <<JSON
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
 }
-#!/bin/bash
-
-# Создаёт Docker-сеть с нужными опциями, если её ещё нет
-# Usage:
-#   docker_create_network NAME [external] [internal] [ipv6] [subnet=<CIDR>]
-# 1) Создаём внешнюю сеть traefik-proxy (для docker-compose external: true)
-# docker_create_network traefik-proxy external
-# 2) Создаём внутреннюю сеть с подсетью
-# docker_create_network dns-net internal subnet="172.19.0.0/24"
-# 3) Создаём сеть с IPv6 и подсетью
-# docker_create_network "$DOCKER_NETWORK_NAME" ipv6 subnet="$DOCKER_IPV6_SUBNET"
-docker_create_network() {
-    local name="$1"; shift
-    local is_external=false
-    local is_internal=false
-    local is_ipv6=false
-    local subnet=""
-    local gateway=""
-
-    # Разбираем ключи
-    for opt in "$@"; do
-        case "$opt" in
-            external)   is_external=true ;;
-            internal)   is_internal=true ;;
-            ipv6)       is_ipv6=true ;;
-            subnet=*)   subnet="${opt#subnet=}" ;;
-            *)          log "WARN" "Unknown option '$opt' for docker_create_network" ;;
-        esac
-    done
-
-    # Проверяем наличие docker
-    if ! command_exists docker; then
-        log "ERROR" "docker is not installed or not in PATH"
-        exit 1
-    fi
-
-    # Если уже есть — ничего не делаем, но сверяем подсеть (если задана)
-    if docker network inspect "$name" &>/dev/null; then
-        log "INFO" "Network '$name' already exists, skipping creation."
-        if [[ -n "$subnet" ]]; then
-          local existing_subnets
-          existing_subnets=$(docker network inspect "$name" --format '{{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null)
-          if ! grep -qw "$subnet" <<<"$existing_subnets"; then
-            log "WARN" "Network '$name' exists, but expected subnet '$subnet' not found (have: $existing_subnets)"
-          fi
-        fi
-        return 0
-    fi
-
-    # Предварительная проверка на совпадение подсетей с другими сетями (чтобы не словить invalid pool request)
-    if [[ -n "$subnet" ]]; then
-      local overlap
-      overlap=$(docker network ls -q | xargs -r docker network inspect --format '{{.Name}} {{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' 2>/dev/null | grep -w "$subnet" || true)
-      if [[ -n "$overlap" ]]; then
-        log "ERROR" "Подсеть $subnet уже используется сетями: $(echo "$overlap" | awk '{print $1}' | tr '\n' ' ')"
-        log "ERROR" "Создание сети '$name' остановлено во избежание конфликта (invalid pool request). Удалите/измените конфликтующие сети или задайте другой subnet."
-        exit 1
-      fi
-
-      gateway="$(calculate_gateway_from_subnet "$subnet")"
-      if [[ -n "$gateway" ]]; then
-        log "INFO" "Для сети '$name' будет использован шлюз $gateway (последний доступный адрес подсети)"
-      else
-        log "WARN" "Не удалось вычислить gateway для '$name' (subnet=$subnet), создаём сеть без --gateway"
-      fi
-    fi
-
-    # Если external — создаём сеть, учитывая подсеть/IPv6, если заданы
-    if [[ "$is_external" == true ]]; then
-        local args=()
-        local ipv6_label=""
-        $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
-        $is_internal && args+=(--internal)
-        [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
-        [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
-
-        log "INFO" "Creating external network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
-        if docker network create "${args[@]}" "$name"; then
-            log "INFO" "External network '$name' created."
-            local inspect
-            inspect=$(docker network inspect "$name" 2>/dev/null)
-            log "INFO" "Network '$name' inspect: $inspect"
-        else
-            log "ERROR" "Failed to create external network '$name'"
-            exit 1
-        fi
-        return 0
-    fi
-
-    # Для остального собираем аргументы
-    local args=()
-    local ipv6_label=""
-    $is_ipv6    && args+=(--ipv6) && ipv6_label="(with IPv6)"
-    $is_internal && args+=(--internal)
-    [[ -n "$subnet" ]] && args+=(--subnet "$subnet")
-    [[ -n "$gateway" ]] && args+=(--gateway "$gateway")
-
-    log "INFO" "Creating network '$name' ${ipv6_label} ${subnet:+subnet $subnet}..."
-    if docker network create "${args[@]}" "$name"; then
-        log "INFO" "Network '$name' created."
-        local inspect
-        inspect=$(docker network inspect "$name" 2>/dev/null)
-        log "INFO" "Network '$name' inspect: $inspect"
-    else
-        log "ERROR" "Failed to create network '$name'"
-        exit 1
-    fi
+JSON
+	fi
 }
 
-# Возвращает последний доступный IPv4 адрес для подсети (шлюз). Для /24 -> *.254.
-calculate_gateway_from_subnet() {
-    local subnet="$1"
-
-    # IPv6 пропускаем
-    [[ "$subnet" == *:* ]] && return 0
-
-    if command -v python3 >/dev/null 2>&1; then
-        python3 - "$subnet" <<'PY'
-import sys
-from ipaddress import ip_network
-
-subnet = sys.argv[1]
-try:
-    net = ip_network(subnet, strict=False)
-    hosts = list(net.hosts())
-    # Используем последний адрес хоста в сети
-    if hosts:
-        print(hosts[-1])
-except Exception:
-    sys.exit(0)
-PY
-    else
-        local base prefix IFS=.
-        base="${subnet%/*}"
-        prefix="${subnet#*/}"
-        IFS=. read -r a b c d <<<"$base"
-        # Поддерживаем простой случай /24: 172.18.0.0/24 -> 172.18.0.255
-        if [[ "$prefix" -eq 24 && -n "$a" && -n "$b" && -n "$c" ]]; then
-            echo "$a.$b.$c.255"
-        fi
-    fi
+install_docker_purge_data_dirs() {
+	run_cmd docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd
 }
 
-docker_run_compose() {
-    local runner="${DOCKER_DIR}/compose.d/run-compose.sh"
-    local env_file="${DOCKER_ENV_FILE:-${DOCKER_DIR}/.env}"
-
-    if ! command -v docker >/dev/null 2>&1; then
-        log "ERROR" "docker not found in PATH. Please run step 2 (Docker install) first."
-        return 1
-    fi
-
-    if ! (docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1); then
-        log "ERROR" "docker compose/docker-compose not found. Please run step 2 (Docker install) first."
-        return 1
-    fi
-
-    if [[ ! -f "$runner" ]]; then
-        log "ERROR" "run-compose.sh not found at: $runner. Execute step 3 (generate docker dir) first."
-        return 1
-    fi
-
-    if [[ ! -x "$runner" ]]; then
-        chmod +x "$runner" || log "WARN" "Failed to make $runner executable"
-    fi
-
-    if [[ -f "$env_file" ]]; then
-        log "INFO" "Using env file: $env_file"
-    else
-        log "WARN" "Env file not found at: $env_file (will rely on script defaults)"
-    fi
-
-    docker_ensure_networks
-
-    log "INFO" "Running compose stack via: $runner"
-    ENV_FILE="$env_file" "$runner" "$@"
+install_docker_remove_engine() {
+	install_docker_stop_services
+	run_cmd docker.remove.packages env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
+	install_docker_purge_data_dirs
 }
 
-docker_ensure_networks() {
-    if ! command_exists docker; then
-        log "ERROR" "docker not found. Run step 2 (Docker install) first."
-        return 1
-    fi
-
-    local base_compose="${DOCKER_DIR}/compose.d/00-base.yml"
-    local fallback_done=false
-
-    # Фолбэк на старое поведение, если нет yq или базового файла
-    fallback_networks() {
-        fallback_done=true
-        log "WARN" "Autodetect of networks skipped; creating defaults."
-        local traefik_subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}"
-        local dns_subnet="${DNS_NET_SUBNET:-172.19.0.0/24}"
-        docker_create_network traefik-proxy external subnet="$traefik_subnet"
-        docker_create_network dns-net external subnet="$dns_subnet"
-    }
-
-    if ! command_exists yq; then
-        fallback_networks
-        return 0
-    fi
-    if [[ ! -f "$base_compose" ]]; then
-        log "WARN" "Base compose file not found: $base_compose"
-        fallback_networks
-        return 0
-    fi
-
-    mapfile -t net_entries < <(
-        yq eval '.networks // {} | to_entries[] | "\(.key)|\(.value.external // false)|\(.value.internal // false)|\(.value.ipam.config[0].subnet // "")"' "$base_compose" 2>/dev/null
-    )
-
-    if (( ${#net_entries[@]} == 0 )); then
-        log "WARN" "No networks found in $base_compose"
-        fallback_networks
-        return 0
-    fi
-
-    for entry in "${net_entries[@]}"; do
-        IFS="|" read -r net_name is_ext is_int subnet <<< "$entry"
-        [[ -z "$net_name" ]] && continue
-        local opts=()
-        [[ "$is_ext" == "true" ]] && opts+=(external)
-        [[ "$is_int" == "true" ]] && opts+=(internal)
-
-        # Если подсеть не описана в compose (например, external сети), подставляем умолчания
-        if [[ -z "$subnet" || "$subnet" == "null" ]]; then
-            case "$net_name" in
-                traefik-proxy) subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}" ;;
-                dns-net)       subnet="${DNS_NET_SUBNET:-172.19.0.0/24}" ;;
-                *) subnet="" ;;
-            esac
-        fi
-        [[ -n "$subnet" ]] && opts+=(subnet="$subnet")
-
-        log "INFO" "Ensuring network '$net_name' (external=$is_ext, internal=$is_int, subnet=${subnet:-<none>})"
-        docker_create_network "$net_name" "${opts[@]}"
-    done
-
-    if [[ "$fallback_done" == true ]]; then
-        log "WARN" "Networks were created with defaults due to missing config."
-    else
-        log "OK" "Networks ensured from $base_compose"
-    fi
+install_docker_wipe() {
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.system.prune docker system prune -a --volumes --force
+		return 0
+	fi
+	if command -v docker >/dev/null 2>&1; then
+		run_cmd docker.system.prune docker system prune -a --volumes --force || true
+	fi
 }
 
-# docker_compose_restart() {
-#   local env_file="${DOCKER_ENV_FILE:?DOCKER_ENV_FILE is not set}"
-#   local compose_file="${DOCKER_COMPOSE_FILE:?DOCKER_COMPOSE_FILE is not set}"
+install_docker_networks() {
+	local traefik_subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}"
+	local dns_subnet="${DNS_NET_SUBNET:-172.19.0.0/24}"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.network.ensure docker network create --subnet "$traefik_subnet" traefik-proxy
+		run_cmd docker.network.ensure docker network create --subnet "$dns_subnet" dns-net
+		return 0
+	fi
+	install_docker_ensure_network traefik-proxy "$traefik_subnet"
+	install_docker_ensure_network dns-net "$dns_subnet"
+}
 
-#   log "INFO" "Restarting Docker stack using compose file '$compose_file' and env '$env_file'"
+install_docker_network_subnet_matches() {
+	local name=$1 subnet=$2
+	docker network inspect "$name" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null | grep -Fq "$subnet"
+}
 
-#   if [[ ! -f "$compose_file" ]]; then
-#     log "ERROR" "Compose file not found: $compose_file"
-#     return 1
-#   fi
-#   if ! command -v docker &>/dev/null; then
-#     log "ERROR" "docker not found in PATH"
-#     return 1
-#   fi
+install_docker_network_is_unused() {
+	local name=$1
+	[[ "$(docker network inspect "$name" --format '{{len .Containers}}' 2>/dev/null || printf 1)" == "0" ]]
+}
 
-#   # Корректно останавливаем и чистим orphans
-#   if ! docker compose --env-file "$env_file" -f "$compose_file" down --remove-orphans; then
-#     log "ERROR" "docker compose down failed"
-#     return 1
-#   else
-#     log "INFO" "docker compose down succeeded"
-#   fi
+install_docker_ensure_network() {
+	local name=$1 subnet=$2
+	if docker network inspect "$name" >/dev/null 2>&1; then
+		if install_docker_network_subnet_matches "$name" "$subnet"; then
+			return 0
+		fi
+		if install_docker_network_is_unused "$name"; then
+			run_cmd docker.network.remove docker network rm "$name"
+		else
+			die "Docker network $name exists with unexpected subnet and has attached containers"
+		fi
+	fi
+	if ! run_cmd docker.network.ensure docker network create --subnet "$subnet" "$name"; then
+		die "failed to create Docker network $name with subnet $subnet"
+	fi
+}
 
-#   # Не обязательно, но полезно: подтянуть обновления образов (можно убрать, если не нужно)
-#   log "INFO" "Pulling latest images..."
-#   if ! docker compose --env-file "$env_file" -f "$compose_file" pull --quiet; then
-#     log "WARN" "docker compose pull failed — продолжаю без обновления образов"
-#   else
-#     log "INFO" "docker compose pull succeeded"
-#   fi
+install_compose_command() {
+	local runner="$INSTALL_ROOT/compose.d/run-compose.sh"
+	local lock_file="$INSTALL_STATE_DIR/docker-proxy-compose.lock"
+	install_project_files
+	if [[ ! -f "$INSTALL_ROOT/compose.d/.env" ]]; then
+		install_env_command
+	fi
+	install_docker_networks
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd compose.validate env "LOCK_FILE=$lock_file" "$runner" validate
+		return 0
+	fi
+	[[ -x "$runner" ]] || die "compose runner not found or not executable: $runner"
+	run_cmd compose.validate env "LOCK_FILE=$lock_file" "$runner" validate
+	run_cmd compose.up env "LOCK_FILE=$lock_file" "$runner" up
+}
 
-#   # Поднимаем стек заново
-#   log "INFO" "Starting Docker stack using compose file '$compose_file' and env '$env_file'"
-#   if docker compose --env-file "$env_file" -f "$compose_file" up -d --force-recreate; then
-#     log "OK" "Docker stack restarted"
-#     return 0
-#   else
-#     log "ERROR" "docker compose up failed"
-#     return 1
-#   fi
-# }
+install_project_files() {
+	local runner="$INSTALL_ROOT/compose.d/run-compose.sh"
+	[[ -x "$runner" ]] && return 0
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd project.sync rsync -a --exclude compose.d/.env "$INSTALL_REPO_ROOT/docker-proxy/" "$INSTALL_ROOT/"
+		return 0
+	fi
+	require_writable_target "$INSTALL_ROOT" "project root"
+	mkdir -p "$INSTALL_ROOT"
+	if [[ -d "$INSTALL_REPO_ROOT/docker-proxy/compose.d" ]]; then
+		run_cmd project.sync rsync -a --exclude compose.d/.env "$INSTALL_REPO_ROOT/docker-proxy/" "$INSTALL_ROOT/"
+	else
+		install_project_files_from_repo
+	fi
+	[[ -x "$runner" ]] || chmod +x "$runner" 2>/dev/null || true
+	[[ -x "$runner" ]] || die "compose runner not found or not executable after project sync: $runner"
+	printf 'project files ready: %s\n' "$INSTALL_ROOT"
+}
+
+install_project_files_from_repo() {
+	local branch tmp
+	branch=$(config_get update.branch "$INSTALL_DEFAULT_BRANCH")
+	tmp=$(mktemp -d)
+	run_cmd project.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp"
+	[[ -d "$tmp/docker-proxy/compose.d" ]] || {
+		rm -rf "$tmp"
+		die "docker-proxy directory not found in repository branch: $branch"
+	}
+	run_cmd project.sync rsync -a --exclude compose.d/.env "$tmp/docker-proxy/" "$INSTALL_ROOT/"
+	rm -rf "$tmp"
+}

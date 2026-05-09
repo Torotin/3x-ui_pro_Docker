@@ -1,672 +1,617 @@
-#!/bin/bash
-# lib/00_common.sh — Common utility functions for system checks, package installation, backups, and random generation
-: "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-: "${YQ_BIN:=/usr/bin/yq}"
-: "${YQ_CACHE_DIR:=${SCRIPT_DIR}/.cache/yq}"
+#!/usr/bin/env bash
+# Common runtime: logging, config/state, runner, validation, random helpers.
 
-# === Check LOG_FILE ===
-check_LOG_FILE() {
-  if [[ -z "${LOG_FILE:-}" || ! -f "$LOG_FILE" || ! -w "$LOG_FILE" ]]; then
-    mkdir -p "$LOGS_DIR" || exit_error "Cannot create logs directory: $LOGS_DIR"
-    LOG_FILE="$LOGS_DIR/${LOG_NAME}.log"
-    touch "$LOG_FILE" || exit_error "Cannot create log file: $LOG_FILE"
-    log "WARN" "Using fallback log file: $LOG_FILE"
-  fi
+install_prepare_state() {
+	mkdir -p "$INSTALL_STATE_DIR" "$(dirname "$INSTALL_LOG_FILE")" "$(dirname "$INSTALL_COMMAND_LOG")"
+	if [[ "$INSTALL_STATE_DIR" != "$INSTALL_LEGACY_STATE_DIR" && -d "$INSTALL_LEGACY_STATE_DIR" && ! -e "$INSTALL_STATE_DIR/install.env" ]]; then
+		cp -a "$INSTALL_LEGACY_STATE_DIR"/. "$INSTALL_STATE_DIR"/ 2>/dev/null || true
+	fi
+	touch "$INSTALL_LOG_FILE" "$INSTALL_COMMAND_LOG"
 }
 
-# === Required commands and corresponding packages ===
-declare -g -a missing_packages=()
-
-# --- Check if a command exists ---
-command_exists() {
-    local cmd="$1"
-    if command -v "$cmd" &>/dev/null; then
-        log "DEBUG" "Command '$cmd' found"
-        return 0
-    else
-        log "WARN" "Command '$cmd' not found"
-        return 1
-    fi
+install_enable_exit_permissions_reset() {
+	trap install_exit_cleanup EXIT
 }
 
-# --- Verify all required commands are present ---
-check_required_commands() {
-    log "INFO" "Checking required commands..."
-    log "DEBUG" "Required commands: ${!required_commands[@]}"
-    log "DEBUG" "Command → Package mapping: $(for cmd in "${!required_commands[@]}"; do echo -n "$cmd=${required_commands[$cmd]} "; done)"
-
-    missing_packages=()
-    for cmd in "${!required_commands[@]}"; do
-        if ! command_exists "$cmd"; then
-            local pkg="${required_commands[$cmd]}"
-            # Добавляем только если ещё не добавлен
-            if [[ ! " ${missing_packages[*]} " =~ " ${pkg} " ]]; then
-                missing_packages+=("$pkg")
-            fi
-        fi
-    done
-
-    if [[ ${#missing_packages[@]} -gt 0 ]]; then
-        log "INFO" "Missing packages will be installed: ${missing_packages[*]}"
-    else
-        log "INFO" "All required commands are present"
-    fi
+install_exit_cleanup() {
+	local status=$?
+	trap - EXIT
+	set +e
+	install_reset_all_permissions
+	exit "$status"
 }
 
-# --- Check disk space and presence of systemd ---
-check_system_resources() {
-    log "INFO" "Checking system resources..."
-    local required_space_mb=1024
-    local available_space_mb
-    available_space_mb=$(df -m / | tail -1 | awk '{print $4}')
-    if (( available_space_mb < required_space_mb )); then
-        exit_error "Insufficient disk space. Required: ${required_space_mb}MB, Available: ${available_space_mb}MB"
-    fi
-    if ! command_exists systemctl; then
-        exit_error "systemd (systemctl) is required"
-    fi
-    log "INFO" "System resource check passed"
+log() {
+	local level=$1
+	shift || true
+	local ts
+	ts=$(date '+%Y-%m-%d %H:%M:%S')
+	printf '[%s] [%s] %s\n' "$ts" "$level" "$*" >>"$INSTALL_LOG_FILE"
+	case "$level" in
+	ERROR | WARN) printf '%s: %s\n' "$level" "$*" >&2 ;;
+	*) printf '%s\n' "$*" ;;
+	esac
 }
 
-# --- Install missing packages ---
-install_packages() {
-    log "DEBUG" "Invoking install_packages with: ${missing_packages[*]}"
-    if [[ ${#missing_packages[@]} -gt 0 ]]; then
-        log "INFO" "Installing missing packages: ${missing_packages[*]}"
-        apt-get update -y &>/dev/null || exit_error "Failed to update package list"
-        apt-get install -y "${missing_packages[@]}" &>/dev/null || exit_error "Failed to install: ${missing_packages[*]}"
-        log "INFO" "All missing packages installed"
-    else
-        log "INFO" "No packages to install"
-    fi
+die() {
+	log ERROR "$*"
+	exit 1
 }
 
-
-# --- Update and upgrade system packages ---
-update_and_upgrade_packages() {
-    log "INFO" "Updating system package list..."
-    if ! apt-get update -y &>/dev/null; then
-        exit_error "Failed to update package list"
-    fi
-    
-    pick_fast_mirror
-
-    local updates
-    updates=$(apt list --upgradable 2>/dev/null | grep -c "upgradable")
-
-    if (( updates > 0 )); then
-        log "INFO" "$updates package(s) can be upgraded"
-        log "INFO" "Applying upgrades..."
-
-        if apt-get upgrade -y -V; then
-            log "INFO" "System upgrade completed successfully"
-        else
-            exit_error "System upgrade failed"
-        fi
-
-        if apt-get autoremove -y &>/dev/null; then
-            log "INFO" "Unused packages removed"
-        fi
-
-        # Log previously missing packages (if any)
-        if [[ ${missing_packages[@]+set} && ${#missing_packages[@]} -gt 0 ]]; then
-            log "INFO" "Previously missing packages installed:"
-            for pkg in "${missing_packages[@]}"; do
-                log "OK" " - $pkg"
-            done
-        fi
-
-    else
-        log "INFO" "No upgrades available — system is up to date"
-    fi
-
-    # Always configure unattended upgrades, even when there were no package updates
-    enable_auto_updates
+config_file() {
+	printf '%s/config\n' "$INSTALL_STATE_DIR"
 }
 
-
-# --- Install yq from GitHub ---
-yq_install() {
-    local yq_bin="${YQ_BIN:-/usr/bin/yq}"
-    local cache_dir="${YQ_CACHE_DIR:-$SCRIPT_DIR/.cache/yq}"
-    local cache_bin="$cache_dir/yq_linux_amd64"
-    local attempts=3
-
-    log "DEBUG" "yq_install: yq_bin=$yq_bin cache_bin=$cache_bin attempts=$attempts"
-
-    # Fast path: working binary already present
-    if command -v "$yq_bin" &>/dev/null; then
-        local current_version
-        current_version="$("$yq_bin" --version 2>/dev/null || true)"
-        if [[ -n "$current_version" ]]; then
-            log "INFO" "yq already installed: $current_version"
-            return 0
-        fi
-        log "WARN" "yq binary exists at $yq_bin but version check failed, will reinstall"
-    fi
-
-    ensure_directory_exists "$cache_dir"
-
-    # Use cached binary if available
-    if [[ -x "$cache_bin" ]]; then
-        local cache_version
-        cache_version="$("$cache_bin" --version 2>/dev/null || true)"
-        if [[ -n "$cache_version" ]]; then
-            log "INFO" "Using cached yq: $cache_version"
-            cp -- "$cache_bin" "$yq_bin" && chmod +x "$yq_bin"
-            if "$yq_bin" --version &>/dev/null; then
-                log "OK" "yq installed from cache: $("$yq_bin" --version)"
-                return 0
-            fi
-            log "WARN" "Failed to activate cached yq, will download fresh"
-        else
-            log "DEBUG" "Cached yq found at $cache_bin but version is empty; ignoring cache"
-        fi
-    fi
-
-    for ((i=1; i<=attempts; i++)); do
-        log "INFO" "Downloading yq (attempt $i/$attempts)..."
-        if wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O "$cache_bin"; then
-            chmod +x "$cache_bin"
-            cp -- "$cache_bin" "$yq_bin"
-            chmod +x "$yq_bin"
-            local downloaded_version
-            downloaded_version="$("$yq_bin" --version 2>/dev/null || true)"
-            if [[ -n "$downloaded_version" ]]; then
-                log "OK" "yq installed successfully: $downloaded_version"
-                return 0
-            fi
-        fi
-        log "WARN" "yq installation attempt #$i failed, retrying..."
-        sleep 3
-    done
-    exit_error "Failed to install yq after $attempts attempts"
+config_set() {
+	local key=$1 value=$2 file
+	file=$(config_file)
+	mkdir -p "$(dirname "$file")"
+	touch "$file"
+	if grep -q "^${key}=" "$file"; then
+		local tmp
+		tmp=$(mktemp)
+		awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" {print k "=" v; done=1; next} {print} END{if(!done) print k "=" v}' "$file" >"$tmp"
+		mv "$tmp" "$file"
+	else
+		printf '%s=%s\n' "$key" "$value" >>"$file"
+	fi
 }
 
-# Optimized backup_file: keeps last 3 backups, optional backup directory
+config_get() {
+	local key=$1 default=${2:-} file
+	file=$(config_file)
+	if [[ -f "$file" ]]; then
+		awk -F= -v k="$key" '$1 == k {value=substr($0, length(k) + 2)} END{if(value!="") print value}' "$file"
+	else
+		printf '%s\n' "$default"
+	fi
+}
+
+runner_log() {
+	local label=$1
+	shift || true
+	printf '%s' "$label" >>"$INSTALL_COMMAND_LOG"
+	if (($# > 0)); then
+		printf ' %q' "$@" >>"$INSTALL_COMMAND_LOG"
+	fi
+	printf '\n' >>"$INSTALL_COMMAND_LOG"
+}
+
+run_cmd() {
+	local label=$1
+	shift || true
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		runner_log "$label" "$@"
+		return 0
+	fi
+	runner_log "$label" "$@"
+	"$@"
+}
+
+run_cmd_stdin() {
+	local label=$1 input=$2
+	shift 2 || true
+	runner_log "$label" "$@" "<stdin>"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		return 0
+	fi
+	printf '%s' "$input" | "$@"
+}
+
+has_flag() {
+	local wanted=$1
+	shift || true
+	local arg
+	for arg in "$@"; do
+		[[ "$arg" == "$wanted" ]] && return 0
+	done
+	return 1
+}
+
+require_opt_in() {
+	local flag=$1
+	shift || true
+	if ! has_flag "$flag" "$@"; then
+		die "$flag requires explicit opt-in"
+	fi
+}
+
+require_apply_confirmation() {
+	if has_flag --yes "$@"; then
+		return 0
+	fi
+	if [[ "$INSTALL_NONINTERACTIVE" == "1" ]]; then
+		die "--apply requires explicit opt-in with --yes in non-interactive mode"
+	fi
+	local answer
+	read -r -p "Apply system changes? [y/N] " answer
+	case "$answer" in
+	y | Y | yes | YES) return 0 ;;
+	*) die "apply cancelled" ;;
+	esac
+}
+
+is_debian_like_os() {
+	local os_file=${INSTALL_TEST_OS_RELEASE:-/etc/os-release}
+	local id=""
+	[[ -r "$os_file" ]] || return 1
+	while IFS='=' read -r key value; do
+		value=${value%\"}
+		value=${value#\"}
+		[[ "$key" == "ID" ]] && id=$value
+	done <"$os_file"
+	[[ "$id" == "ubuntu" || "$id" == "debian" ]]
+}
+
+install_doctor_command() {
+	local status=0
+	printf 'doctor: checking installer, dependencies and stack status\n'
+	if ! is_debian_like_os; then
+		die "unsupported OS: only Debian/Ubuntu are supported"
+	fi
+	doctor_ok "OS is Debian/Ubuntu compatible"
+	install_doctor_check_commands || status=1
+	install_doctor_check_paths || status=1
+	install_doctor_check_state || status=1
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		doctor_warn "stack checks skipped in mock mode"
+		printf 'doctor: OK\n'
+		return 0
+	fi
+	install_doctor_check_apt_packages || status=1
+	install_doctor_check_docker || status=1
+	install_doctor_check_compose || status=1
+	install_doctor_check_containers || status=1
+	if ((status == 0)); then
+		printf 'doctor: OK\n'
+	else
+		printf 'doctor: FAILED\n'
+	fi
+	return "$status"
+}
+
+doctor_ok() {
+	printf 'OK: %s\n' "$*"
+}
+
+doctor_warn() {
+	printf 'WARN: %s\n' "$*"
+}
+
+doctor_fail() {
+	printf 'FAIL: %s\n' "$*"
+	return 1
+}
+
+install_doctor_check_commands() {
+	local status=0 cmd
+	local -a commands=(
+		bash
+		apt-get
+		systemctl
+		envsubst
+		curl
+		grep
+		awk
+		sed
+		find
+		install
+		mktemp
+		date
+		chmod
+		chown
+		ssh
+		rsync
+		git
+		jq
+		openssl
+		htpasswd
+		ufw
+		dpkg-query
+		docker
+	)
+	for cmd in "${commands[@]}"; do
+		if [[ "$INSTALL_MOCK" == "1" ]]; then
+			run_cmd doctor.command command -v "$cmd"
+			continue
+		fi
+		if command -v "$cmd" >/dev/null 2>&1; then
+			doctor_ok "command available: $cmd"
+		else
+			doctor_fail "command missing: $cmd" || status=1
+		fi
+	done
+	((status == 0)) && doctor_ok "required commands checked"
+	return "$status"
+}
+
+install_doctor_check_paths() {
+	local status=0 path
+	local -a required_paths=(
+		"$SCRIPT_DIR/install.sh"
+		"$SCRIPT_DIR/modules"
+		"$SCRIPT_DIR/template"
+		"$SCRIPT_DIR/template/install.summary.template"
+		"$SCRIPT_DIR/template/sshd_config.template"
+	)
+	for path in "${required_paths[@]}"; do
+		if [[ -e "$path" ]]; then
+			doctor_ok "path exists: $path"
+		else
+			doctor_fail "path missing: $path" || status=1
+		fi
+	done
+	return "$status"
+}
+
+install_doctor_check_state() {
+	local status=0 var
+	install_load_state_env
+	local -a required_vars=(WEBDOMAIN USER_SSH USER_WEB PORT_REMOTE_SSH)
+	for var in "${required_vars[@]}"; do
+		if [[ -n "${!var:-}" ]]; then
+			doctor_ok "state variable set: $var"
+		else
+			doctor_warn "state variable not set yet: $var"
+		fi
+	done
+	if [[ -n "${HT_PASS_ENCODED:-}" || -n "${PASS_WEB:-}" ]]; then
+		doctor_ok "web credentials configured"
+	else
+		doctor_warn "web credentials are not configured yet"
+	fi
+	if [[ -f "$INSTALL_STATE_DIR/install.env" ]]; then
+		doctor_ok "installer env file: $INSTALL_STATE_DIR/install.env"
+	else
+		doctor_warn "installer env file not found: $INSTALL_STATE_DIR/install.env"
+	fi
+	return "$status"
+}
+
+install_doctor_check_apt_packages() {
+	local status=0 package
+	if ! command -v dpkg-query >/dev/null 2>&1; then
+		doctor_fail "command missing: dpkg-query" || return 1
+	fi
+	if ! declare -F install_apt_required_packages >/dev/null 2>&1; then
+		doctor_warn "APT dependency list is unavailable"
+		return 0
+	fi
+	while IFS= read -r package; do
+		[[ -n "$package" ]] || continue
+		if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fq "install ok installed"; then
+			doctor_ok "APT package installed: $package"
+		else
+			doctor_fail "APT package missing: $package" || status=1
+		fi
+	done < <(install_apt_required_packages)
+	return "$status"
+}
+
+install_doctor_check_docker() {
+	local status=0
+	if ! command -v docker >/dev/null 2>&1; then
+		doctor_warn "Docker command is not installed; stack checks skipped"
+		return 0
+	fi
+	doctor_ok "command available: docker"
+	if docker compose version >/dev/null 2>&1; then
+		doctor_ok "Docker Compose plugin available"
+	else
+		doctor_fail "Docker Compose plugin is not available" || status=1
+	fi
+	if systemctl is-active --quiet docker; then
+		doctor_ok "Docker service is active"
+	else
+		doctor_fail "Docker service is not active" || status=1
+	fi
+	if docker info >/dev/null 2>&1; then
+		doctor_ok "Docker daemon responds"
+	else
+		doctor_fail "Docker daemon does not respond" || status=1
+	fi
+	return "$status"
+}
+
+install_doctor_check_compose() {
+	local status=0 runner="$INSTALL_ROOT/compose.d/run-compose.sh" env_file="$INSTALL_ROOT/compose.d/.env"
+	if [[ ! -d "$INSTALL_ROOT/compose.d" ]]; then
+		doctor_warn "compose directory not found: $INSTALL_ROOT/compose.d"
+		return 0
+	fi
+	if [[ -x "$runner" ]]; then
+		doctor_ok "compose runner executable: $runner"
+	else
+		doctor_fail "compose runner missing or not executable: $runner" || status=1
+	fi
+	if [[ -f "$env_file" ]]; then
+		doctor_ok "compose env file: $env_file"
+	else
+		doctor_fail "compose env file missing: $env_file" || status=1
+	fi
+	if ((status == 0)); then
+		local lock_file="$INSTALL_STATE_DIR/docker-proxy-compose.doctor.lock"
+		local log_file="$INSTALL_STATE_DIR/doctor-compose.log"
+		if ! (: >"$log_file") 2>/dev/null; then
+			log_file=$(mktemp "${TMPDIR:-/tmp}/install-doctor-compose.XXXXXX.log")
+		fi
+		if env "LOCK_FILE=$lock_file" "$runner" validate >"$log_file" 2>&1; then
+			doctor_ok "compose configuration validates"
+		else
+			doctor_fail "compose configuration validation failed; log: $log_file" || status=1
+			tail -n 20 "$log_file" 2>/dev/null || true
+		fi
+	fi
+	return "$status"
+}
+
+install_doctor_check_containers() {
+	local status=0 name state health
+	if ! command -v docker >/dev/null 2>&1; then
+		return 0
+	fi
+	if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -Fq "traefik"; then
+		doctor_warn "compose stack containers are not running yet"
+		return 0
+	fi
+	local -a containers=(
+		adguard
+		caddy
+		crowdsec
+		crowdsec_firewall_bouncer
+		dockcheck
+		dozzle
+		homepage
+		lampac
+		logrotate
+		tor-proxy
+		torproxy
+		traefik
+		traefik-acme-exporter
+		usque
+		warp
+		3x-ui
+	)
+	for name in "${containers[@]}"; do
+		if ! docker inspect "$name" >/dev/null 2>&1; then
+			doctor_fail "container missing: $name" || status=1
+			continue
+		fi
+		state=$(docker inspect "$name" --format '{{.State.Status}}' 2>/dev/null || printf unknown)
+		health=$(docker inspect "$name" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || printf unknown)
+		if [[ "$state" != "running" ]]; then
+			doctor_fail "container not running: $name ($state/$health)" || status=1
+			continue
+		fi
+		if [[ "$health" == "unhealthy" ]]; then
+			doctor_fail "container unhealthy: $name" || status=1
+			continue
+		fi
+		doctor_ok "container running: $name ($health)"
+	done
+	return "$status"
+}
+
+backup_path() {
+	local src=$1 backup_dir=$2 base
+	base=$(basename "$src")
+	printf '%s/%s.bak.%s\n' "$backup_dir" "$base" "$(date +%Y%m%d%H%M%S)"
+}
+
 backup_file() {
-    local file="$1"
-    local backup_dir="${2:-$(dirname -- "$file")}"
-    local base ts backups old
-
-    # Preconditions
-    if [[ ! -f "$file" ]]; then
-        log "WARN" "File $file does not exist. Skipping backup."
-        return 0
-    fi
-    if [[ ! -d "$backup_dir" ]]; then
-        mkdir -p -- "$backup_dir" || { log "ERROR" "Cannot create backup dir $backup_dir"; }
-    fi
-    if [[ ! -w "$backup_dir" ]]; then
-        log "ERROR" "Backup dir $backup_dir is not writable. Skipping backup."
-    fi
-
-    # Create backup
-    base="$(basename -- "$file")"
-    ts="$(date +%Y%m%d%H%M%S)"
-    local backup="${backup_dir%/}/${base}.bak.${ts}"
-    cp -- "$file" "$backup" || { log "ERROR" "Failed to copy $file to $backup"; }
-    log "INFO" "Backup created: $backup"
-
-    # Cleanup: keep only the newest 3 backups
-    IFS=$'\n' read -d '' -r -a backups < <(
-        ls -1t -- "${backup_dir%/}/${base}.bak."* 2>/dev/null
-    )
-    if (( ${#backups[@]} > 3 )); then
-        for old in "${backups[@]:3}"; do
-            rm -f -- "$old" && log "INFO" "Removed old backup: $old"
-        done
-    fi
+	local src=$1 backup_dir=${2:-$INSTALL_STATE_DIR/backups}
+	[[ -e "$src" ]] || return 0
+	if ! mkdir -p "$backup_dir"; then
+		die "backup directory is not writable: $backup_dir (run with sudo or set INSTALL_ROOT/INSTALL_STATE_DIR to a writable path)"
+	fi
+	if ! cp -a -- "$src" "$(backup_path "$src" "$backup_dir")" 2>/dev/null; then
+		die "could not create backup in $backup_dir (run with sudo or set INSTALL_ROOT/INSTALL_STATE_DIR to a writable path)"
+	fi
 }
 
-# --- Restore latest backup for a file ---
-restore_backup_file() {
-    local file="$1"
-    local last_backup
-    last_backup=$(ls -t "${file}.bak."* 2>/dev/null | head -n1)
-    [[ -z "$last_backup" ]] && exit_error "No backup found for $file"
-    cp "$last_backup" "$file" || exit_error "Failed to restore from $last_backup"
-    log "INFO" "File $file restored from $last_backup"
+install_effective_uid() {
+	printf '%s\n' "${INSTALL_EFFECTIVE_UID:-$EUID}"
 }
 
-# --- Ensure directory exists ---
-ensure_directory_exists() {
-    local dir="$1"
-    [[ -d "$dir" ]] || mkdir -p "$dir" || exit_error "Failed to create directory: $dir"
+install_sanitize_user() {
+	local value=${1:-}
+	value=${value//$'\r'/}
+	value=${value//$'\n'/}
+	value=${value//$'\t'/}
+	value=${value//[[:space:]]/}
+	printf '%s\n' "$value"
 }
 
-# --- Ensure file exists and writable ---
-ensure_file_exists() {
-    local file="$1"
-    [[ -f "$file" ]] || touch "$file" || exit_error "Failed to create file: $file"
-    [[ -w "$file" ]] || exit_error "File $file is not writable"
+install_reset_permissions() {
+	local target_dir=$1 target_user=${2:-} rc=0 main_group=""
+	[[ -n "$target_dir" && -d "$target_dir" && "$target_dir" != "/" ]] || {
+		return 0
+	}
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		if [[ -n "$target_user" ]]; then
+			run_cmd permissions.owner chown -hR "$target_user:$target_user" "$target_dir"
+		fi
+		run_cmd permissions.dirs find "$target_dir" -type d -exec chmod u=rwx,go=rx "{}" "+"
+		run_cmd permissions.files find "$target_dir" -type f -exec chmod u=rwX,go=rX "{}" "+"
+		return 0
+	fi
+	if [[ "$(install_effective_uid)" != "0" ]]; then
+		return 0
+	fi
+	if [[ -n "$target_user" ]]; then
+		if id -u "$target_user" >/dev/null 2>&1; then
+			if getent group "$target_user" >/dev/null 2>&1; then
+				main_group=$target_user
+			else
+				main_group=$(id -gn "$target_user")
+			fi
+			run_cmd permissions.owner chown -hR "$target_user:$main_group" "$target_dir" || rc=1
+		else
+			return 0
+		fi
+	fi
+	run_cmd permissions.dirs find "$target_dir" -type d -exec chmod u=rwx,go=rx "{}" "+" || rc=1
+	run_cmd permissions.files find "$target_dir" -type f -exec chmod u=rwX,go=rX "{}" "+" || rc=1
+	return "$rc"
 }
 
-# --- Generate random alphanumeric string ---
+install_reset_all_permissions() {
+	local target_user rc=0
+	install_load_state_env
+	target_user=$(install_sanitize_user "${USER_SSH:-}")
+	install_reset_permissions "$SCRIPT_DIR" "$target_user" || rc=1
+	install_reset_permissions "$INSTALL_ROOT" "$target_user" || rc=1
+	return 0
+}
+
+require_writable_target() {
+	local target=$1 label=$2 probe
+	probe=$target
+	[[ "$INSTALL_MOCK" == "1" ]] && return 0
+	local euid
+	euid=$(install_effective_uid)
+	[[ "$euid" == "0" ]] && return 0
+	while [[ ! -e "$probe" && "$probe" != "/" ]]; do
+		probe=$(dirname "$probe")
+	done
+	case "$target" in
+	/opt/* | /etc/* | /var/lib/*)
+		local owner
+		owner=$(stat -c '%u' "$probe" 2>/dev/null || printf '0')
+		[[ "$owner" == "$euid" ]] || die "$label is not writable: $target (run with sudo or set INSTALL_ROOT/INSTALL_STATE_DIR to a writable path)"
+		;;
+	esac
+	[[ -w "$probe" ]] && return 0
+	die "$label is not writable: $target (run with sudo or set INSTALL_ROOT/INSTALL_STATE_DIR to a writable path)"
+}
+
+install_load_state_env() {
+	local file="$INSTALL_STATE_DIR/install.env" line key value
+	[[ -f "$file" ]] || return 0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ "$line" =~ ^[[:space:]]*# || "$line" =~ ^[[:space:]]*$ ]] && continue
+		key=${line%%=*}
+		value=${line#*=}
+		[[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+		if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+			value=${value#\"}
+			value=${value%\"}
+		fi
+		[[ -n "${!key-}" ]] && continue
+		printf -v "$key" '%s' "$value"
+		export "${key?}"
+	done <"$file"
+}
+
+install_env_quote_value() {
+	local value=$1
+	value=${value//\\/\\\\}
+	value=${value//\"/\\\"}
+	value=${value//$'\n'/}
+	printf '"%s"' "$value"
+}
+
+install_state_set_env() {
+	local key=$1 value=$2 file tmp quoted
+	file="$INSTALL_STATE_DIR/install.env"
+	mkdir -p "$(dirname "$file")"
+	touch "$file"
+	quoted=$(install_env_quote_value "$value")
+	tmp=$(mktemp)
+	awk -v k="$key" -v v="$quoted" 'BEGIN{done=0} $0 ~ "^" k "=" {print k "=" v; done=1; next} {print} END{if(!done) print k "=" v}' "$file" >"$tmp"
+	mv "$tmp" "$file"
+}
+
+install_persist_required_env() {
+	install_state_set_env WEBDOMAIN "${WEBDOMAIN:-}"
+	install_state_set_env USER_SSH "${USER_SSH:-}"
+	install_state_set_env PASS_SSH "${PASS_SSH:-}"
+	install_state_set_env USER_WEB "${USER_WEB:-}"
+	install_state_set_env PASS_WEB "${PASS_WEB:-}"
+	install_state_set_env SSH_PBK "${SSH_PBK:-}"
+}
+
+install_prompt_required() {
+	local var=$1 prompt=$2 secret=${3:-0} value
+	if [[ -n "${!var-}" ]]; then
+		return 0
+	fi
+	printf '%s: ' "$prompt"
+	if [[ "$secret" == "1" && -t 0 ]]; then
+		read -rs value || value=
+		printf '\n'
+	else
+		read -r value || value=
+	fi
+	[[ -n "$value" ]] || die "$var is required"
+	printf -v "$var" '%s' "$value"
+	export "${var?}"
+}
+
+install_require_required_env() {
+	local mode=${1:-batch}
+	install_load_state_env
+	if [[ "$mode" == "wizard" ]]; then
+		if [[ -z "${WEBDOMAIN:-}" || -z "${USER_SSH:-}" || -z "${PASS_SSH:-}" || -z "${USER_WEB:-}" || -z "${PASS_WEB:-}" ]]; then
+			printf 'Required installer variables\n'
+		fi
+		install_prompt_required WEBDOMAIN "Web domain"
+		install_prompt_required USER_SSH "SSH username"
+		install_prompt_required PASS_SSH "SSH password" 1
+		install_prompt_required USER_WEB "Web username"
+		install_prompt_required PASS_WEB "Web password" 1
+		if [[ -z "${SSH_PBK:-}" ]]; then
+			printf 'SSH public key (optional): '
+			read -r SSH_PBK || SSH_PBK=
+			export SSH_PBK
+		fi
+		install_persist_required_env
+		return 0
+	fi
+	[[ -n "${WEBDOMAIN:-}" ]] || die "WEBDOMAIN is required (set env or run wizard)"
+	[[ -n "${USER_SSH:-}" ]] || die "USER_SSH is required (set env or run wizard)"
+	[[ -n "${PASS_SSH:-}" ]] || die "PASS_SSH is required (set env or run wizard)"
+	[[ -n "${USER_WEB:-}" ]] || die "USER_WEB is required (set env or run wizard)"
+	[[ -n "${PASS_WEB:-}" ]] || die "PASS_WEB is required (set env or run wizard)"
+}
+
 generate_random_string() {
-    local min="${1:-16}"
-    local max="${2:-32}"
-    local len
-    len=$(shuf -i "$min-$max" -n1)
-    openssl rand -base64 $((len * 3 / 4)) | tr -dc 'a-zA-Z0-9' | head -c "$len"
+	local min=${1:-16} max=${2:-32} len
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		printf 'mock%0.sx' $(seq 1 "$min")
+		printf '\n'
+		return 0
+	fi
+	len=$(shuf -i "$min-$max" -n 1)
+	openssl rand -base64 "$len" | tr -dc 'A-Za-z0-9' | head -c "$len"
+	printf '\n'
 }
 
-# --- Generate random free TCP port ---
+is_port_free() {
+	local port=$1
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		[[ "$port" != "1" ]]
+		return
+	fi
+	if command -v ss >/dev/null 2>&1; then
+		! ss -tuln | awk '{print $4}' | grep -qE "[:.]${port}\b"
+	else
+		! netstat -tuln | awk '{print $4}' | grep -qE "[:.]${port}\b"
+	fi
+}
+
 generate_random_port() {
-    local min="${1:-1024}"
-    local max="${2:-65535}"
-    for i in {1..100}; do
-        local port
-        port=$(shuf -i "$min-$max" -n1)
-        if ! is_port_in_use "$port"; then
-            echo "$port"
-            return
-        fi
-    done
-    exit_error "Could not find a free port in range $min-$max"
-}
-
-# --- Check if TCP port is in use ---
-is_port_in_use() {
-    local port=$1
-    if command -v ss &>/dev/null; then
-        ss -tuln | awk '{print $4}' | grep -qE "[:.]${port}\b"
-    else
-        netstat -tuln | awk '{print $4}' | grep -qE "[:.]${port}\b"
-    fi
-}
-
-# --- Wait for APT/dpkg locks to clear ---
-wait_for_apt_locks() {
-    local attempts="${1:-12}"
-    local sleep_secs="${2:-5}"
-    local locks=(
-        /var/lib/dpkg/lock-frontend
-        /var/lib/dpkg/lock
-        /var/cache/apt/archives/lock
-        /var/lib/apt/lists/lock
-    )
-
-    for ((i=1; i<=attempts; i++)); do
-        local busy=0
-        for lock in "${locks[@]}"; do
-            if fuser "$lock" &>/dev/null; then
-                busy=1
-                break
-            fi
-        done
-        if (( busy == 0 )); then
-            return 0
-        fi
-        log "WARN" "APT/dpkg lock detected, attempt $i/$attempts — waiting ${sleep_secs}s..."
-        sleep "$sleep_secs"
-    done
-    return 1
-}
-
-pick_fast_mirror() {
-  COUNTRY=""
-  LIMIT=15
-  TEST_BYTES=$((1024 * 1024 * 20))
-  DRY_RUN=0
-  APT_UPDATE=1
-
-  print_results_table() {
-    printf "%-3s %-50s %-3s %-4s %-4s %-7s %-7s %-8s %-10s\n" "#" "Зеркало" "Sel" "Cur" "Sec" "MB/s" "DLsec" "Lat(ms)" "Статус"
-    local i=1
-
-    for line in "${RESULTS[@]}"; do
-        parsed=$(awk '$1 ~ /^(OK|SLOW|UNREACHABLE)$/ && NF >= 6 { print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 }' <<< "$line")
-        IFS=$'\t' read -r status url spd dlsec latms secflag <<< "$parsed"
-
-
-        local mb="0.00"
-        [[ "$spd" != "0" ]] && mb=$(awk -v s="$spd" 'BEGIN{printf "%.2f",s/1048576}')
-
-        local cur="-"
-        [[ -n "${CURMAP[$url]:-}" ]] && cur="Y"
-        [[ "$secflag" == "Y" ]] || secflag="-"
-        local sel="${SELMAP[$url]:--}"
-
-        printf "%-3s %-50s %-3s %-4s %-4s %-7s %-7s %-8s %-10s\n" \
-        "$i" "${url:0:50}" "$sel" "$cur" "$secflag" "$mb" "$dlsec" "$latms" "$status"
-        ((i++))
-    done
-  }
-
-    detect_country() {
-    local ip c
-    set +o pipefail
-    for url in \
-        "https://ipinfo.io/country" \
-        "https://ifconfig.co/country-iso" \
-        "http://ip-api.com/line/?fields=countryCode"
-    do
-        log DEBUG "Trying: $url"
-        c=$(curl -m 3 -fsSL "$url" 2>/dev/null | tr -d '\r\n')
-        [[ "$c" =~ ^[A-Z]{2}$ ]] && COUNTRY="$c" && return 0
-    done
-
-    if command -v geoiplookup >/dev/null 2>&1; then
-        ip=$(curl -m 3 -fsSL https://ifconfig.me 2>/dev/null)
-        log DEBUG "IP: $ip"
-        c=$(geoiplookup "$ip" 2>/dev/null | grep -oE '[A-Z]{2}$')
-        [[ "$c" =~ ^[A-Z]{2}$ ]] && COUNTRY="$c" && return 0
-    fi
-
-    log DEBUG "Country detection failed."
-    COUNTRY=""
-    set -o pipefail
-    return 1
-    }
-
-
-  while getopts ":c:n:s:dNh" opt; do
-    case $opt in
-      c) COUNTRY="${OPTARG^^}" ;;
-      n) LIMIT="$OPTARG" ;;
-      s) TEST_BYTES="$OPTARG" ;;
-      d) DRY_RUN=1 ;;
-      N) APT_UPDATE=0 ;;
-    esac
-  done
-
-  : "${RUN_DIR:=$(pwd -P)}"
-
-  if [[ -r /etc/os-release ]]; then . /etc/os-release; fi
-  CODENAME="${UBUNTU_CODENAME:-}"
-  if [[ -z "$CODENAME" && -x /usr/bin/lsb_release ]]; then
-    CODENAME=$(lsb_release -sc || true)
-  fi
-  if [[ -z "$CODENAME" ]]; then
-    log ERROR "Failed to determine Ubuntu codename."
-    return 1
-  fi
-
-  normalize_repo_url() {
-    local u="$1"
-    u=$(grep -oE 'https?://[^ ]+' <<<"$u" | head -n1 || true)
-    [[ -z "$u" ]] && { echo ""; return; }
-    u="${u%/}"
-    if [[ "$u" =~ /ubuntu($|/) ]]; then
-      u="${u%%/ubuntu*}/ubuntu"
-    fi
-    echo "$u/"
-  }
-
-  declare -A CURMAP=()
-  collect_current_mirrors() {
-    local f line base
-    if [[ -f /etc/apt/sources.list ]]; then
-      while IFS= read -r line; do
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        base=$(normalize_repo_url "$line")
-        [[ -n "$base" ]] && CURMAP["$base"]=1
-      done < <(grep -hE '^(deb|deb-src)[[:space:]]' /etc/apt/sources.list || true)
-    fi
-    shopt -s nullglob
-    for f in /etc/apt/sources.list.d/*.list; do
-      while IFS= read -r line; do
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        base=$(normalize_repo_url "$line")
-        [[ -n "$base" ]] && CURMAP["$base"]=1
-      done < <(grep -hE '^(deb|deb-src)[[:space:]]' "$f" || true)
-    done
-    for f in /etc/apt/sources.list.d/*.sources; do
-      while IFS= read -r line; do
-        line="${line#URIs:}"
-        base=$(normalize_repo_url "$line")
-        [[ -n "$base" ]] && CURMAP["$base"]=1
-      done < <(grep -hi '^URIs:' "$f" || true)
-    done
-    shopt -u nullglob
-  }
-  collect_current_mirrors
-
-  if [[ -z "$COUNTRY" ]]; then
-    log INFO "COUNTRY is not set, attempting to detect..."
-    if detect_country; then
-      log INFO "Detected country: $COUNTRY"
-    else
-      log WARN "Could not detect country. Using global mirror list."
-    fi
-  fi
-
-  BASE_MIRRORS_URL="http://mirrors.ubuntu.com"
-  if [[ -n "$COUNTRY" ]]; then
-    lc_country=$(tr '[:upper:]' '[:lower:]' <<<"$COUNTRY")
-    for cand in \
-      "$BASE_MIRRORS_URL/mirrors.${lc_country}.txt" \
-      "$BASE_MIRRORS_URL/mirrors.${COUNTRY}.txt" \
-      "$BASE_MIRRORS_URL/${COUNTRY}.txt"
-    do
-      if curl -fsI "$cand" >/dev/null 2>&1; then
-        MIRROR_LIST_URL="$cand"
-        break
-      fi
-    done
-    : "${MIRROR_LIST_URL:=$BASE_MIRRORS_URL/mirrors.txt}"
-  else
-    MIRROR_LIST_URL="$BASE_MIRRORS_URL/mirrors.txt"
-  fi
-
-  log INFO "Downloading mirror list: $MIRROR_LIST_URL"
-  mapfile -t ALL_MIRRORS < <(curl -fsSL "$MIRROR_LIST_URL" | grep -E '^https?://')
-
-  declare -a TEST_LIST=()
-  for k in "${!CURMAP[@]}"; do TEST_LIST+=( "$k" ); done
-  count=0
-  for m in "${ALL_MIRRORS[@]}"; do
-    [[ -n "${CURMAP[$m]:-}" ]] && continue
-    TEST_LIST+=( "$m" )
-    ((++count >= LIMIT)) && break
-  done
-
-  (( ${#TEST_LIST[@]} == 0 )) && log ERROR "No mirrors to test." && return 1
-  log INFO "Testing ${#TEST_LIST[@]} mirrors (codename: $CODENAME, $TEST_BYTES bytes per test)..."
-
-  is_security_url() {
-    local u="$1"
-    [[ "$u" =~ security\.ubuntu\.com ]] && return 0
-    [[ "$u" =~ ubuntu-security ]] && return 0
-    return 1
-  }
-
-  has_security_suite() {
-    local m="$1"
-    local suite="${CODENAME}-security"
-    if is_security_url "$m"; then return 0; fi
-    local rel="${m%/}/dists/$suite/Release"
-    curl -ILfs "$rel" >/dev/null 2>&1
-  }
-
-  test_mirror() {
-    local m="$1"
-    local suite="$CODENAME"
-    if is_security_url "$m"; then suite="${CODENAME}-security"; fi
-    local rel="${m%/}/dists/$suite/Release"
-    local pkg="${m%/}/dists/$suite/main/binary-amd64/Packages.xz"
-    local ttfb
-    ttfb=$(curl -fIsS -o /dev/null -w "%{time_starttransfer}\n" "$rel" 2>/dev/null || echo 0)
-    ttfb=$(awk -v v="$ttfb" 'BEGIN{printf "%.0f", v*1000}')
-    local secflag="-"
-    if has_security_suite "$m"; then secflag="Y"; fi
-    if ! curl -fsI "$rel" >/dev/null 2>&1; then
-      echo "UNREACHABLE $m 0 0 $ttfb $secflag"
-      return
-    fi
-    local target="$pkg"
-    if ! curl -fsI "$pkg" >/dev/null 2>&1; then target="$rel"; fi
-    local speed time
-    read -r speed time < <(
-      curl -fSsL --range 0-$((TEST_BYTES-1)) --max-time 10 -o /dev/null \
-        -w "%{speed_download} %{time_total}\n" "$target" 2>/dev/null || echo "0 0"
-    )
-    if [[ -z "$speed" || "$speed" == "0" ]]; then
-      echo "SLOW $m 0 0 $ttfb $secflag"
-    else
-      echo "OK $m $speed $time $ttfb $secflag"
-    fi
-  }
-
-  RESULTS=()
-  for m in "${TEST_LIST[@]}"; do
-    RESULTS+=( "$(test_mirror "$m")" )
-  done
-
-  mapfile -t OK_SEC < <(
-    printf '%s\n' "${RESULTS[@]}" \
-      | awk '$1=="OK" && $6=="Y"{print}' \
-      | sort -k5,5n -k3,3nr
-  )
-
-  if (( ${#OK_SEC[@]} < 2 )); then
-    log INFO "Подходящих зеркал (Sec=Y) меньше двух; изменения не вносятся."
-    print_results_table | column -t
-    return 1
-  fi
-
-  BEST_ARCHIVE=$(awk '{print $2}' <<<"${OK_SEC[0]}")
-  BEST_SECURITY="<none>"
-  for l in "${OK_SEC[@]:1}"; do
-    url=$(awk '{print $2}' <<<"$l")
-    if [[ "$url" != "$BEST_ARCHIVE" ]]; then
-      BEST_SECURITY="$url"
-      break
-    fi
-  done
-  if [[ "$BEST_SECURITY" == "<none>" ]]; then
-    log INFO "Не смог выбрать второе отличное зеркало (Sec=Y); изменения не применены."
-    return 1
-  fi
-
-  declare -A SELMAP=()
-  SELMAP["$BEST_ARCHIVE"]="A"
-  SELMAP["$BEST_SECURITY"]="S"
-
-  if (( DRY_RUN )); then
-    log INFO "=== Результаты теста зеркал (dry-run) ==="
-    print_results_table | column -t
-    return 0
-  fi
-
-  APT_SOURCES_LIST_DEB822="/etc/apt/sources.list.d/ubuntu.sources"
-  APT_SOURCES_LIST_CLASSIC="/etc/apt/sources.list"
-
-  if [[ -f "$APT_SOURCES_LIST_DEB822" ]]; then
-    backup_file "$APT_SOURCES_LIST_DEB822" "$SCRIPT_DIR"
-    tmp=$(mktemp)
-    awk -v arch="$BEST_ARCHIVE" -v sec="$BEST_SECURITY" '
-      BEGIN { block=0 }
-      /^Types:/ { block++; print; next }
-      /^URIs:/ {
-        if (block==1) print "URIs: " arch
-        else if (block==2) print "URIs: " sec
-        else print
-        next
-      }
-      { print }
-    ' "$APT_SOURCES_LIST_DEB822" > "$tmp"
-    mv "$tmp" "$APT_SOURCES_LIST_DEB822"
-    log INFO "Updated $APT_SOURCES_LIST_DEB822."
-  elif [[ -f "$APT_SOURCES_LIST_CLASSIC" ]]; then
-    backup_file "$APT_SOURCES_LIST_CLASSIC"
-    sed -i -E "s|http(s)?://[^ ]*archive.ubuntu.com/ubuntu/?|$BEST_ARCHIVE|g" "$APT_SOURCES_LIST_CLASSIC"
-    sed -i -E "s|http(s)?://[^ ]*security.ubuntu.com/ubuntu/?|$BEST_SECURITY|g" "$APT_SOURCES_LIST_CLASSIC"
-    log INFO "Updated $APT_SOURCES_LIST_CLASSIC."
-  else
-    log INFO "APT источники не найдены; создаю новый /etc/apt/sources.list."
-    cat >"$APT_SOURCES_LIST_CLASSIC" <<NEWLIST
-deb ${BEST_ARCHIVE} ${CODENAME} main restricted universe multiverse
-deb ${BEST_ARCHIVE} ${CODENAME}-updates main restricted universe multiverse
-deb ${BEST_ARCHIVE} ${CODENAME}-backports main restricted universe multiverse
-deb ${BEST_SECURITY} ${CODENAME}-security main restricted universe multiverse
-NEWLIST
-  fi
-
-  if (( APT_UPDATE )); then
-    log INFO "apt-get update..."
-    apt-get update -y &>/dev/null || exit_error "Failed to update package list"
-  fi
-
-  log INFO "=== Result test mirrors ==="
-  print_results_table | column -t
-}
-
-# --- Enable automatic unattended upgrades (security | all) ---
-enable_auto_updates() {
-    log "INFO" "Enabling automatic Ubuntu updates (mode: $AUTO_UPDATES_MODE)"
-
-    declare -g -A required_commands=(
-        [unattended-upgrade]="unattended-upgrades"
-        [apt-get]="apt"
-    )
-
-    check_required_commands
-    install_packages
-
-    # --- 20auto-upgrades ---
-    local auto_file="/etc/apt/apt.conf.d/20auto-upgrades"
-    backup_file "$auto_file" "$SCRIPT_DIR"
-
-    cat >"$auto_file" <<EOF
-APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-EOF
-
-    log "OK" "Configured $auto_file"
-
-    # --- 50unattended-upgrades ---
-    local unattended_file="/etc/apt/apt.conf.d/50unattended-upgrades"
-    backup_file "$unattended_file" "$SCRIPT_DIR"
-
-    # Перезаписываем конфиг, чтобы не копить дублирующиеся Allowed-Origins
-    cat >"$unattended_file" <<EOF
-// Managed by install.sh — keep this block minimal
-Unattended-Upgrade::Allowed-Origins {
-    "\${distro_id}:\${distro_codename}-security";
-$( [[ "$AUTO_UPDATES_MODE" == "all" ]] && echo '    "${distro_id}:${distro_codename}-updates";' )
-};
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
-Unattended-Upgrade::Automatic-Reboot "false";
-EOF
-
-    if [[ "$AUTO_UPDATES_MODE" == "all" ]]; then
-        log "OK" "Enabled security + regular updates"
-    else
-        log "OK" "Enabled security-only updates (server mode)"
-    fi
-
-    # Ensure systemd timers are active so unattended upgrades actually run
-    if command_exists systemctl; then
-        local timers=(apt-daily.timer apt-daily-upgrade.timer)
-        for t in "${timers[@]}"; do
-            if systemctl list-unit-files --type=timer --no-legend 2>/dev/null | awk '{print $1}' | grep -Fxq "$t"; then
-                if systemctl enable --now "$t" &>/dev/null; then
-                    log "OK" "Enabled and started $t"
-                else
-                    log "WARN" "Failed to enable/start $t (check system logs)"
-                fi
-            else
-                log "DEBUG" "Timer $t not found; skipping"
-            fi
-        done
-    else
-        log "WARN" "systemctl not available; skipping apt timers"
-    fi
-
-    # --- Dry run ---
-    if ! wait_for_apt_locks 6 5; then
-        log "WARN" "APT/dpkg lock is still busy after waiting; skipping unattended-upgrade dry-run"
-        return
-    fi
-    log "INFO" "Running unattended-upgrades dry-run..."
-    if unattended-upgrade --dry-run --debug &>>"$LOG_FILE"; then
-        log "OK" "unattended-upgrades dry-run completed successfully"
-    else
-        local rc=$?
-        log "WARN" "unattended-upgrades dry-run reported issues (rc=$rc). Check $LOG_FILE or /var/log/unattended-upgrades/unattended-upgrades.log for details."
-    fi
+	local min=${1:-20000} max=${2:-65000} port
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		printf '%s\n' "$min"
+		return 0
+	fi
+	for _ in $(seq 1 100); do
+		port=$(shuf -i "$min-$max" -n 1)
+		if is_port_free "$port"; then
+			printf '%s\n' "$port"
+			return 0
+		fi
+	done
+	die "could not find a free port in range $min-$max"
 }

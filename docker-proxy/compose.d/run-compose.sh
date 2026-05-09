@@ -26,7 +26,7 @@ RETRY_COUNT="${RETRY_COUNT:-3}"
 RETRY_DELAY="${RETRY_DELAY:-5}"
 RESTART_WITH_DEPS="${RESTART_WITH_DEPS:-0}"
 CLEAN_UNHEALTHY="${CLEAN_UNHEALTHY:-0}"
-LOCK_FILE="${LOCK_FILE:-/tmp/docker-proxy-compose.lock}"
+LOCK_FILE="${LOCK_FILE:-$COMPOSE_DIR/.run-compose.lock}"
 
 ENV_ARGS=()
 COMPOSE_ARGS=()
@@ -356,6 +356,14 @@ acquire_lock() {
 		log "WARN: flock недоступен, продолжаем без lock"
 		return
 	}
+	if [[ ! -e "$LOCK_FILE" ]]; then
+		install -m 0666 /dev/null "$LOCK_FILE"
+	elif [[ ! -w "$LOCK_FILE" ]]; then
+		log "ERROR: Lock file is not writable: $LOCK_FILE"
+		log "ERROR: Remove it or fix permissions, for example: sudo rm -f '$LOCK_FILE'"
+		exit 1
+	fi
+	chmod a+rw "$LOCK_FILE" 2>/dev/null || true
 	exec 9>"$LOCK_FILE"
 	if ! flock -n 9; then
 		log "ERROR: Уже выполняется другой run-compose.sh (lock: $LOCK_FILE)"

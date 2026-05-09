@@ -35,6 +35,19 @@ require_tool yq
 
 assert_has_healthcheck "$COMPOSE_DIR/13-homepage.yml" homepage
 assert_has_healthcheck "$COMPOSE_DIR/14-lampac.yml" lampac
+adguard_healthcheck=$(compose_value '.services.adguard.healthcheck.test | join(" ")' "$COMPOSE_DIR/10-adguard.yml")
+case "$adguard_healthcheck" in
+	*127.0.0.1*80*) ;;
+	*) fail "adguard healthcheck must verify local HTTP readiness instead of external DNS; got '$adguard_healthcheck'" ;;
+esac
+
+torproxy_start_period=$(compose_value '.services.torproxy.healthcheck.start_period // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$torproxy_start_period" == "5m" ]] ||
+	fail "torproxy healthcheck start_period must allow slow first Tor bootstrap; got '${torproxy_start_period:-<missing>}'"
+
+torproxy_retries=$(compose_value '.services.torproxy.healthcheck.retries // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$torproxy_retries" == "10" ]] ||
+	fail "torproxy healthcheck retries must tolerate slow first Tor bootstrap; got '${torproxy_retries:-<missing>}'"
 
 for dependency in crowdsec crowdsec-firewall-bouncer caddy dozzle adguard 3x-ui homepage lampac warp usque torproxy tor-proxy; do
 	assert_depends_on_healthy "$COMPOSE_DIR/06-traefik.yml" traefik "$dependency"
