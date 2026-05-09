@@ -131,6 +131,16 @@ test_up_is_safe_by_default() {
 	assert_not_contains "rm --stop --force" "$tmpdir/docker.log" "safe up must not remove containers"
 }
 
+test_lock_file_is_compose_local_and_world_writable() {
+	make_fixture
+	run_runner up
+	local lock_file="$tmpdir/compose.d/.run-compose.lock"
+	[[ -f "$lock_file" ]] || fail "run-compose must create compose-local lock file"
+	local mode
+	mode=$(stat -c '%a' "$lock_file")
+	[[ "$mode" == "666" ]] || fail "run-compose lock file must be writable across sudo/non-sudo runs; got $mode"
+}
+
 test_rebuild_is_destructive_explicitly() {
 	make_fixture
 	run_runner rebuild traefik
@@ -215,6 +225,7 @@ test_restart_uses_no_deps_by_default
 test_restart_can_include_dependencies
 test_restart_logs_is_explicit
 test_up_is_safe_by_default
+test_lock_file_is_compose_local_and_world_writable
 test_rebuild_is_destructive_explicitly
 test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files

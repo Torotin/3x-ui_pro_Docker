@@ -1,210 +1,200 @@
-#!/bin/bash
-# lib/01_menu.sh — Menu utility functions
+#!/usr/bin/env bash
+# Wizard/menu runtime. The wizard delegates to the same dispatcher as CLI run.
 
-install_steps_init() {
-  # Глобально объявляем ассоциативный массив (вариант 2 — достаточно этого):
-  declare -gA INSTALL_STEPS=(
-    ["0"]='auto_full:Automatic full install'
-    ["1"]='update_and_upgrade_packages:System update'
-    ["2"]='docker_install;docker_ensure_networks:Docker. (Re)Install'
-    ["3"]='ensure_docker_dir;download_repo_dir "docker-proxy" "${DOCKER_DIR}":Docker. Generate docker dir'
-    ["4"]='generate_env_file "'$DOCKER_ENV_TEMPLATE'" "'$DOCKER_ENV_FILE'":Docker. Generate docker env-file'
-    ["5"]='docker_run_compose:Docker. Run compose stack'
-    ["6"]='user_create:Create user'
-    ["7"]='firewall_config:Configure firewall'
-    ["8"]='sshd_config:Configure SSH'
-    ["9"]='network_config_modify:Network optimization'
-    ["10"]='msg_final:Final message'
-    ["x"]='exit_script:Exit'
-    ["r"]='reboot_system:Reboot'
-  )
+install_wizard_print_menu() {
+	if [[ -t 1 ]]; then
+		printf '\033[H\033[2J'
+	fi
+	cat <<'MENU'
+Available steps:
+  1. apt       Select APT mirror and update OS packages
+  2. env       Render installer and compose env files
+  3. docker    Install/prepare Docker resources
+  4. user      Create or update service user
+  5. firewall  Apply firewall policy
+  6. ssh       Apply SSH policy
+  7. network   Apply sysctl/network tuning
+  8. compose   Validate/start compose stack
+  9. final     Render final summary
+  x. Exit
+MENU
 }
 
-show_menu() {
-  install_steps_init
-  echo "Select steps to execute (1,3 5 7 or 1-6):"
-
-  local sorted_keys
-  IFS=$'\n' read -r -d '' -a sorted_keys < <(printf "%s\n" "${!INSTALL_STEPS[@]}" | sort -V && printf '\0')
-
-  for key in "${sorted_keys[@]}"; do
-    IFS=":" read -r func desc <<< "${INSTALL_STEPS[$key]}"
-    printf " %3s) %-30s\n" "$key" "$desc"
-  done
-  echo -n "> "
+install_wizard_print_status() {
+	local status=${WIZARD_LAST_STATUS:-No operation yet}
+	printf '\nLast operation: %s\n\n' "$status"
 }
 
-parse_step_selection() {
-  local raw_input="$1"
-  local expanded=()
-  raw_input="$(echo "$raw_input" | tr ',' ' ' | xargs)"
-
-  IFS=' ' read -r -a tokens <<< "$raw_input"
-
-  for token in "${tokens[@]}"; do
-    if [[ "$token" =~ ^[0-9]+-[0-9]+$ ]]; then
-      local start="${token%-*}"
-      local end="${token#*-}"
-      if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ && $start -le $end ]]; then
-        for ((i=start; i<=end; i++)); do
-          expanded+=("$i")
-        done
-      fi
-    elif [[ "$token" =~ ^[0-9]+$ ]]; then
-      expanded+=("$token")
-    elif [[ "$token" =~ ^[a-zA-Z]+$ ]]; then
-      expanded+=("$token")
-    fi
-  done
-
-  for item in "${expanded[@]}"; do
-    echo "$item"
-  done
+wizard_normalize_step() {
+	case "$1" in
+	1) printf 'apt\n' ;;
+	2) printf 'env\n' ;;
+	3) printf 'docker\n' ;;
+	4) printf 'user\n' ;;
+	5) printf 'firewall\n' ;;
+	6) printf 'ssh\n' ;;
+	7) printf 'network\n' ;;
+	8) printf 'compose\n' ;;
+	9) printf 'final\n' ;;
+	*) printf '%s\n' "$1" ;;
+	esac
 }
 
-auto_full() {
-  log "INFO" "Running all steps (auto mode)..."
-
-  # Собираем только цифровые шаги, кроме "0"
-  local keys=()
-  for key in "${!INSTALL_STEPS[@]}"; do
-    [[ "$key" =~ ^[0-9]+$ ]] || continue
-    [[ "$key" == "0" ]] && continue
-    keys+=("$key")
-  done
-
-  # Сортируем по возрастанию
-  IFS=$'\n' keys_sorted=($(sort -n <<<"${keys[*]}"))
-  unset IFS
-
-  for key in "${keys_sorted[@]}"; do
-    entry="${INSTALL_STEPS[$key]}"
-    IFS=':' read -r cmds desc <<< "$entry"
-
-    log "SEP"
-    log "TITLE" "Step $key: $desc"
-
-    # Разбиваем на отдельные команды по ';'
-    IFS=';' read -r -a cmd_array <<< "$cmds"
-    for cmd in "${cmd_array[@]}"; do
-      # Тримим пробелы
-      cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-      cmd="${cmd%"${cmd##*[![:space:]]}"}"
-
-      # Отделяем имя команды/функции
-      cmd_name="${cmd%% *}"
-
-      if [[ -n "$(type -t "$cmd_name")" ]]; then
-        log "INFO" "Executing: $cmd"
-        eval "$cmd"
-      else
-        log "WARN" "Command or function '$cmd_name' not found, skipping."
-      fi
-    done
-  done
-
-  echo -e "\nAll steps complete. Press Enter to return to menu..."
-  read -r
+wizard_execute_step() {
+	local label=$1
+	shift
+	local output_file="$INSTALL_STATE_DIR/wizard-last-${label}.log"
+	local rc
+	printf '\nRunning %s...\n\n' "$label"
+	set +e
+	if [[ "$label" == "compose" ]]; then
+		"$@" 2>&1 | tee "$output_file" | wizard_filter_compose_output
+		rc=${PIPESTATUS[0]}
+	else
+		"$@" 2>&1 | tee "$output_file"
+		rc=${PIPESTATUS[0]}
+	fi
+	set -e
+	if ((rc == 0)); then
+		WIZARD_LAST_STATUS="OK $label"
+		printf '\nLast operation: OK %s\nLog: %s\n' "$label" "$output_file"
+		wizard_wait_continue
+		return 0
+	fi
+	WIZARD_LAST_STATUS="FAILED $label"
+	printf '\nLast operation: FAILED %s\nLog: %s\n' "$label" "$output_file"
+	wizard_wait_continue
+	return "$rc"
 }
 
-check_args() {
-  # Ensure steps are initialized before processing args
-  install_steps_init
-
-  # Если переданы аргументы — воспринимаем их как список шагов и сразу выполняем
-  if (( $# > 0 )); then
-    log "INFO" "Запуск в неинтерактивном режиме: шаги = $*"
-    # Разбор указанных шагов (в том числе диапазонов) функцией parse_step_selection
-    selected=()
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && selected+=("$line")
-    done < <(parse_step_selection "$*")
-
-    for key in "${selected[@]}"; do
-      key="$(echo "$key" | xargs)"
-      entry="${INSTALL_STEPS[$key]:-}"
-      if [[ -z "$entry" ]]; then
-        log "WARN" "Unknown or missing step: $key"
-        continue
-      fi
-
-      IFS=':' read -r cmds desc <<< "$entry"
-      log "SEP"
-      log "TITLE" "Step $key: $desc"
-      IFS=';' read -r -a cmd_array <<< "$cmds"
-      for cmd in "${cmd_array[@]}"; do
-        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-        cmd="${cmd%"${cmd##*[![:space:]]}"}"
-        if [[ -n "$(type -t "${cmd%% *}")" ]]; then
-          log "INFO" "Executing: $cmd"
-          eval "$cmd"
-        else
-          log "WARN" "Command or function '${cmd%% *}' not found, skipping."
-        fi
-      done
-    done
-    exit_script
-  fi
+wizard_wait_continue() {
+	local _
+	printf '\nPress Enter to continue...'
+	read -r _ || true
 }
 
+wizard_filter_compose_output() {
+	awk '
+		/^[[:space:]]*[[:xdigit:]]{12,}[[:space:]]+(Pulling fs layer|Downloading|Download complete|Extracting|Pull complete)[[:space:]]/ {
+			if (!pulling) {
+				print "Pulling Docker images..."
+				pulling=1
+			}
+			next
+		}
+		/^ Image .* Pulling$/ {
+			if (!pulling) {
+				print "Pulling Docker images..."
+				pulling=1
+			}
+			next
+		}
+		/^ Image .* Pulled$/ {
+			if (!pulled) {
+				print "Docker images pulled"
+				pulled=1
+			}
+			next
+		}
+		/\[run-compose\] Проверяем конфигурацию: / {
+			print "Validating compose configuration..."
+			next
+		}
+		/\[run-compose\] Попытка [0-9]+\/[0-9]+: / {
+			line=$0
+			sub(/^.*\[run-compose\] /, "", line)
+			sub(/: docker compose .*$/, "", line)
+			print "Starting compose stack: " line
+			next
+		}
+		/\[run-compose\] Каталог с compose-файлами:/ {next}
+		/\[run-compose\] Используем env-файл:/ {next}
+		{print}
+	'
+}
 
-main_menu() {
-  if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
-  log "INFO" "Starting installation script..."
-  check_args "$@"
+wizard_confirm() {
+	local prompt=$1 answer
+	printf '%s [y/N] ' "$prompt"
+	read -r answer || answer=n
+	case "$answer" in
+	y | Y | yes | YES) return 0 ;;
+	*) return 1 ;;
+	esac
+}
 
-  while true; do
-    if [[ -z "${CI:-}" ]] && tty -s; then clear; fi
+wizard_dispatch_step() {
+	local input=$1
+	case "$input" in
+	apt)
+		if wizard_confirm "Select fastest APT mirror and update OS packages?"; then
+			wizard_execute_step apt dispatch_step apt --apply --yes
+		else
+			WIZARD_LAST_STATUS="SKIPPED apt"
+			printf '\nAPT mirror/update skipped\n'
+			wizard_wait_continue
+		fi
+		;;
+	docker)
+		if wizard_confirm "Destroy Docker data and reinstall Docker?"; then
+			wizard_execute_step docker dispatch_step docker --destroy-docker-data
+		else
+			WIZARD_LAST_STATUS="SKIPPED docker"
+			printf '\nDocker wipe/reinstall skipped\n'
+			wizard_wait_continue
+		fi
+		;;
+	firewall | ssh | network)
+		if wizard_confirm "Apply $input system changes?"; then
+			wizard_execute_step "$input" dispatch_step "$input" --apply --yes
+		else
+			WIZARD_LAST_STATUS="SKIPPED $input"
+			printf '\n%s apply skipped\n' "$input"
+			wizard_wait_continue
+		fi
+		;;
+	user)
+		install_load_state_env
+		if [[ -z "${USER_SSH:-}" ]]; then
+			printf 'SSH username: '
+			read -r USER_SSH || USER_SSH=
+			export USER_SSH
+		fi
+		wizard_execute_step user dispatch_step user
+		;;
+	env | compose | final)
+		wizard_execute_step "$input" dispatch_step "$input"
+		;;
+	*)
+		WIZARD_LAST_STATUS="INVALID $input"
+		printf '\nUnknown menu item: %s\n' "$input"
+		wizard_wait_continue
+		return 0
+		;;
+	esac
+}
 
-    show_menu
-    read -r input
+install_wizard() {
+	printf 'Update check: run self-update now? [y/N] '
+	local answer
+	read -r answer || answer=n
+	case "$answer" in
+	y | Y | yes | YES) install_self_update_command --check ;;
+	*) log INFO "self-update skipped" >/dev/null ;;
+	esac
+	install_require_required_env wizard
 
-    selected=()
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && selected+=("$line")
-    done < <(parse_step_selection "$input")
-
-    for key in "${selected[@]}"; do
-      key="$(echo "$key" | xargs)"  # очистка пробелов
-
-      entry="${INSTALL_STEPS[$key]:-}"
-      if [[ -z "$entry" ]]; then
-        log "WARN" "Unknown or missing step: $key"
-        continue
-      fi
-
-      # разбиваем на команды и описание
-      IFS=':' read -r cmds desc <<< "$entry"
-
-      log "SEP"
-      log "TITLE" "Step $key: $desc"
-
-      # разбиваем cmds по ';' и выполняем каждую
-      IFS=';' read -r -a cmd_array <<< "$cmds"
-      for cmd in "${cmd_array[@]}"; do
-        # убираем ведущие/хвостовые пробелы
-        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-        cmd="${cmd%"${cmd##*[![:space:]]}"}"
-        [[ -z "$cmd" ]] && continue
-
-        # проверяем, существует ли команда/функция
-        cmd_name="${cmd%% *}"
-        if [[ -n "$(type -t "$cmd_name")" ]]; then
-          log "INFO" "Executing: $cmd"
-          eval "$cmd"
-        else
-          log "WARN" "Command or function '$cmd_name' not found, skipping."
-        fi
-      done
-
-      # если шаг — выход, прерываем main
-      if [[ "$cmds" == *"exit_script"* ]]; then
-        return
-      fi
-    done
-
-    echo -e "\nPress Enter to return to the menu..."
-    read -r
-    clear
-  done
+	while true; do
+		install_wizard_print_menu
+		printf '> '
+		install_wizard_print_status
+		local input
+		read -r input || break
+		[[ -z "$input" ]] && continue
+		[[ "$input" == "x" ]] && break
+		input=$(wizard_normalize_step "$input")
+		if ! wizard_dispatch_step "$input"; then
+			log WARN "wizard step failed: $input"
+		fi
+	done
 }

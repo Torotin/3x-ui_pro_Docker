@@ -4,42 +4,23 @@
 
 Готовое Docker‑окружение для прокси/панелей: Traefik, 3x-ui (Xray), Caddy, AdGuard, CrowdSec, Lampac, Homepage и вспомогательные модули. Собственные образы собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
 
-## Быстрый старт (загрузить установщик из GitHub)
-
-Скрипт ниже скачает свежий `install.sh` с кешированием по ETag и запустит его.
+## Быстрый старт
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-TARGET_DIR="/opt/script"
-INSTALL_SCRIPT="$TARGET_DIR/install.sh"
-ETAG_FILE="$INSTALL_SCRIPT.etag"
-URL="https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/refs/heads/main/script/install.sh"
-
-sudo mkdir -p "$TARGET_DIR"
-TMP="$(mktemp)"
-
-HTTP_CODE="$(
-  curl -sS -L -f \
-    --etag-compare "$ETAG_FILE" \
-    --etag-save "$ETAG_FILE" \
-    --write-out '%{http_code}' \
-    --output "$TMP" \
-    "$URL"
-)"
-
-if [[ "$HTTP_CODE" == "304" ]]; then
-  echo "install.sh не изменился (304 Not Modified)."
-  rm -f "$TMP"
-else
-  sudo install -m 0755 "$TMP" "$INSTALL_SCRIPT"
-  rm -f "$TMP"
-  echo "install.sh обновлён (HTTP $HTTP_CODE)."
-fi
-
-sudo "$INSTALL_SCRIPT"
+git clone https://github.com/Torotin/3x-ui_pro_Docker.git
+cd 3x-ui_pro_Docker
+sudo script/install.sh doctor
+sudo script/install.sh wizard
 ```
+
+Установщик больше не является single-file bootstrap. Официальный путь запуска — из клона репозитория. Обновление скриптов выполняется явно:
+
+```bash
+sudo script/install.sh self-update --branch main --check
+sudo script/install.sh self-update --branch main --yes
+```
+
+Wizard при старте проверяет возможность обновления и предлагает выполнить `self-update`, но не применяет изменения молча.
 
 ## Что разворачивается
 
@@ -85,34 +66,76 @@ sudo "$INSTALL_SCRIPT"
 
 ## Требования
 
-- Root и bash (Debian/Ubuntu‑совместимые).
-- Доступ в интернет для загрузки шаблонов/модулей/образов.
-- Docker и Docker Compose устанавливаются скриптом при отсутствии.
+- Debian/Ubuntu, root и bash.
+- systemd и apt.
+- Доступ в интернет для загрузки образов и обновления из выбранной git-ветки.
 
-## Шаги установщика (меню)
+## Команды установщика
 
-Шаги выбираются числом или диапазоном (`1,3 5 7`, `1-6`):
+```bash
+script/install.sh doctor
+script/install.sh wizard
+script/install.sh run apt --apply --yes
+script/install.sh run env compose
+script/install.sh run docker --destroy-docker-data
+script/install.sh run firewall --apply --yes
+script/install.sh run ssh --apply --yes
+script/install.sh run network --apply --yes
+script/install.sh self-update --branch main --check
+script/install.sh uninstall --plan
+```
 
-1. System update  
-2. Docker. (Re)Install (сеть `traefik-proxy`)  
-3. Docker. Generate docker dir (`/opt/docker-proxy`, загрузка файлов)  
-4. Docker. Generate docker env-file (`/opt/docker-proxy/.env`)  
-5. Create user  
-6. Configure firewall  
-7. Configure SSH  
-8. Network optimization  
-9. Docker. Run Compose (`docker compose up -d`)  
-10. Final message  
-`x` — Exit, `r` — Reboot  
+Доступные шаги для `run`: `apt`, `env`, `docker`, `user`, `firewall`, `ssh`, `network`, `compose`, `final`, `uninstall`.
+
+Разрушительные действия требуют явного opt-in:
+
+- Docker cleanup/reinstall: `--destroy-docker-data`.
+- APT mirror/update, firewall/SSH/network apply: `--apply --yes` для неинтерактивного запуска.
+- Удаление проекта: сначала `uninstall --plan`, затем `uninstall --apply --yes` и отдельные purge-флаги для системных изменений.
+
+## Удаление с сервера
+
+Сначала посмотрите план без изменений:
+
+```bash
+sudo script/install.sh uninstall --plan
+```
+
+Базовое применение останавливает compose stack через `compose.d/run-compose.sh down --remove-orphans`:
+
+```bash
+sudo script/install.sh uninstall --apply --yes
+```
+
+Дополнительные очистки включаются отдельно:
+
+```bash
+sudo script/install.sh uninstall --apply --yes \
+  --purge-docker-data \
+  --purge-docker-engine \
+  --purge-firewall \
+  --purge-ssh \
+  --purge-network \
+  --remove-project-root
+```
+
+Что делают purge-флаги:
+
+- `--purge-docker-data` — добавляет compose `down --volumes --rmi local`, prune Docker volumes/networks с label проекта и удаление внешних сетей `traefik-proxy`/`dns-net`, если они свободны.
+- `--purge-docker-engine` — дополнительно удаляет Docker engine packages и каталоги `/var/lib/docker`, `/var/lib/containerd`.
+- `--purge-firewall` — удаляет известные правила UFW для `PORT_REMOTE_*`, `80/tcp`, `443/tcp`, `443/udp`; глобальный `ufw reset` не выполняется.
+- `--purge-ssh` — восстанавливает последний backup `sshd_config` из `install-state/backups`, проверяет `sshd -t` и перезапускает SSH.
+- `--purge-network` — восстанавливает backup `/etc/sysctl.d/99-xray.conf` или удаляет файл установщика, затем перезагружает sysctl.
+- `--remove-project-root` — удаляет каталог проекта из `INSTALL_ROOT` после остальных шагов.
 
 ## Какие переменные спрашивает install.sh
 
 Спрашиваются только ключевые значения, остальное генерируется:
 
 - `WEBDOMAIN` — домен (обязательно).  
-- `USER_SSH` / `PASS_SSH` — учётка системы (можно пропустить, будет сгенерировано).  
-- `SSH_PBK` — ваш публичный ключ (ED25519/RSA). Если пусто — генерится новый ключ.  
-- `USER_WEB` / `PASS_WEB` — BasicAuth для панелей (если указали логин, задайте и пароль).  
+- `USER_SSH` / `PASS_SSH` — учётка системы (обязательно).
+- `SSH_PBK` — ваш публичный ключ (ED25519/RSA), необязательно.
+- `USER_WEB` / `PASS_WEB` — BasicAuth для панелей (обязательно).
 
 Автоматически:
 
@@ -123,17 +146,19 @@ sudo "$INSTALL_SCRIPT"
 - `HT_PASS_ENCODED` — htpasswd из `USER_WEB/PASS_WEB`.  
 
 Переменные можно задать заранее:  
-`WEBDOMAIN=example.com USER_SSH=alice PASS_SSH='S3cure' sudo ./install.sh`
+`WEBDOMAIN=example.com USER_SSH=alice PASS_SSH='S3cure' sudo script/install.sh run env`
 
 ## Куда пишутся параметры
 
-- `install.env` — рядом с `install.sh`.  
-- `/opt/docker-proxy/.env` — окружение для Compose.  
-- `/opt/docker-proxy/compose.yml` + `compose.d/*.yml` — сервисы.  
+- `/opt/script/install-state/install.env` — состояние установщика.
+- `/opt/docker-proxy/compose.d/.env` — окружение для Compose.
+- `/opt/docker-proxy/compose.yml` + `compose.d/*.yml` — сервисы.
 
 ## Повторный запуск/обновление
 
-Повторный запуск блока «Быстрый старт» скачает новый `install.sh` только при изменении ETag. Сам установщик можно запускать повторно для отдельных шагов (например, регенерация `.env` и `docker compose up -d`).
+Повторный запуск выполняется через `script/install.sh run <step...>`. Ветка для обновлений сохраняется в локальном state-файле установщика и может быть переопределена через `--branch`.
+
+Локальная разработка и тесты установщика используют mock-режим и не должны вызывать реальные `apt`, `docker`, `ufw`, `iptables`, `systemctl`, `sshd`, `modprobe`, `sysctl -p`, `useradd`, `chpasswd` или писать в `/etc`, `/opt`, `/var/lib`. Боевое тестирование выполняется только на сервере.
 
 ## Безопасность
 
