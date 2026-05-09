@@ -48,7 +48,7 @@ Usage:
   install.sh doctor
   install.sh wizard
   install.sh run <step...> [--destroy-docker-data] [--apply] [--yes]
-  install.sh self-update [--branch <branch>] [--check] [--yes]
+  install.sh self-update [--branch <branch>] [--check] [--yes] [--force]
   install.sh uninstall [--plan|--apply --yes] [--purge-docker-data]
     [--purge-docker-engine] [--purge-firewall] [--purge-ssh]
     [--purge-network] [--remove-project-root]

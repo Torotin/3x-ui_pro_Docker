@@ -113,6 +113,37 @@ wizard_filter_compose_output() {
 	'
 }
 
+wizard_offer_self_update() {
+	local branch result_file tmp local_version remote_version available answer
+	branch=$(config_get update.branch "$INSTALL_DEFAULT_BRANCH")
+	result_file=$(mktemp)
+	if ! (install_self_update_prepare "$branch" "$result_file"); then
+		rm -f "$result_file"
+		log WARN "self-update check failed"
+		return 0
+	fi
+	install_self_update_load_result "$result_file"
+	rm -f "$result_file"
+	tmp=$SELF_UPDATE_TMP
+	local_version=$SELF_UPDATE_LOCAL_VERSION
+	remote_version=$SELF_UPDATE_REMOTE_VERSION
+	available=$SELF_UPDATE_AVAILABLE
+	if [[ "$available" != "1" ]]; then
+		printf 'Update check: installer is up to date (%s)\n' "$local_version"
+		rm -rf "$tmp"
+		return 0
+	fi
+	printf 'Update available: %s -> %s\n' "$local_version" "$remote_version"
+	install_print_changelog_range "$tmp/script/CHANGELOG.md" "$local_version" "$remote_version"
+	rm -rf "$tmp"
+	printf 'Run self-update now? [y/N] '
+	read -r answer || answer=n
+	case "$answer" in
+	y | Y | yes | YES) install_self_update_command --branch "$branch" --yes ;;
+	*) log INFO "self-update skipped" >/dev/null ;;
+	esac
+}
+
 wizard_confirm() {
 	local prompt=$1 answer
 	printf '%s [y/N] ' "$prompt"
@@ -175,13 +206,7 @@ wizard_dispatch_step() {
 }
 
 install_wizard() {
-	printf 'Update check: run self-update now? [y/N] '
-	local answer
-	read -r answer || answer=n
-	case "$answer" in
-	y | Y | yes | YES) install_self_update_command --check ;;
-	*) log INFO "self-update skipped" >/dev/null ;;
-	esac
+	wizard_offer_self_update
 	install_require_required_env wizard
 
 	while true; do
