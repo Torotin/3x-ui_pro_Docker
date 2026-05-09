@@ -16,50 +16,31 @@ dns:
   bind_hosts:
     - 0.0.0.0
   port: 53
-  anonymize_client_ip: true
-  ratelimit: 20
+  anonymize_client_ip: false
+  ratelimit: 200
   ratelimit_subnet_len_ipv4: 24
   ratelimit_subnet_len_ipv6: 56
-  ratelimit_whitelist: []
+  ratelimit_whitelist:
+    - 127.0.0.1
   refuse_any: true
   upstream_dns:
-    - https://dns10.quad9.net/dns-query
-    - quic://dns.alidns.com:853
-    - https://dns.alidns.com/dns-query
-    - https://doh.sandbox.opendns.com/dns-query
-    - https://freedns.controld.com/p0
-    - https://doh.dns.sb/dns-query
-    - https://dns.google/dns-query
-    - https://dns.nextdns.io
     - https://dns.quad9.net/dns-query
-    - https://dns11.quad9.net/dns-query
-    - https://dns.rabbitdns.org/dns-query
-    - https://basic.rethinkdns.com/
-    - https://wikimedia-dns.org/dns-query
-    - https://doh.libredns.gr/dns-query
-    - https://doh.libredns.gr/ads
-    - https://dns.twnic.tw/dns-query
-    - https://dns.switch.ch/dns-query
-    - tls://dns.alidns.com
-    - tls://sandbox.opendns.com
-    - tls://p0.freedns.controld.com
-    - tls://dot.sb
-    - tls://dns.google
-    - tls://dns.mullvad.net
-    - tls://dns.nextdns.io
     - tls://dns.quad9.net
-    - tls://dns11.quad9.net
-    - tls://dot.libredns.gr
+    - https://dns.google/dns-query
+    - tls://dns.google
   upstream_dns_file: ""
   bootstrap_dns:
-    - 9.9.9.10
-    - 149.112.112.10
-    - 2620:fe::10
-    - 2620:fe::fe:10
+    - 9.9.9.9
+    - 149.112.112.112
+    - 8.8.8.8
+    - 8.8.4.4
   fallback_dns: []
-  upstream_mode: parallel
-  fastest_timeout: 1s
-  allowed_clients: []
+  upstream_mode: load_balance
+  fastest_timeout: 2s
+  allowed_clients:
+    - 127.0.0.1
+    - 172.18.0.0/24
+    - 172.19.0.0/24
   disallowed_clients: []
   blocked_hosts:
     - version.bind
@@ -68,11 +49,12 @@ dns:
   trusted_proxies:
     - 127.0.0.0/8
     - ::1/128
+    - 172.19.0.0/24
   cache_enabled: true
-  cache_size: 4194304
-  cache_ttl_min: 0
-  cache_ttl_max: 0
-  cache_optimistic: false
+  cache_size: 67108864
+  cache_ttl_min: 60
+  cache_ttl_max: 86400
+  cache_optimistic: true
   bogus_nxdomain: []
   aaaa_disabled: false
   enable_dnssec: false
@@ -81,14 +63,21 @@ dns:
     enabled: false
     use_custom: false
   max_goroutines: 300
-  handle_ddr: true
+  handle_ddr: false
   ipset: []
   ipset_file: ""
   bootstrap_prefer_ipv6: false
-  upstream_timeout: 10s
-  private_networks: []
-  use_private_ptr_resolvers: false
-  local_ptr_upstreams: []
+  upstream_timeout: 5s
+  private_networks:
+    - 127.0.0.0/8
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - fe80::/10
+    - fc00::/7
+  use_private_ptr_resolvers: true
+  local_ptr_upstreams:
+    - 127.0.0.11
   use_dns64: false
   dns64_prefixes: []
   serve_http3: false
@@ -216,7 +205,29 @@ filtering:
   blocking_mode: refused
   parental_block_host: family-block.dns.adguard.com
   safebrowsing_block_host: standard-block.dns.adguard.com
-  rewrites: []
+  rewrites:
+    - domain: adguard
+      answer: 172.19.0.10
+    - domain: crowdsec
+      answer: 172.19.0.3
+    - domain: caddy
+      answer: 172.19.0.5
+    - domain: traefik
+      answer: 172.19.0.6
+    - domain: dozzle
+      answer: 172.19.0.7
+    - domain: warp
+      answer: 172.19.0.8
+    - domain: tor-proxy
+      answer: 172.19.0.11
+    - domain: 3x-ui
+      answer: 172.19.0.12
+    - domain: homepage
+      answer: 172.19.0.13
+    - domain: lampac
+      answer: 172.19.0.14
+    - domain: sub2sing
+      answer: 172.19.0.15
   safe_fs_patterns:
     - /opt/adguardhome/work/userfilters/*
   safebrowsing_cache_size: 1048576
@@ -227,7 +238,7 @@ filtering:
   blocked_response_ttl: 10
   filtering_enabled: true
   parental_enabled: false
-  safebrowsing_enabled: true
+  safebrowsing_enabled: false
   protection_enabled: true
 clients:
   runtime_sources:

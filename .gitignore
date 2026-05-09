@@ -17,3 +17,5 @@ Thumbs.db
 *.iml
 /ideas*
 /New*
+sync-lampac-docker.sh
+/.project_context*

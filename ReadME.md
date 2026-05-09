@@ -1,142 +1,210 @@
-# 3x-ui_pro_Docker — краткий мануал
+# 3x-ui_pro_Docker
 
 [![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 
-Готовое Docker‑окружение для прокси/панелей: Traefik, 3x-ui (Xray), Caddy, AdGuard, CrowdSec, Lampac, Homepage и вспомогательные модули. Собственные образы собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
+`3x-ui_pro_Docker` — готовый Docker Compose стек для развертывания прокси-инфраструктуры вокруг Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Lampac, WARP/usque и TOR helper-сервисов.
 
-## Быстрый старт (загрузить установщик из GitHub)
+Репозиторий содержит сам стек, installer CLI/wizard, шаблоны окружения и тесты для безопасной локальной разработки. Собственные образы проекта собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
 
-Скрипт ниже скачает свежий `install.sh` с кешированием по ETag и запустит его.
+## Поддерживаемая платформа
+
+- Debian/Ubuntu.
+- `systemd` и `apt`.
+- Docker Engine с Compose plugin.
+- Root/sudo доступ на сервере для установки пакетов, Docker, firewall, SSH и sysctl-настроек.
+- Локальная разработка installer выполняется только через mock/fake окружение.
+
+## Быстрый старт
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-TARGET_DIR="/opt/script"
-INSTALL_SCRIPT="$TARGET_DIR/install.sh"
-ETAG_FILE="$INSTALL_SCRIPT.etag"
-URL="https://raw.githubusercontent.com/Torotin/3x-ui_pro_Docker/refs/heads/main/script/install.sh"
-
-sudo mkdir -p "$TARGET_DIR"
-TMP="$(mktemp)"
-
-HTTP_CODE="$(
-  curl -sS -L -f \
-    --etag-compare "$ETAG_FILE" \
-    --etag-save "$ETAG_FILE" \
-    --write-out '%{http_code}' \
-    --output "$TMP" \
-    "$URL"
-)"
-
-if [[ "$HTTP_CODE" == "304" ]]; then
-  echo "install.sh не изменился (304 Not Modified)."
-  rm -f "$TMP"
-else
-  sudo install -m 0755 "$TMP" "$INSTALL_SCRIPT"
-  rm -f "$TMP"
-  echo "install.sh обновлён (HTTP $HTTP_CODE)."
-fi
-
-sudo "$INSTALL_SCRIPT"
+cd /opt
+git clone https://github.com/Torotin/3x-ui_pro_Docker.git
+cd 3x-ui_pro_Docker
+sudo script/install.sh doctor
+sudo script/install.sh wizard
+sudo script/install.sh doctor
 ```
+
+Installer хранится отдельно от Docker-стека:
+
+- `3x-ui_pro_Docker/script` — installer, модули, шаблоны, state, logs, summary.
+- `3x-ui_pro_Docker/docker-proxy` — Docker Compose стек и runtime-данные сервисов.
+
+## Команды installer
+
+```bash
+script/install.sh doctor
+script/install.sh wizard
+script/install.sh run <step...> [--destroy-docker-data] [--apply] [--yes]
+script/install.sh self-update [--branch <branch>] [--check] [--yes] [--force]
+script/install.sh uninstall [--plan|--apply --yes]
+```
+
+Доступные шаги:
+
+```bash
+apt env docker user firewall ssh network compose final uninstall
+```
+
+Назначение основных команд:
+
+- `doctor` — read-only диагностика ОС, команд, зависимостей, state, Docker, Compose и контейнеров.
+- `wizard` — интерактивная установка с numbered menu и потоковым выводом операций.
+- `run` — batch-запуск шагов.
+- `self-update` — обновление installer из выбранной git-ветки по версии.
+- `uninstall` — план или выполнение удаления проекта.
+
+## Установка через wizard
+
+Wizard запрашивает обязательные значения:
+
+- `WEBDOMAIN` — домен.
+- `USER_SSH` / `PASS_SSH` — системный пользователь.
+- `USER_WEB` / `PASS_WEB` — BasicAuth для web-панелей.
+- `SSH_PBK` — публичный SSH ключ, необязательно.
+
+Если `SSH_PBK` задан, SSH переводится в режим public key auth. Если ключ не задан, включается password auth.
+
+Остальные значения генерируются автоматически:
+
+- публичные IPv4/IPv6;
+- локальные и внешние порты;
+- приватные URI для web-панелей;
+- CrowdSec API keys;
+- htpasswd hash для BasicAuth;
+- AdGuard admin hash.
+
+## Обновление installer
+
+Installer обновляется явно из выбранной ветки:
+
+```bash
+sudo script/install.sh self-update --branch main --check
+sudo script/install.sh self-update --branch main --yes
+```
+
+Версия installer хранится в `script/VERSION`, описание изменений — в `script/CHANGELOG.md`.
+
+Поведение update:
+
+- `--check` сравнивает локальную версию с версией в выбранной ветке.
+- Если remote версия новее, выводится диапазон `local -> remote` и changelog только для версий выше текущей.
+- Если версия не новее, выводится `self-update: up to date`.
+- `--yes` применяет обновление только при наличии более новой версии.
+- `--force` принудительно применяет обновление даже при равной или меньшей remote версии.
+
+Wizard при старте автоматически проверяет обновление. Предложение обновиться показывается только если в репозитории есть версия выше локальной.
 
 ## Что разворачивается
 
-- **Traefik** — фронтовый reverse‑proxy и ACME, терминирует TLS, маршрутизирует HTTP/S к сервисам.
-- **Caddy** — вспомогательный веб‑сервер (статика/проксирование бэкендов).
-- **3x-ui + Xray core** — панель управления и сам Xray, автоконфиг инбаундов.
-- **AdGuard Home** — DNS‑фильтрация и блокировка рекламы/трекеров.
-- **CrowdSec** — анализ логов/поведенческая защита; может выдавать bouncer‑решения.
-- **Lampac** — медиаменеджер/доп. сервис (работает через общий Traefik).
-- **Homepage** — дашборд для быстрых ссылок на сервисы/статус.
-- **WARP helper** — регистрация WireGuard‑ключей и outbound’ов Cloudflare WARP (для Xray).
-- **Поддержка**: автообновление GeoIP/GeoSite, скрипты оптимизации сети, резервные модули AfterStart.
+- **Traefik** — edge router, TLS termination, ACME, HTTP/TCP/UDP маршрутизация.
+- **3x-ui + Xray** — панель и runtime-автоматизация Xray desired state.
+- **AdGuard Home** — DNS/DoH и web-панель.
+- **CrowdSec** — анализ логов и bouncer-интеграция.
+- **Caddy** — fallback/error backend и вспомогательная статика.
+- **Homepage** — dashboard со ссылками на сервисы.
+- **Lampac** — медиасервис за Traefik.
+- **WARP/usque/TOR** — proxy helper-сервисы для маршрутизации.
+- **Dockcheck/logrotate** — эксплуатационные сервисы для обновлений и логов.
 
-## Как работают сервисы
+Compose fragments находятся в `docker-proxy/compose.d`. Host paths в них задаются относительно каталога `compose.d`, чтобы стек не зависел от хардкода `/opt/docker-proxy`.
 
-- **Traefik**: вход 80/443, умеет HTTP‑01/ALPN для сертификатов, имеет dashboard (можно скрыть/закрыть по BasicAuth). Маршруты на 3x-ui, Caddy, AdGuard, Homepage и др.
-- **3x-ui**: панель на кастомном домене/портах из `.env`, API используется модулями AfterStart. Запускает Xray и управляет инбаундами.
-- **Xray (core)**: конфиг собирается и обновляется модулями; поддерживает PQ‑ключи (ML‑KEM‑768) для VLESS; может перезапускаться через API или локальный бинарник.
-- **AdGuard Home**: DNS‑сервер с веб‑панелью, фильтры по спискам, статистика запросов.
-- **Caddy**: может подхватывать статический контент/прокси; служит «тихим» бэкендом для маскировки.
-- **CrowdSec**: читает логи (Traefik/SSH и т.п.), применяет решения (ban/allow); API‑ключи формируются установщиком.
-- **Lampac**: отдельный сервис под медиа/интеграции (доступ через Traefik).
-- **Homepage**: стартовая страница с ссылками на панели и статусом сервисов.
-- **WARP helper**: генерирует WireGuard‑ключи, добавляет outbounds/balancer в Xray при необходимости.
+## Безопасность и destructive actions
 
-## Какие инбаунды создаёт 3x-ui (по AfterStart)
+Destructive и host-mutating действия требуют явного opt-in:
 
-1) **VLESS TCP Reality (Vision)**  
-   - Протокол: `vless`  
-   - Transport: `tcp` + Reality, fingerprint `chrome`, target Traefik (`traefik:<порт>`).  
-   - PQ (ML‑KEM‑768) опционально: включается `USE_VLESS_PQ=true` (по умолчанию включено, decryption/encryption=`none`).  
-   - mldsa65 для Reality также опционально: `USE_MLDSA65=true` (по умолчанию выключено).  
-   - ShortIds генерируются; клиенты: flow `xtls-rprx-vision-udp443`, UUID генерируется.  
+- APT mirror/update: `run apt --apply --yes`.
+- Docker wipe/reinstall: `run docker --destroy-docker-data`.
+- Firewall apply: `run firewall --apply --yes`.
+- SSH apply: `run ssh --apply --yes`.
+- Network/sysctl apply: `run network --apply --yes`.
+- Uninstall purge: отдельные `--purge-*` флаги.
 
-2) **VLESS XHTTP (маскировка под HTTP)**  
-   - Протокол: `vless`, `network: xhttp`, `security: none`.  
-   - Host/path берутся из переменных (`WEBDOMAIN`, `URI_VLESS_XHTTP`).  
-   - Заголовки имитируют nginx (`Server`, `Content-Type`, CORS, keep-alive).  
-   - Ограничения: `scMaxBufferedPosts=50`, `scMaxEachPostBytes=5000000`, `scStreamUpServerSecs=5-20`, `noSSEHeader=true`, `xPaddingBytes=100-1000`, режим `packet-up`.  
-   - PQ для VLESS опционально тем же флагом `USE_VLESS_PQ` (по умолчанию выключено).  
+SSH apply валидирует `sshd_config` через `sshd -t` и предпочитает `systemctl reload ssh`; restart используется только как fallback.
 
-Порты инбаундов задаются в `.env` (переменные `PORT_LOCAL_VISION`, `PORT_LOCAL_XHTTP` или аналогичные). Подписки/JSON‑эндпоинты формируются 3x-ui согласно basePath и subPath из `.env`.
+`doctor` не меняет окружение. Его можно запускать для диагностики до и после установки.
 
-## Требования
+## Удаление
 
-- Root и bash (Debian/Ubuntu‑совместимые).
-- Доступ в интернет для загрузки шаблонов/модулей/образов.
-- Docker и Docker Compose устанавливаются скриптом при отсутствии.
+План без изменений:
 
-## Шаги установщика (меню)
+```bash
+sudo script/install.sh uninstall --plan
+```
 
-Шаги выбираются числом или диапазоном (`1,3 5 7`, `1-6`):
+Остановка compose stack:
 
-1. System update  
-2. Docker. (Re)Install (сеть `traefik-proxy`)  
-3. Docker. Generate docker dir (`/opt/docker-proxy`, загрузка файлов)  
-4. Docker. Generate docker env-file (`/opt/docker-proxy/.env`)  
-5. Create user  
-6. Configure firewall  
-7. Configure SSH  
-8. Network optimization  
-9. Docker. Run Compose (`docker compose up -d`)  
-10. Final message  
-`x` — Exit, `r` — Reboot  
+```bash
+sudo script/install.sh uninstall --apply --yes
+```
 
-## Какие переменные спрашивает install.sh
+Полная очистка выбирается явно:
 
-Спрашиваются только ключевые значения, остальное генерируется:
+```bash
+sudo script/install.sh uninstall --apply --yes \
+  --purge-docker-data \
+  --purge-docker-engine \
+  --purge-firewall \
+  --purge-ssh \
+  --purge-network \
+  --remove-project-root
+```
 
-- `WEBDOMAIN` — домен (обязательно).  
-- `USER_SSH` / `PASS_SSH` — учётка системы (можно пропустить, будет сгенерировано).  
-- `SSH_PBK` — ваш публичный ключ (ED25519/RSA). Если пусто — генерится новый ключ.  
-- `USER_WEB` / `PASS_WEB` — BasicAuth для панелей (если указали логин, задайте и пароль).  
+Флаги удаления:
 
-Автоматически:
+- `--purge-docker-data` — удаление compose volumes/images проекта и свободных внешних сетей.
+- `--purge-docker-engine` — удаление Docker packages и `/var/lib/docker`, `/var/lib/containerd`.
+- `--purge-firewall` — удаление известных UFW правил проекта без глобального `ufw reset`.
+- `--purge-ssh` — восстановление backup `sshd_config`, проверка и reload/restart SSH.
+- `--purge-network` — восстановление или удаление installer sysctl файла.
+- `--remove-project-root` — удаление `INSTALL_ROOT`.
 
-- `PUBLIC_IPV4/6` — определяются; при проблемах с IPv6 берётся IPv4.  
-- Все `PORT_*` — свободные порты (≈20000–65000).  
-- Все `URI_*` — случайные безопасные URI.  
-- `CROWDSEC_API_KEY_*` — случайные ключи 32–48 символов.  
-- `HT_PASS_ENCODED` — htpasswd из `USER_WEB/PASS_WEB`.  
+## Файлы состояния
 
-Переменные можно задать заранее:  
-`WEBDOMAIN=example.com USER_SSH=alice PASS_SSH='S3cure' sudo ./install.sh`
+- `/opt/script/install-state/install.env` — состояние installer.
+- `/opt/docker-proxy/compose.d/.env` — окружение Compose.
+- `/opt/script/install-state/install.summary` — финальное резюме установки.
+- `/opt/script/install-state/commands.log` — команды, прошедшие через runner.
+- `/opt/script/install-state/install.log` — лог installer.
 
-## Куда пишутся параметры
+## Локальная разработка и проверки
 
-- `install.env` — рядом с `install.sh`.  
-- `/opt/docker-proxy/.env` — окружение для Compose.  
-- `/opt/docker-proxy/compose.yml` + `compose.d/*.yml` — сервисы.  
+Installer локально тестируется только через mock/fake state dirs:
 
-## Повторный запуск/обновление
+```bash
+bash tests/install-scripts/run.sh
+bash -n script/install.sh script/modules/*.sh script/check/*.sh
+shellcheck -x -S warning script/install.sh script/modules/*.sh script/check/*.sh
+```
 
-Повторный запуск блока «Быстрый старт» скачает новый `install.sh` только при изменении ETag. Сам установщик можно запускать повторно для отдельных шагов (например, регенерация `.env` и `docker compose up -d`).
+Compose runner:
 
-## Безопасность
+```bash
+bash tests/run-compose/test_run_compose.bash
+bash tests/run-compose/test_compose_startup_chain.bash
+```
 
-- Укажите свой `SSH_PBK`, смените сгенерированные пароли после установки.  
-- Если задаёте `USER_WEB`, обязательно задайте и `PASS_WEB`, иначе htpasswd не будет создан.  
-- Traefik dashboard/Caddy/3x-ui лучше закрывать BasicAuth/файрволом и использовать HTTPS.  
+3x-ui runtime:
+
+```bash
+bash tests/3x-ui-scripts/run.sh
+```
+
+Общая проверка whitespace:
+
+```bash
+git diff --check
+```
+
+Локальные тесты installer не должны вызывать реальные `apt`, `docker`, `ufw`, `iptables`, `systemctl`, `sshd`, `modprobe`, `sysctl -p`, `useradd`, `chpasswd` и не должны писать в `/etc`, `/opt`, `/var/lib`.
+
+## Серверная проверка
+
+Минимальные тесты после установки:
+
+```bash
+sudo /opt/script/install.sh doctor
+sudo /opt/docker-proxy/compose.d/run-compose.sh validate
+sudo /opt/docker-proxy/compose.d/run-compose.sh up
+sudo /opt/script/install.sh run final
+```

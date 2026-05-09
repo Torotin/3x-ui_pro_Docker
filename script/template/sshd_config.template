@@ -39,9 +39,6 @@ AllowUsers $USER_SSH
 # Set SFTP subsystem path / Подсистема SFTP
 Subsystem sftp internal-sftp
 
-# Include additional config files / Подключение доп. конфигураций
-Include /etc/ssh/sshd_config.d/*.conf
-
 # Explicit path to authorized keys / Явный путь к ключам
 AuthorizedKeysFile %h/.ssh/authorized_keys
 
@@ -61,7 +58,7 @@ HostbasedAuthentication no
 KbdInteractiveAuthentication no
 
 # Enable/disable public key authentication / Публичный ключ
-PubkeyAuthentication $pubkey_auth
+PubkeyAuthentication $PUBKEY_AUTH
 
 # Disable TCP port forwarding globally / Запрет TCP перенаправления
 AllowTcpForwarding no
@@ -112,7 +109,11 @@ DebianBanner no
 AcceptEnv LANG LC_*
 
 # Enable/disable password authentication / Разрешение пароля
-PasswordAuthentication $PASS_SSH_auth
+PasswordAuthentication $PASSWORD_AUTH
+
+# Include additional config files after primary policy so first-value-wins directives above keep precedence.
+# Подключение доп. конфигураций после основной политики, чтобы параметры выше имели приоритет.
+Include /etc/ssh/sshd_config.d/*.conf
 
 # === Per-user overrides ===
 

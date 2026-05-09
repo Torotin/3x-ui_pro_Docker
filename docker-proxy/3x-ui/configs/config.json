@@ -34,17 +34,16 @@
   },
   "dns": null,
   "inbounds": [
-    {
+   {
       "listen": "127.0.0.1",
       "port": 62789,
-      "protocol": "dokodemo-door",
+      "protocol": "tunnel",
       "settings": {
         "address": "127.0.0.1"
       },
       "streamSettings": null,
       "tag": "api",
-      "sniffing": null,
-      "allocate": null
+      "sniffing": null
     }
   ],
   "outbounds": [

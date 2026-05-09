@@ -16,6 +16,11 @@ if [ -z "${USER_PASS}" ] && [ -z "${USER_HASH}" ]; then
   exit 0
 fi
 
+if [ -z "${USER_HASH}" ] && [ -n "${HT_PASS_ENCODED:-}" ]; then
+  USER_HASH="${HT_PASS_ENCODED#*:}"
+  USER_HASH="$(printf '%s' "$USER_HASH" | sed 's/\$\$/\$/g')"
+fi
+
 # Ensure tools are present (htpasswd only needed if we hash from plaintext)
 if [ -z "${USER_HASH}" ]; then
   if ! command -v htpasswd >/dev/null 2>&1; then
@@ -27,17 +32,6 @@ if [ -z "${USER_HASH}" ]; then
   fi
   if ! command -v htpasswd >/dev/null 2>&1; then
     log "htpasswd not found and cannot be installed; aborting."
-    exit 1
-  fi
-fi
-
-if ! command -v yq >/dev/null 2>&1; then
-  if command -v apk >/dev/null 2>&1; then
-    log "Installing yq..."
-    apk add --no-cache yq >/dev/null 2>&1 || {
-      log "Failed to install yq via apk"; exit 1; }
-  else
-    log "yq not found and apk unavailable; cannot safely edit YAML."
     exit 1
   fi
 fi
@@ -60,14 +54,35 @@ fi
 
 log "Updating user entry in config..."
 
-# Ensure .users exists and replace or add the user with new hash
-# Export variables so yq strenv() can read them
-export USER_NAME HASH
-yq -i \
-  ' .users = ((.users // [])
-    | map(select((.name != strenv(USER_NAME)) and (.name != null) and (.name != "")))
-    + [{"name": strenv(USER_NAME), "password": strenv(HASH)}]) ' \
-  "$CONF_PATH"
+tmp_conf="${CONF_PATH}.tmp.$$"
+awk -v user="$USER_NAME" -v hash="$HASH" '
+  function print_users() {
+    print "users:"
+    print "  - name: \"" user "\""
+    print "    password: \"" hash "\""
+  }
+  /^users:/ && !done {
+    print_users()
+    in_users = 1
+    done = 1
+    next
+  }
+  in_users && /^[^[:space:]#][^:]*:/ {
+    in_users = 0
+  }
+  in_users {
+    next
+  }
+  {
+    print
+  }
+  END {
+    if (!done) {
+      print_users()
+    }
+  }
+' "$CONF_PATH" >"$tmp_conf"
+mv "$tmp_conf" "$CONF_PATH"
 
 log "Password hash updated for user $USER_NAME."
 

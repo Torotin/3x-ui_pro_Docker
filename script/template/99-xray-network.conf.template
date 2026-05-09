@@ -29,7 +29,10 @@ net.core.somaxconn           = 30000
 net.core.netdev_max_backlog  = 250000
 net.core.netdev_budget       = 600
 net.core.netdev_budget_usecs = 8000
-net.core.busy_poll           = 50
+# busy_poll может повышать нагрузку на CPU на VPS / busy_poll can increase CPU usage on VPS
+# Оставляем значение ядра по умолчанию, если сервер не настраивается под low-latency polling явно
+# Leave the kernel default unless the server is tuned for low-latency polling explicitly
+# net.core.busy_poll           = 50
 
 # inotify лимиты (для большого числа наблюдателей) / inotify limits (for many file watchers)
 fs.inotify.max_user_instances = 30000
@@ -38,7 +41,9 @@ fs.inotify.max_user_instances = 30000
 # 2. UDP буферы / UDP Buffers
 #############################
 
-net.ipv4.udp_mem      = 3145728 4194304 6291456
+# udp_mem измеряется в страницах памяти и должен масштабироваться с RAM / udp_mem is measured in memory pages and should scale with RAM
+# На малых и средних VPS лучше оставить авторасчет ядра / Let the kernel size it automatically on small/medium VPS instances
+# net.ipv4.udp_mem      = 3145728 4194304 6291456
 net.ipv4.udp_rmem_min = 8192
 net.ipv4.udp_wmem_min = 8192
 
@@ -47,7 +52,6 @@ net.ipv4.udp_wmem_min = 8192
 #############################
 
 net.ipv4.tcp_rfc1337             = 1
-net.ipv4.tcp_low_latency         = 1
 net.ipv4.tcp_max_syn_backlog     = 30000
 # net.ipv4.tcp_tw_reuse            = 1
 net.ipv4.tcp_fin_timeout         = 15
@@ -63,8 +67,12 @@ net.ipv4.tcp_sack                = 1
 net.ipv4.tcp_timestamps          = 1
 net.ipv4.tcp_window_scaling      = 1
 net.ipv4.tcp_moderate_rcvbuf     = 1
-net.ipv4.tcp_ecn                 = 1
-net.ipv4.tcp_max_tw_buckets      = 15000
+# ECN может быть проблемным с некоторыми middlebox/провайдерами
+# ECN can still be problematic with some middleboxes/providers
+# Оставляем значение ядра/провайдера по умолчанию, пока маршрут не проверен
+# Keep the kernel/provider default unless you have verified the route quality
+# net.ipv4.tcp_ecn                 = 1
+net.ipv4.tcp_max_tw_buckets      = 262144
 net.ipv4.tcp_no_metrics_save     = 0
 net.ipv4.tcp_rmem                = 4096 87380 16777216
 net.ipv4.tcp_wmem                = 4096 65536 16777216
@@ -74,7 +82,7 @@ net.ipv4.tcp_wmem                = 4096 65536 16777216
 #############################
 
 net.netfilter.nf_conntrack_max                      = 262144
-net.netfilter.nf_conntrack_tcp_timeout_established  = 600
+net.netfilter.nf_conntrack_tcp_timeout_established  = 3600
 net.netfilter.nf_conntrack_tcp_timeout_time_wait    = 120
 net.netfilter.nf_conntrack_tcp_timeout_close_wait   = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait     = 60
@@ -87,8 +95,10 @@ net.ipv4.tcp_syncookies              = 1
 net.ipv4.icmp_echo_ignore_all        = 0
 net.ipv4.icmp_echo_ignore_broadcasts = 1
 net.ipv4.icmp_ratelimit              = 1
-net.ipv4.conf.all.rp_filter          = 1
-net.ipv4.conf.default.rp_filter      = 1
+# Loose rp_filter безопаснее strict mode для Docker bridge, policy routing, WARP и асимметричной маршрутизации VPS
+# Loose rp_filter is safer than strict mode for Docker bridges, policy routing, WARP and asymmetric VPS routing
+net.ipv4.conf.all.rp_filter          = 2
+net.ipv4.conf.default.rp_filter      = 2
 net.ipv4.conf.all.accept_source_route     = 0
 net.ipv4.conf.default.accept_source_route = 0
 net.ipv4.conf.all.accept_redirects        = 0
@@ -100,17 +110,22 @@ net.ipv4.conf.default.secure_redirects    = 0
 # 6. ARP фильтрация / ARP Filtering
 #############################
 
-net.ipv4.conf.all.arp_filter     = 1
-net.ipv4.conf.default.arp_filter = 1
+# Для Docker bridge оставляем ARP filtering отключенным, если хост не настроен как multi-homed и ARP flux не является известной проблемой
+# Keep ARP filtering disabled for Docker bridge networking unless the host is deliberately multi-homed and ARP flux is a known issue
+net.ipv4.conf.all.arp_filter     = 0
+net.ipv4.conf.default.arp_filter = 0
 
 #############################
-# 7. Отключение IPv6 (если не требуется)
-# 7. Disable IPv6 (if not needed)
+# 7. IPv6 hardening
 #############################
 
-net.ipv6.conf.all.disable_ipv6      = 1
-net.ipv6.conf.default.disable_ipv6  = 1
-net.ipv6.conf.lo.disable_ipv6       = 1
+# Не отключаем IPv6 глобально: warp и 3x-ui включают IPv6 внутри своих network namespaces, а отключение ::1 может сломать локальные сервисы
+# Do not disable IPv6 globally: warp and 3x-ui enable IPv6 inside their network namespaces, and disabling ::1 may break local services
+# Если VPS должен быть строго IPv4-only, лучше использовать firewall/routing policy или осознанно раскомментировать строки ниже
+# If the VPS must be IPv4-only, prefer firewall/routing policy or uncomment the lines below consciously
+# net.ipv6.conf.all.disable_ipv6      = 1
+# net.ipv6.conf.default.disable_ipv6  = 1
+# net.ipv6.conf.lo.disable_ipv6       = 1
 net.ipv6.conf.all.autoconf          = 0
 net.ipv6.conf.default.autoconf      = 0
 net.ipv6.conf.all.accept_ra         = 0
