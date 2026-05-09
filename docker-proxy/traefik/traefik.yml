@@ -111,10 +111,16 @@ experimental:
   plugins:
     bouncer:
       moduleName: "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
-      version: "v1.4.6"
+      version: "v1.6.0"
     traefik-plugin-rewrite-headers:
       moduleName: "github.com/XciD/traefik-plugin-rewrite-headers"
       version: "v0.0.4"
     fullUrlRewrite:
       moduleName: "github.com/e-flux-platform/full-url-rewrite-traefik-plugin"
       version: "v0.0.7"
+    # htransformation:
+    #   moduleName: "github.com/tomMoulard/htransformation"
+    #   version: "v0.3.3"
+    # traefik-ultimate-bad-bot-blocker:
+    #   moduleName: "github.com/discoverygarden/traefik-ultimate-bad-bot-blocker"
+    #   version: "v0.3.0"

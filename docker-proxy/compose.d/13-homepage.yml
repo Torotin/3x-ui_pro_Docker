@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     container_name: homepage
     env_file:
-      - /opt/docker-proxy/compose.d/.env
+      - ./.env
     environment:
       # PUID: 1000
       # PGID: 1000
@@ -21,8 +21,8 @@ services:
       HOMEPAGE_VAR_PASS_WEB: ${PASS_WEB}
       HOMEPAGE_VAR_HT_PASS_ENCODED: ${HT_PASS_ENCODED}
     volumes:
-      - /opt/docker-proxy/homepage/logs:/logs
-      - /opt/docker-proxy/homepage:/app/config
+      - ../homepage/logs:/logs
+      - ../homepage:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       traefik-proxy:
@@ -31,6 +31,12 @@ services:
         ipv4_address: 172.19.0.13
     security_opt:
       - no-new-privileges=true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet --tries=1 --timeout=5 http://127.0.0.1:3000/api/healthcheck || wget --spider --quiet --tries=1 --timeout=5 http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-proxy

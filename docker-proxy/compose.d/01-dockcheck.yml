@@ -1,0 +1,14 @@
+services:
+  dockcheck:
+    image: torotin/dockcheck:latest
+    container_name: dockcheck
+    hostname: ${WEBDOMAIN}
+    restart: unless-stopped
+    init: true
+    working_dir: /_dockcheck
+    env_file:
+      - ./.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    security_opt:
+      - no-new-privileges=true

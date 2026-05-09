@@ -6,18 +6,36 @@ services:
     depends_on:
       crowdsec:
         condition: service_healthy
+      crowdsec-firewall-bouncer:
+        condition: service_healthy
       caddy:
         condition: service_healthy
       dozzle:
         condition: service_healthy
+      warp:
+        condition: service_healthy
+      usque:
+        condition: service_healthy
+      adguard:
+        condition: service_healthy
+      torproxy:
+        condition: service_healthy
+      tor-proxy:
+        condition: service_healthy
+      3x-ui:
+        condition: service_healthy
+      homepage:
+        condition: service_healthy
+      lampac:
+        condition: service_healthy
     env_file:
-      - /opt/docker-proxy/compose.d/.env
+      - ./.env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/docker-proxy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - /opt/docker-proxy/traefik/acme.json:/acme.json
-      - /opt/docker-proxy/traefik/dynamic:/dynamic:ro
-      - /opt/docker-proxy/_logs/traefik:/logs
+      - ../traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ../traefik/acme.json:/acme.json
+      - ../traefik/dynamic:/dynamic:ro
+      - ../_logs/traefik:/logs
     ports:
       - "80:80"
       - "443:443/tcp"
