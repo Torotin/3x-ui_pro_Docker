@@ -1,26 +1,55 @@
-#!/bin/bash
 ===== INSTALLATION SUMMARY =====
+Generated at: ${SUMMARY_GENERATED_AT}
 
-{{#if IPV6_ENABLED}}
-Public IPv4  : {{PUBLIC_IPV4}}
-Public IPv6  : {{PUBLIC_IPV6}}
+Project:
+  Domain           : ${SUMMARY_DOMAIN}
+  Public IPv4      : ${SUMMARY_PUBLIC_IPV4}
+  Public IPv6      : ${SUMMARY_PUBLIC_IPV6}
+  Project root     : ${INSTALL_ROOT}
+  Installer state  : ${INSTALL_STATE_DIR}
+  Compose directory: ${SUMMARY_COMPOSE_DIR}
+  Compose env      : ${SUMMARY_COMPOSE_ENV}
+  Update branch    : ${SUMMARY_UPDATE_BRANCH}
 
-{{else}}
-Public IP    : {{PUBLIC_IPV4}}
+SSH access:
+  Target           : ${SUMMARY_SSH_TARGET}
+  User             : ${SUMMARY_USER_SSH}
+  Port             : ${SUMMARY_PORT_REMOTE_SSH}
+  Auth             : ${SUMMARY_SSH_AUTH}
+  Root login       : disabled by installer SSH policy
 
-{{/if}}
+Web credentials:
+  User             : ${SUMMARY_USER_WEB}
+  Password         : configured, not printed
 
-{{#if SSH_ENABLED}}
-SSH Access:
-  Port       : {{PORT_REMOTE_SSH}}
-  User       : {{USER_SSH}}
-  Auth       : {{msg_pubkey_auth:-unspecified}}
-{{/if}}
+Service URLs:
+  Homepage         : ${SUMMARY_URL_HOMEPAGE}
+  3X-UI Panel      : ${SUMMARY_URL_3X_UI}
+  AdGuard Home     : ${SUMMARY_URL_ADGUARD}
+  AdGuard DoH      : ${SUMMARY_URL_ADGUARD_DOH}
+  Dozzle Logs      : ${SUMMARY_URL_DOZZLE}
+  Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
 
-Available Services (via Caddy reverse proxy):
+Local service endpoints:
+  Traefik HTTPS    : 127.0.0.1:${SUMMARY_PORT_LOCAL_TRAEFIK}
+  3X-UI panel      : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_PANEL}
+  3X-UI subscribe  : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE}
+  XHTTP            : 127.0.0.1:${SUMMARY_PORT_LOCAL_XHTTP}
+  Vision           : 127.0.0.1:${SUMMARY_PORT_LOCAL_VISION}
+  Dozzle           : 127.0.0.1:${SUMMARY_PORT_LOCAL_DOZZLE}
+  Caddy fallback   : 127.0.0.1:${SUMMARY_PORT_LOCAL_CADDYWEB}
+  CrowdSec API     : 127.0.0.1:${SUMMARY_PORT_LOCAL_CROWDSEC_API}
 
-- Homepage URL         : https://{{WEBDOMAIN}}/{{URI_HOMEPAGE}}/
-- 3X-UI Panel          : https://{{WEBDOMAIN}}/{{URI_PANEL_PATH}}/
-- AdGuard Home Panel   : https://{{WEBDOMAIN}}/{{URI_ADGUARD_PANEL}}/
-- Dozzle Logs          : https://{{WEBDOMAIN}}/{{URI_DOZZLE}}/
-- Traefik Dashboard    : https://{{WEBDOMAIN}}/{{URI_TRAEFIK_DASHBOARD}}/dashboard/#/
+Operational commands:
+  Doctor           : ${SCRIPT_DIR}/install.sh doctor
+  Wizard           : ${SCRIPT_DIR}/install.sh wizard
+  Compose validate : ${SUMMARY_COMPOSE_DIR}/run-compose.sh validate
+  Compose up       : ${SUMMARY_COMPOSE_DIR}/run-compose.sh up
+  Compose ps       : ${SUMMARY_COMPOSE_DIR}/run-compose.sh ps
+  Uninstall plan   : ${SCRIPT_DIR}/install.sh uninstall --plan
+  Self-update check: ${SCRIPT_DIR}/install.sh self-update --check
+
+Generated files:
+  Install env      : ${INSTALL_STATE_DIR}/install.env
+  Compose env      : ${SUMMARY_COMPOSE_ENV}
+  Summary          : ${SUMMARY_OUTPUT_FILE}

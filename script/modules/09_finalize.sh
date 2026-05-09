@@ -3,21 +3,72 @@
 
 install_final_command() {
 	install_load_state_env
+	install_prepare_summary_env
+	local template="$SCRIPT_DIR/template/install.summary.template"
+	local output="$INSTALL_STATE_DIR/install.summary"
+	[[ -f "$template" ]] || die "summary template not found: $template"
+	command -v envsubst >/dev/null 2>&1 || die "envsubst is required to render final summary"
+	mkdir -p "$(dirname "$output")"
+	export SUMMARY_OUTPUT_FILE="$output"
+	envsubst <"$template" >"$output"
 	run_cmd final.summary printf 'installation summary rendered\n'
-	cat <<SUMMARY
-===== INSTALLATION SUMMARY =====
-Domain: ${WEBDOMAIN:-unspecified}
-Public IPv4: ${PUBLIC_IPV4:-unspecified}
-Public IPv6: ${PUBLIC_IPV6:-unspecified}
-SSH: ${USER_SSH:-unspecified}@${PUBLIC_IPV4:-127.0.0.1}:${PORT_REMOTE_SSH:-unspecified}
+	cat "$output"
+	printf 'Summary saved: %s\n' "$output"
+}
 
-Service URLs:
-- Homepage: https://${WEBDOMAIN:-example.invalid}/${URI_HOMEPAGE:-}
-- 3X-UI Panel: https://${WEBDOMAIN:-example.invalid}/${URI_PANEL_PATH:-}
-- AdGuard Home: https://${WEBDOMAIN:-example.invalid}/${URI_ADGUARD_PANEL:-}
-- Dozzle: https://${WEBDOMAIN:-example.invalid}/${URI_DOZZLE:-}
-- Traefik Dashboard: https://${WEBDOMAIN:-example.invalid}/${URI_TRAEFIK_DASHBOARD:-}/dashboard/#/
-SUMMARY
+install_prepare_summary_env() {
+	SUMMARY_GENERATED_AT=$(date '+%Y-%m-%d %H:%M:%S %z')
+	SUMMARY_DOMAIN=${WEBDOMAIN:-example.invalid}
+	SUMMARY_PUBLIC_IPV4=${PUBLIC_IPV4:-127.0.0.1}
+	SUMMARY_PUBLIC_IPV6=${PUBLIC_IPV6:-$SUMMARY_PUBLIC_IPV4}
+	SUMMARY_USER_SSH=${USER_SSH:-unspecified}
+	SUMMARY_USER_WEB=${USER_WEB:-unspecified}
+	SUMMARY_PORT_REMOTE_SSH=${PORT_REMOTE_SSH:-unspecified}
+	SUMMARY_SSH_TARGET="${SUMMARY_USER_SSH}@${SUMMARY_PUBLIC_IPV4}:${SUMMARY_PORT_REMOTE_SSH}"
+	SUMMARY_COMPOSE_DIR="$INSTALL_ROOT/compose.d"
+	SUMMARY_COMPOSE_ENV="$SUMMARY_COMPOSE_DIR/.env"
+	SUMMARY_UPDATE_BRANCH=$(config_get update.branch "$INSTALL_DEFAULT_BRANCH")
+	SUMMARY_SSH_AUTH="password"
+	if [[ -n "${SSH_PBK:-}" ]]; then
+		SUMMARY_SSH_AUTH="public key"
+	fi
+	SUMMARY_PORT_LOCAL_TRAEFIK=${PORT_LOCAL_TRAEFIK:-4443}
+	SUMMARY_PORT_LOCAL_VLESS_PANEL=${PORT_LOCAL_VLESS_PANEL:-unspecified}
+	SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE=${PORT_LOCAL_VLESS_SUBSCRIBE:-unspecified}
+	SUMMARY_PORT_LOCAL_XHTTP=${PORT_LOCAL_XHTTP:-unspecified}
+	SUMMARY_PORT_LOCAL_VISION=${PORT_LOCAL_VISION:-unspecified}
+	SUMMARY_PORT_LOCAL_DOZZLE=${PORT_LOCAL_DOZZLE:-unspecified}
+	SUMMARY_PORT_LOCAL_CADDYWEB=${PORT_LOCAL_CADDYWEB:-unspecified}
+	SUMMARY_PORT_LOCAL_CROWDSEC_API=${PORT_LOCAL_CROWDSEC_API:-unspecified}
+	SUMMARY_URL_HOMEPAGE=$(install_summary_url "${URI_HOMEPAGE:-}")
+	SUMMARY_URL_3X_UI=$(install_summary_url "${URI_PANEL_PATH:-}")
+	SUMMARY_URL_ADGUARD=$(install_summary_url "${URI_ADGUARD_PANEL:-}")
+	SUMMARY_URL_ADGUARD_DOH=$(install_summary_url "${URI_ADGUARD_DOH:-}")
+	SUMMARY_URL_DOZZLE=$(install_summary_url "${URI_DOZZLE:-}")
+	SUMMARY_URL_TRAEFIK=$(install_summary_url "${URI_TRAEFIK_DASHBOARD:-}" "dashboard/#/")
+	export SUMMARY_GENERATED_AT SUMMARY_DOMAIN SUMMARY_PUBLIC_IPV4 SUMMARY_PUBLIC_IPV6
+	export SUMMARY_USER_SSH SUMMARY_USER_WEB SUMMARY_PORT_REMOTE_SSH SUMMARY_SSH_TARGET SUMMARY_SSH_AUTH
+	export SUMMARY_COMPOSE_DIR SUMMARY_COMPOSE_ENV SUMMARY_UPDATE_BRANCH
+	export SUMMARY_PORT_LOCAL_TRAEFIK SUMMARY_PORT_LOCAL_VLESS_PANEL SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE
+	export SUMMARY_PORT_LOCAL_XHTTP SUMMARY_PORT_LOCAL_VISION SUMMARY_PORT_LOCAL_DOZZLE SUMMARY_PORT_LOCAL_CADDYWEB
+	export SUMMARY_PORT_LOCAL_CROWDSEC_API
+	export SUMMARY_URL_HOMEPAGE SUMMARY_URL_3X_UI SUMMARY_URL_ADGUARD SUMMARY_URL_ADGUARD_DOH
+	export SUMMARY_URL_DOZZLE SUMMARY_URL_TRAEFIK
+}
+
+install_summary_url() {
+	local path=${1:-} suffix=${2:-}
+	path=${path#/}
+	suffix=${suffix#/}
+	if [[ -n "$path" && -n "$suffix" ]]; then
+		printf 'https://%s/%s/%s\n' "${SUMMARY_DOMAIN:-example.invalid}" "$path" "$suffix"
+	elif [[ -n "$suffix" ]]; then
+		printf 'https://%s/%s\n' "${SUMMARY_DOMAIN:-example.invalid}" "$suffix"
+	elif [[ -n "$path" ]]; then
+		printf 'https://%s/%s\n' "${SUMMARY_DOMAIN:-example.invalid}" "$path"
+	else
+		printf 'https://%s/\n' "${SUMMARY_DOMAIN:-example.invalid}"
+	fi
 }
 
 install_self_update_command() {
