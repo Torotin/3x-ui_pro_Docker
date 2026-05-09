@@ -198,6 +198,9 @@ install_reset_permissions() {
 		run_cmd permissions.files find "$target_dir" -type f -exec chmod u=rwX,go=rX "{}" "+"
 		return 0
 	fi
+	if [[ "$(install_effective_uid)" != "0" ]]; then
+		return 0
+	fi
 	if [[ -n "$target_user" ]]; then
 		if id -u "$target_user" >/dev/null 2>&1; then
 			if getent group "$target_user" >/dev/null 2>&1; then
