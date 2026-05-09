@@ -25,18 +25,18 @@ services:
       traefik:
         condition: service_healthy
     env_file:
-      - /opt/docker-proxy/compose.d/.env
+      - ./.env
     volumes:
       - lampac_cache:/home/cache
-      - /opt/docker-proxy/lampac/home/init.conf:/home/init.conf:rw
-      - /opt/docker-proxy/lampac/home/users.json:/home/users.json:rw
-      - /opt/docker-proxy/lampac/home/passwd:/home/passwd:ro
-      - /opt/docker-proxy/lampac/module/manifest.json:/home/module/manifest.json
-      - /opt/docker-proxy/lampac/plugins/lampainit.js:/home/plugins/lampainit.my.js:ro
-      - /opt/docker-proxy/lampac/plugins/invc-rch.js:/home/plugins/invc-rch.js:ro
-      - /opt/docker-proxy/lampac/plugins/lampainit-invc.js:/home/plugins/lampainit-invc.my.js:ro
-      - /opt/docker-proxy/lampac/wwwroot/profileIcons:/home/wwwroot/profileIcons
-      - /opt/docker-proxy/lampac/wwwroot/js:/home/wwwroot/js
+      - ../lampac/home/init.conf:/home/init.conf:rw
+      - ../lampac/home/users.json:/home/users.json:rw
+      - ../lampac/home/passwd:/home/passwd:ro
+      - ../lampac/module/manifest.json:/home/module/manifest.json
+      - ../lampac/plugins/lampainit.js:/home/plugins/lampainit.my.js:ro
+      - ../lampac/plugins/invc-rch.js:/home/plugins/invc-rch.js:ro
+      - ../lampac/plugins/lampainit-invc.js:/home/plugins/lampainit-invc.my.js:ro
+      - ../lampac/wwwroot/profileIcons:/home/wwwroot/profileIcons
+      - ../lampac/wwwroot/js:/home/wwwroot/js
     security_opt:
       - no-new-privileges:true
     networks:

@@ -17,11 +17,11 @@ services:
     # dns:
     #   - 172.19.0.10
     volumes:
-      - /opt/docker-proxy/_logs/caddy:/var/log/caddy
-      - /opt/docker-proxy/caddy/config:/etc/caddy
-      - /opt/docker-proxy/caddy/subs:/srv/subs:ro
+      - ../_logs/caddy:/var/log/caddy
+      - ../caddy/config:/etc/caddy
+      - ../caddy/subs:/srv/subs:ro
     env_file:
-      - /opt/docker-proxy/compose.d/.env
+      - ./.env
     security_opt:
       - no-new-privileges=true
     healthcheck:

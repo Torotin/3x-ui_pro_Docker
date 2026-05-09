@@ -37,6 +37,7 @@ make_fixture() {
 	export PASS_SSH=secret
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
+	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -348,48 +349,63 @@ test_uninstall_can_remove_docker_engine_with_explicit_flag() {
 
 test_self_update_check_persists_branch_without_applying() {
 	make_fixture
+	export INSTALL_MOCK_REMOTE_VERSION=0.3.0
+	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.3.0 - 2026-05-10\n- Новая проверка\n\n## 0.2.0 - 2026-05-09\n- Текущая версия'
 	run_installer self-update --branch feature/install --check
 	assert_contains "update.branch=feature/install" "$INSTALL_STATE_DIR/config" "branch must be persisted"
 	assert_contains "self-update.check" "$INSTALL_COMMAND_LOG" "self-update check must be routed through runner"
+	assert_contains "self-update: update available: 0.2.0 -> 0.3.0" "$tmpdir/stdout" "check must report newer remote version"
+	assert_contains "## 0.3.0" "$tmpdir/stdout" "check must print newer changelog section"
+	assert_not_contains "## 0.2.0" "$tmpdir/stdout" "check must not print current version changelog section"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "check must not apply files"
 }
 
 test_self_update_apply_tolerates_diff_changes() {
 	make_fixture
-	export INSTALL_MOCK=0
-	mkdir -p "$tmpdir/bin"
-	cat >"$tmpdir/bin/git" <<'BASH'
-#!/usr/bin/env bash
-set -euo pipefail
-target="${@: -1}"
-mkdir -p "$target/script"
-exit 0
-BASH
-	cat >"$tmpdir/bin/diff" <<'BASH'
-#!/usr/bin/env bash
-printf 'changed files\n'
-exit 1
-BASH
-	cat >"$tmpdir/bin/rsync" <<'BASH'
-#!/usr/bin/env bash
-exit 0
-BASH
-	chmod +x "$tmpdir/bin/git" "$tmpdir/bin/diff" "$tmpdir/bin/rsync"
-	PATH="$tmpdir/bin:$PATH" run_installer self-update --branch feature/install --yes
+	export INSTALL_MOCK_REMOTE_VERSION=0.3.0
+	run_installer self-update --branch feature/install --yes
 	assert_contains "self-update.diff" "$INSTALL_COMMAND_LOG" "self-update must record diff"
 	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "self-update must continue to apply when diff reports changes"
+	assert_contains "self-update: applied feature/install (0.2.0 -> 0.3.0)" "$tmpdir/stdout" "self-update must print applied version range"
+}
+
+test_self_update_equal_version_does_not_apply_without_force() {
+	make_fixture
+	run_installer self-update --branch feature/install --yes
+	assert_contains "self-update: up to date (0.2.0)" "$tmpdir/stdout" "equal version must be treated as up to date"
+	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "equal version must not apply without --force"
+}
+
+test_self_update_force_applies_equal_version() {
+	make_fixture
+	run_installer self-update --branch feature/install --yes --force
+	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "force must apply even when versions are equal"
+	assert_contains "self-update: applied feature/install (0.2.0 -> 0.2.0)" "$tmpdir/stdout" "force apply must print version range"
 }
 
 test_wizard_offers_update_and_uses_same_dispatcher() {
 	make_fixture
-	printf 'n\nenv\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Update check" "$tmpdir/stdout" "wizard must offer update check"
+	printf 'env\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Update check: installer is up to date (0.2.0)" "$tmpdir/stdout" "wizard must report up-to-date installer without update prompt"
+	assert_not_contains "Run self-update now?" "$tmpdir/stdout" "wizard must not prompt when no newer version exists"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard env selection must use command dispatcher"
+}
+
+test_wizard_offers_update_only_when_newer_version_exists() {
+	make_fixture
+	export INSTALL_MOCK_REMOTE_VERSION=0.3.0
+	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.3.0 - 2026-05-10\n- Новая версия wizard\n\n## 0.2.0 - 2026-05-09\n- Текущая версия'
+	printf 'n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Update available: 0.2.0 -> 0.3.0" "$tmpdir/stdout" "wizard must show newer installer version"
+	assert_contains "## 0.3.0" "$tmpdir/stdout" "wizard must show newer changelog section"
+	assert_not_contains "## 0.2.0" "$tmpdir/stdout" "wizard must not show current changelog section"
+	assert_contains "Run self-update now?" "$tmpdir/stdout" "wizard must prompt only for newer version"
+	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "declined wizard update must not apply"
 }
 
 test_wizard_menu_accepts_numbered_choices() {
 	make_fixture
-	printf 'n\n2\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '2\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "1. apt" "$tmpdir/stdout" "wizard must show apt as first numbered step"
 	assert_contains "2. env" "$tmpdir/stdout" "wizard must show numbered menu"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard must dispatch numbered choices"
@@ -397,7 +413,7 @@ test_wizard_menu_accepts_numbered_choices() {
 
 test_wizard_removes_html_and_shows_last_status() {
 	make_fixture
-	printf 'n\n2\n\n9\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '2\n\n9\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: OK env" "$tmpdir/stdout" "wizard must show final status for previous operation"
 	assert_contains "9. final" "$tmpdir/stdout" "wizard final step must be menu item 9"
 	assert_not_contains "html" "$tmpdir/stdout" "wizard must not show removed html step"
@@ -406,7 +422,7 @@ test_wizard_removes_html_and_shows_last_status() {
 
 test_wizard_rejects_unknown_menu_choice_without_exit() {
 	make_fixture
-	printf 'n\n99\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '99\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: INVALID 99" "$tmpdir/stdout" "wizard must report invalid menu choices"
 	assert_contains "Unknown menu item: 99" "$tmpdir/stdout" "wizard must explain invalid menu choice"
 	assert_contains "Available steps:" "$tmpdir/stdout" "wizard must continue after invalid menu choice"
@@ -414,7 +430,7 @@ test_wizard_rejects_unknown_menu_choice_without_exit() {
 
 test_wizard_streams_output_and_waits_for_enter() {
 	make_fixture
-	printf 'n\n7\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '7\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Running network..." "$tmpdir/stdout" "wizard must start step output immediately"
 	assert_contains "net.ipv4.tcp_keepalive_time" "$tmpdir/stdout" "wizard must stream step output to the console"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must pause after completed operation"
@@ -423,7 +439,7 @@ test_wizard_streams_output_and_waits_for_enter() {
 
 test_wizard_apt_step_streams_and_uses_confirmation() {
 	make_fixture
-	printf 'n\n1\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '1\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Running apt..." "$tmpdir/stdout" "wizard must show step start before apt output"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must wait after apt step"
 	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "apt wizard step must run apt update through runner"
@@ -467,7 +483,7 @@ test_html_step_is_removed_from_cli_dispatch() {
 test_wizard_collects_required_variables_before_menu() {
 	make_fixture
 	unset WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
-	printf 'n\nwizard.example.test\nwizard-user\nwizard-pass\nweb-user\nweb-pass\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'wizard.example.test\nwizard-user\nwizard-pass\nweb-user\nweb-pass\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Required installer variables" "$tmpdir/stdout" "wizard must collect required variables before menu"
 	assert_contains "Web domain" "$tmpdir/stdout" "wizard must prompt for WEBDOMAIN"
 	assert_contains "SSH username" "$tmpdir/stdout" "wizard must prompt for USER_SSH"
@@ -481,7 +497,7 @@ test_wizard_collects_required_variables_before_menu() {
 test_wizard_persists_required_variables_before_env_step() {
 	make_fixture
 	unset WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
-	printf 'n\npersist.example.test\npersist-ssh\nssh-pass\npersist-web\nweb-pass\nssh-ed25519 persist-key\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'persist.example.test\npersist-ssh\nssh-pass\npersist-web\nweb-pass\nssh-ed25519 persist-key\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains 'WEBDOMAIN="persist.example.test"' "$INSTALL_STATE_DIR/install.env" "wizard must persist WEBDOMAIN immediately"
 	assert_contains 'USER_SSH="persist-ssh"' "$INSTALL_STATE_DIR/install.env" "wizard must persist USER_SSH immediately"
 	assert_contains 'PASS_SSH="ssh-pass"' "$INSTALL_STATE_DIR/install.env" "wizard must persist PASS_SSH immediately"
@@ -530,7 +546,7 @@ test_apt_falls_back_when_selected_mirror_update_fails() {
 
 test_wizard_skips_docker_wipe_when_user_declines() {
 	make_fixture
-	printf 'n\ndocker\nn\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'docker\nn\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Docker wipe/reinstall skipped" "$tmpdir/stdout" "wizard must keep running when docker wipe is declined"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must pause after skipped operation"
 	assert_not_contains "docker.system.prune" "$INSTALL_COMMAND_LOG" "wizard must not wipe Docker when user declines"
@@ -538,7 +554,7 @@ test_wizard_skips_docker_wipe_when_user_declines() {
 
 test_wizard_confirms_apply_steps() {
 	make_fixture
-	printf 'n\nfirewall\ny\n\nssh\ny\n\nnetwork\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'firewall\ny\n\nssh\ny\n\nnetwork\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to firewall"
 	assert_contains "ssh.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to ssh"
 	assert_contains "network.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to network"
@@ -547,7 +563,7 @@ test_wizard_confirms_apply_steps() {
 test_wizard_prompts_for_missing_user() {
 	make_fixture
 	unset USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
-	printf 'n\nwizard-user\nwizard-pass\nweb-user\nweb-pass\n\nuser\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'wizard-user\nwizard-pass\nweb-user\nweb-pass\n\nuser\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "SSH username" "$tmpdir/stdout" "wizard must prompt for missing USER_SSH"
 	assert_contains "user.ensure useradd -m -d /home/wizard-user -s /bin/bash wizard-user" "$INSTALL_COMMAND_LOG" "wizard must pass prompted user to user step"
 }
@@ -634,7 +650,10 @@ test_uninstall_apply_uses_mock_runner_and_explicit_purge_flags
 test_uninstall_can_remove_docker_engine_with_explicit_flag
 test_self_update_check_persists_branch_without_applying
 test_self_update_apply_tolerates_diff_changes
+test_self_update_equal_version_does_not_apply_without_force
+test_self_update_force_applies_equal_version
 test_wizard_offers_update_and_uses_same_dispatcher
+test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_removes_html_and_shows_last_status
 test_wizard_rejects_unknown_menu_choice_without_exit

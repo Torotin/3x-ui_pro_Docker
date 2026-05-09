@@ -33,5 +33,5 @@ services:
       LOGROTATE_LOGFILE: "/logs/_logrotate/logrotate.log"
       LOG_FILE: "/logs/_logrotate/cron.log"
     volumes:
-      - /opt/docker-proxy/_logs:/logs:rw
+      - ../_logs:/logs:rw
       - logrotate-status:/logrotate-status

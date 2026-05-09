@@ -221,6 +221,12 @@ BASH
 	assert_contains "уже существует вне project" /tmp/run-compose-conflict.out "conflict error must be explicit"
 }
 
+test_compose_fragments_do_not_hardcode_project_root() {
+	if grep -R --line-number --fixed-strings "/opt/docker-proxy" "$ROOT_DIR/docker-proxy/compose.d"; then
+		fail "compose fragments must use paths relative to compose.d instead of /opt/docker-proxy"
+	fi
+}
+
 test_restart_uses_no_deps_by_default
 test_restart_can_include_dependencies
 test_restart_logs_is_explicit
@@ -231,4 +237,5 @@ test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files
 test_list_files_does_not_require_env_file
 test_up_reports_foreign_container_name_conflict
+test_compose_fragments_do_not_hardcode_project_root
 printf 'test_run_compose.bash: OK\n'
