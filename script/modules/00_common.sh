@@ -144,15 +144,252 @@ is_debian_like_os() {
 }
 
 install_doctor_command() {
+	local status=0
+	printf 'doctor: checking installer, dependencies and stack status\n'
 	if ! is_debian_like_os; then
 		die "unsupported OS: only Debian/Ubuntu are supported"
 	fi
-	if [[ "$INSTALL_MOCK" != "1" ]]; then
-		command -v apt-get >/dev/null 2>&1 || die "apt-get is required"
-		command -v systemctl >/dev/null 2>&1 || die "systemd/systemctl is required"
-		command -v bash >/dev/null 2>&1 || die "bash is required"
+	doctor_ok "OS is Debian/Ubuntu compatible"
+	install_doctor_check_commands || status=1
+	install_doctor_check_paths || status=1
+	install_doctor_check_state || status=1
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		doctor_warn "stack checks skipped in mock mode"
+		printf 'doctor: OK\n'
+		return 0
 	fi
-	printf 'doctor: OK\n'
+	install_doctor_check_apt_packages || status=1
+	install_doctor_check_docker || status=1
+	install_doctor_check_compose || status=1
+	install_doctor_check_containers || status=1
+	if ((status == 0)); then
+		printf 'doctor: OK\n'
+	else
+		printf 'doctor: FAILED\n'
+	fi
+	return "$status"
+}
+
+doctor_ok() {
+	printf 'OK: %s\n' "$*"
+}
+
+doctor_warn() {
+	printf 'WARN: %s\n' "$*"
+}
+
+doctor_fail() {
+	printf 'FAIL: %s\n' "$*"
+	return 1
+}
+
+install_doctor_check_commands() {
+	local status=0 cmd
+	local -a commands=(
+		bash
+		apt-get
+		systemctl
+		envsubst
+		curl
+		grep
+		awk
+		sed
+		find
+		install
+		mktemp
+		date
+		chmod
+		chown
+		ssh
+		rsync
+		git
+		jq
+		openssl
+		htpasswd
+		ufw
+		dpkg-query
+		docker
+	)
+	for cmd in "${commands[@]}"; do
+		if [[ "$INSTALL_MOCK" == "1" ]]; then
+			run_cmd doctor.command command -v "$cmd"
+			continue
+		fi
+		if command -v "$cmd" >/dev/null 2>&1; then
+			doctor_ok "command available: $cmd"
+		else
+			doctor_fail "command missing: $cmd" || status=1
+		fi
+	done
+	((status == 0)) && doctor_ok "required commands checked"
+	return "$status"
+}
+
+install_doctor_check_paths() {
+	local status=0 path
+	local -a required_paths=(
+		"$SCRIPT_DIR/install.sh"
+		"$SCRIPT_DIR/modules"
+		"$SCRIPT_DIR/template"
+		"$SCRIPT_DIR/template/install.summary.template"
+		"$SCRIPT_DIR/template/sshd_config.template"
+	)
+	for path in "${required_paths[@]}"; do
+		if [[ -e "$path" ]]; then
+			doctor_ok "path exists: $path"
+		else
+			doctor_fail "path missing: $path" || status=1
+		fi
+	done
+	return "$status"
+}
+
+install_doctor_check_state() {
+	local status=0 var
+	install_load_state_env
+	local -a required_vars=(WEBDOMAIN USER_SSH USER_WEB PORT_REMOTE_SSH)
+	for var in "${required_vars[@]}"; do
+		if [[ -n "${!var:-}" ]]; then
+			doctor_ok "state variable set: $var"
+		else
+			doctor_warn "state variable not set yet: $var"
+		fi
+	done
+	if [[ -n "${HT_PASS_ENCODED:-}" || -n "${PASS_WEB:-}" ]]; then
+		doctor_ok "web credentials configured"
+	else
+		doctor_warn "web credentials are not configured yet"
+	fi
+	if [[ -f "$INSTALL_STATE_DIR/install.env" ]]; then
+		doctor_ok "installer env file: $INSTALL_STATE_DIR/install.env"
+	else
+		doctor_warn "installer env file not found: $INSTALL_STATE_DIR/install.env"
+	fi
+	return "$status"
+}
+
+install_doctor_check_apt_packages() {
+	local status=0 package
+	if ! command -v dpkg-query >/dev/null 2>&1; then
+		doctor_fail "command missing: dpkg-query" || return 1
+	fi
+	if ! declare -F install_apt_required_packages >/dev/null 2>&1; then
+		doctor_warn "APT dependency list is unavailable"
+		return 0
+	fi
+	while IFS= read -r package; do
+		[[ -n "$package" ]] || continue
+		if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fq "install ok installed"; then
+			doctor_ok "APT package installed: $package"
+		else
+			doctor_fail "APT package missing: $package" || status=1
+		fi
+	done < <(install_apt_required_packages)
+	return "$status"
+}
+
+install_doctor_check_docker() {
+	local status=0
+	if ! command -v docker >/dev/null 2>&1; then
+		doctor_warn "Docker command is not installed; stack checks skipped"
+		return 0
+	fi
+	doctor_ok "command available: docker"
+	if docker compose version >/dev/null 2>&1; then
+		doctor_ok "Docker Compose plugin available"
+	else
+		doctor_fail "Docker Compose plugin is not available" || status=1
+	fi
+	if systemctl is-active --quiet docker; then
+		doctor_ok "Docker service is active"
+	else
+		doctor_fail "Docker service is not active" || status=1
+	fi
+	if docker info >/dev/null 2>&1; then
+		doctor_ok "Docker daemon responds"
+	else
+		doctor_fail "Docker daemon does not respond" || status=1
+	fi
+	return "$status"
+}
+
+install_doctor_check_compose() {
+	local status=0 runner="$INSTALL_ROOT/compose.d/run-compose.sh" env_file="$INSTALL_ROOT/compose.d/.env"
+	if [[ ! -d "$INSTALL_ROOT/compose.d" ]]; then
+		doctor_warn "compose directory not found: $INSTALL_ROOT/compose.d"
+		return 0
+	fi
+	if [[ -x "$runner" ]]; then
+		doctor_ok "compose runner executable: $runner"
+	else
+		doctor_fail "compose runner missing or not executable: $runner" || status=1
+	fi
+	if [[ -f "$env_file" ]]; then
+		doctor_ok "compose env file: $env_file"
+	else
+		doctor_fail "compose env file missing: $env_file" || status=1
+	fi
+	if ((status == 0)); then
+		local lock_file="$INSTALL_STATE_DIR/docker-proxy-compose.doctor.lock"
+		local log_file="$INSTALL_STATE_DIR/doctor-compose.log"
+		if ! (: >"$log_file") 2>/dev/null; then
+			log_file=$(mktemp "${TMPDIR:-/tmp}/install-doctor-compose.XXXXXX.log")
+		fi
+		if env "LOCK_FILE=$lock_file" "$runner" validate >"$log_file" 2>&1; then
+			doctor_ok "compose configuration validates"
+		else
+			doctor_fail "compose configuration validation failed; log: $log_file" || status=1
+			tail -n 20 "$log_file" 2>/dev/null || true
+		fi
+	fi
+	return "$status"
+}
+
+install_doctor_check_containers() {
+	local status=0 name state health
+	if ! command -v docker >/dev/null 2>&1; then
+		return 0
+	fi
+	if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -Fq "traefik"; then
+		doctor_warn "compose stack containers are not running yet"
+		return 0
+	fi
+	local -a containers=(
+		adguard
+		caddy
+		crowdsec
+		crowdsec_firewall_bouncer
+		dockcheck
+		dozzle
+		homepage
+		lampac
+		logrotate
+		tor-proxy
+		torproxy
+		traefik
+		traefik-acme-exporter
+		usque
+		warp
+		3x-ui
+	)
+	for name in "${containers[@]}"; do
+		if ! docker inspect "$name" >/dev/null 2>&1; then
+			doctor_fail "container missing: $name" || status=1
+			continue
+		fi
+		state=$(docker inspect "$name" --format '{{.State.Status}}' 2>/dev/null || printf unknown)
+		health=$(docker inspect "$name" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || printf unknown)
+		if [[ "$state" != "running" ]]; then
+			doctor_fail "container not running: $name ($state/$health)" || status=1
+			continue
+		fi
+		if [[ "$health" == "unhealthy" ]]; then
+			doctor_fail "container unhealthy: $name" || status=1
+			continue
+		fi
+		doctor_ok "container running: $name ($health)"
+	done
+	return "$status"
 }
 
 backup_path() {

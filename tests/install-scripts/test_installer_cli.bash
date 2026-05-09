@@ -52,9 +52,14 @@ run_installer() {
 test_doctor_is_mock_only_and_reports_supported_os() {
 	make_fixture
 	run_installer doctor
+	assert_contains "doctor: checking installer, dependencies and stack status" "$tmpdir/stdout" "doctor must describe expanded checks"
+	assert_contains "OK: OS is Debian/Ubuntu compatible" "$tmpdir/stdout" "doctor must report supported OS"
+	assert_contains "WARN: stack checks skipped in mock mode" "$tmpdir/stdout" "doctor must skip stack checks in mock mode"
 	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor must report success on Ubuntu fixture"
-	assert_not_contains "apt-get" "$INSTALL_COMMAND_LOG" "doctor must not run apt"
-	assert_not_contains "systemctl" "$INSTALL_COMMAND_LOG" "doctor must not run systemctl"
+	assert_contains "doctor.command command -v apt-get" "$INSTALL_COMMAND_LOG" "doctor must check required commands through runner in mock mode"
+	assert_contains "doctor.command command -v docker" "$INSTALL_COMMAND_LOG" "doctor must check Docker command through runner in mock mode"
+	assert_not_contains "apt-get install" "$INSTALL_COMMAND_LOG" "doctor must not install apt packages"
+	assert_not_contains "systemctl restart" "$INSTALL_COMMAND_LOG" "doctor must not restart services"
 	assert_not_contains "/etc/" "$INSTALL_COMMAND_LOG" "doctor must not mutate /etc"
 }
 
