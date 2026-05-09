@@ -363,6 +363,7 @@ acquire_lock() {
 		log "ERROR: Remove it or fix permissions, for example: sudo rm -f '$LOCK_FILE'"
 		exit 1
 	fi
+	chmod a+rw "$LOCK_FILE" 2>/dev/null || true
 	exec 9>"$LOCK_FILE"
 	if ! flock -n 9; then
 		log "ERROR: Уже выполняется другой run-compose.sh (lock: $LOCK_FILE)"
