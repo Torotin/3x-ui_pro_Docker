@@ -33,10 +33,10 @@ services:
     volumes:
       - crowdsec_data:/var/lib/crowdsec/data
       - crowdsec_config:/etc/crowdsec
-      - /opt/docker-proxy/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml
-      # - /opt/docker-proxy/crowdsec/config.yaml:/etc/crowdsec/config.yaml
+      - ../crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml
+      # - ../crowdsec/config.yaml:/etc/crowdsec/config.yaml
       - /var/log:/var/log:ro
-      - /opt/docker-proxy/_logs:/var/logs:ro
+      - ../_logs:/var/logs:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     security_opt:
       - no-new-privileges=true

@@ -22,17 +22,17 @@ services:
     dns:
       - 172.19.0.10
     volumes:
-      - /opt/docker-proxy/3x-ui/scripts/lib:/mnt/sh/lib:rw
-      - /opt/docker-proxy/3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
-      - /opt/docker-proxy/3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
-      - /opt/docker-proxy/3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
-      - /opt/docker-proxy/3x-ui/configs/config.json:/app/bin/config.json:rw
-      - /opt/docker-proxy/_logs/xray/access.log:/app/access.log
-      - /opt/docker-proxy/_logs/xray/error.log:/app/error.log
-      - /opt/docker-proxy/_logs:/var/log:rw
+      - ../3x-ui/scripts/lib:/mnt/sh/lib:rw
+      - ../3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
+      - ../3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
+      - ../3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
+      - ../3x-ui/configs/config.json:/app/bin/config.json:rw
+      - ../_logs/xray/access.log:/app/access.log
+      - ../_logs/xray/error.log:/app/error.log
+      - ../_logs:/var/log:rw
     env_file:
-      - /opt/docker-proxy/compose.d/.env
-      - /opt/docker-proxy/3x-ui/3x-ui.env
+      - ./.env
+      - ../3x-ui/3x-ui.env
     environment:
       # - XUI_LOG_LEVEL=debug
       - XUI_LOG_FOLDER=/var/log/3x-ui
