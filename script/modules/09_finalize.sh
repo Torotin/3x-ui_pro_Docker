@@ -71,8 +71,132 @@ install_summary_url() {
 	fi
 }
 
+install_version_file() {
+	printf '%s/VERSION\n' "$SCRIPT_DIR"
+}
+
+install_changelog_file() {
+	printf '%s/CHANGELOG.md\n' "$SCRIPT_DIR"
+}
+
+install_read_version_file() {
+	local file=$1 version
+	[[ -f "$file" ]] || die "version file not found: $file"
+	version=$(sed -n '1{s/[[:space:]]//g;p;q;}' "$file")
+	install_validate_semver "$version"
+	printf '%s\n' "$version"
+}
+
+install_validate_semver() {
+	local version=$1
+	[[ "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || die "invalid installer version: $version"
+}
+
+install_compare_semver() {
+	local left=$1 right=$2
+	install_validate_semver "$left"
+	install_validate_semver "$right"
+	local IFS=. left_major left_minor left_patch right_major right_minor right_patch
+	read -r left_major left_minor left_patch <<<"$left"
+	read -r right_major right_minor right_patch <<<"$right"
+	if ((left_major > right_major)); then
+		printf '1\n'
+	elif ((left_major < right_major)); then
+		printf -- '-1\n'
+	elif ((left_minor > right_minor)); then
+		printf '1\n'
+	elif ((left_minor < right_minor)); then
+		printf -- '-1\n'
+	elif ((left_patch > right_patch)); then
+		printf '1\n'
+	elif ((left_patch < right_patch)); then
+		printf -- '-1\n'
+	else
+		printf '0\n'
+	fi
+}
+
+install_self_update_fetch_tree() {
+	local branch=$1 tmp=$2
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp"
+		mkdir -p "$tmp/script"
+		printf '%s\n' "${INSTALL_MOCK_REMOTE_VERSION:-$(install_read_version_file "$(install_version_file)")}" >"$tmp/script/VERSION"
+		if [[ -n "${INSTALL_MOCK_REMOTE_CHANGELOG:-}" ]]; then
+			printf '%s\n' "$INSTALL_MOCK_REMOTE_CHANGELOG" >"$tmp/script/CHANGELOG.md"
+		else
+			cp "$(install_changelog_file)" "$tmp/script/CHANGELOG.md" 2>/dev/null || :
+		fi
+		return 0
+	fi
+	run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp"
+}
+
+install_print_changelog_range() {
+	local changelog=$1 local_version=$2 remote_version=$3
+	[[ -f "$changelog" ]] || return 0
+	awk -v local="$local_version" -v remote="$remote_version" '
+		function cmp(a, b, aa, bb, i) {
+			split(a, aa, ".")
+			split(b, bb, ".")
+			for (i = 1; i <= 3; i++) {
+				aa[i] += 0
+				bb[i] += 0
+				if (aa[i] > bb[i]) return 1
+				if (aa[i] < bb[i]) return -1
+			}
+			return 0
+		}
+		/^##[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+/ {
+			version=$2
+			printing=(cmp(version, local) > 0 && cmp(version, remote) <= 0)
+		}
+		printing {print}
+	' "$changelog"
+}
+
+install_self_update_prepare() {
+	local branch=$1 result_file=$2 tmp local_version remote_version compare
+	tmp=$(mktemp -d)
+	install_self_update_fetch_tree "$branch" "$tmp"
+	local_version=$(install_read_version_file "$(install_version_file)")
+	remote_version=$(install_read_version_file "$tmp/script/VERSION")
+	compare=$(install_compare_semver "$remote_version" "$local_version")
+	{
+		printf 'tmp=%s\n' "$tmp"
+		printf 'local_version=%s\n' "$local_version"
+		printf 'remote_version=%s\n' "$remote_version"
+		printf 'update_available=%s\n' "$([[ "$compare" == "1" ]] && printf 1 || printf 0)"
+	} >"$result_file"
+}
+
+install_self_update_load_result() {
+	local result_file=$1 line key value
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		key=${line%%=*}
+		value=${line#*=}
+		case "$key" in
+		tmp) SELF_UPDATE_TMP=$value ;;
+		local_version) SELF_UPDATE_LOCAL_VERSION=$value ;;
+		remote_version) SELF_UPDATE_REMOTE_VERSION=$value ;;
+		update_available) SELF_UPDATE_AVAILABLE=$value ;;
+		esac
+	done <"$result_file"
+	export SELF_UPDATE_TMP SELF_UPDATE_LOCAL_VERSION SELF_UPDATE_REMOTE_VERSION SELF_UPDATE_AVAILABLE
+}
+
+install_self_update_print_check() {
+	local tmp=$1 local_version=$2 remote_version=$3 available=$4
+	if [[ "$available" == "1" ]]; then
+		printf 'self-update: update available: %s -> %s\n' "$local_version" "$remote_version"
+		install_print_changelog_range "$tmp/script/CHANGELOG.md" "$local_version" "$remote_version"
+	else
+		printf 'self-update: up to date (%s)\n' "$local_version"
+	fi
+}
+
 install_self_update_command() {
-	local branch check=0 yes=0 arg
+	local branch check=0 yes=0 force=0 arg
 	branch=$(config_get update.branch "$INSTALL_DEFAULT_BRANCH")
 	while (($# > 0)); do
 		arg=$1
@@ -85,21 +209,35 @@ install_self_update_command() {
 			;;
 		--check) check=1 ;;
 		--yes) yes=1 ;;
+		--force) force=1 ;;
 		*) die "unknown self-update option: $arg" ;;
 		esac
 	done
 	config_set update.branch "$branch"
+	local result_file tmp local_version remote_version available
+	result_file=$(mktemp)
+	install_self_update_prepare "$branch" "$result_file"
+	install_self_update_load_result "$result_file"
+	rm -f "$result_file"
+	tmp=$SELF_UPDATE_TMP
+	local_version=$SELF_UPDATE_LOCAL_VERSION
+	remote_version=$SELF_UPDATE_REMOTE_VERSION
+	available=$SELF_UPDATE_AVAILABLE
 	if ((check)); then
-		run_cmd self-update.check git ls-remote --heads "$INSTALL_REPO_URL" "$branch"
-		printf 'self-update: checked %s\n' "$branch"
+		run_cmd self-update.check printf 'checked branch %s\n' "$branch"
+		install_self_update_print_check "$tmp" "$local_version" "$remote_version" "$available"
+		rm -rf "$tmp"
+		return 0
+	fi
+	if [[ "$available" != "1" && "$force" != "1" ]]; then
+		printf 'self-update: up to date (%s)\n' "$local_version"
+		rm -rf "$tmp"
 		return 0
 	fi
 	if ((yes == 0)) && [[ "$INSTALL_NONINTERACTIVE" == "1" ]]; then
+		rm -rf "$tmp"
 		die "self-update apply requires --yes in non-interactive mode"
 	fi
-	local tmp
-	tmp=$(mktemp -d)
-	run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp"
 	local diff_rc
 	set +e
 	run_cmd self-update.diff diff -ruN "$SCRIPT_DIR" "$tmp/script"
@@ -111,5 +249,5 @@ install_self_update_command() {
 	fi
 	run_cmd self-update.apply rsync -a --delete --exclude install-state "$tmp/script/" "$SCRIPT_DIR/"
 	rm -rf "$tmp"
-	printf 'self-update: applied %s\n' "$branch"
+	printf 'self-update: applied %s (%s -> %s)\n' "$branch" "$local_version" "$remote_version"
 }
