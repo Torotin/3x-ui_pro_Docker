@@ -29,13 +29,13 @@ services:
       lampac:
         condition: service_healthy
     env_file:
-      - /opt/docker-proxy/compose.d/.env
+      - ./.env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/docker-proxy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - /opt/docker-proxy/traefik/acme.json:/acme.json
-      - /opt/docker-proxy/traefik/dynamic:/dynamic:ro
-      - /opt/docker-proxy/_logs/traefik:/logs
+      - ../traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ../traefik/acme.json:/acme.json
+      - ../traefik/dynamic:/dynamic:ro
+      - ../_logs/traefik:/logs
     ports:
       - "80:80"
       - "443:443/tcp"

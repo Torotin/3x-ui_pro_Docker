@@ -7,7 +7,7 @@ services:
     init: true
     working_dir: /_dockcheck
     env_file:
-      - /opt/docker-proxy/compose.d/.env
+      - ./.env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     security_opt:

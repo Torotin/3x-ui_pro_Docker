@@ -25,17 +25,17 @@ services:
     # --- Mount your own files (commented by default). Paths are relative to this compose file. ---
     volumes:
       # Required for custom setup: root password (WebLog, etc.) → must exist on host before `up`
-      - /opt/docker-proxy/lampac-docker/config/passwd:/lampac/passwd
+      - ../lampac-docker/config/passwd:/lampac/passwd
       # Main JSON/YAML config (hot-reloaded). In-container path is always /lampac/init.conf
-      - /opt/docker-proxy/lampac-docker/config/init.conf:/lampac/init.conf
+      - ../lampac-docker/config/init.conf:/lampac/init.conf
       # Optional: extra user module dir (see README → Docker → manifest.json). Example name is illustrative.
-      # - /opt/docker-proxy/lampac-docker/mods/BulbaCrawler:/lampac/mods/BulbaCrawler
+      # - ../lampac-docker/mods/BulbaCrawler:/lampac/mods/BulbaCrawler
       # Optional: Lampa client plugin override
-      # - /opt/docker-proxy/lampac-docker/plugins/lampainit.js:/lampac/plugins/override/lampainit.js
+      # - ../lampac-docker/plugins/lampainit.js:/lampac/plugins/override/lampainit.js
       # Optional: persist cache across restarts
-      - /opt/docker-proxy/lampac-docker/cache:/lampac/cache
+      - ../lampac-docker/cache:/lampac/cache
       # Optional: persist SQLite / local DB dirs
-      - /opt/docker-proxy/lampac-docker/database:/lampac/database
+      - ../lampac-docker/database:/lampac/database
 
     labels:
       # Базовая конфигурация
