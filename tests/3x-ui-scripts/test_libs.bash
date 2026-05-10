@@ -238,7 +238,7 @@ test_vision_stream_restores_old_reality_external_proxy() {
 }
 
 test_vision_settings_include_traefik_fallback_preserving_clients() {
-	local inbound settings fallback_dest clients decryption
+	local inbound settings fallback_dest clients decryption encryption
 	export VISION_FALLBACK_HOST=traefik
 	export VISION_FALLBACK_PORT=4443
 	export VISION_FALLBACK_XVER=1
@@ -247,9 +247,11 @@ test_vision_settings_include_traefik_fallback_preserving_clients() {
 	fallback_dest=$(printf '%s' "$settings" | jq -r '.fallbacks[0].dest')
 	clients=$(printf '%s' "$settings" | jq '.clients | length')
 	decryption=$(printf '%s' "$settings" | jq -r '.decryption')
+	encryption=$(printf '%s' "$settings" | jq -r '.encryption')
 	assert_eq traefik:4443 "$fallback_dest" "Vision fallback must point to Traefik websecure"
 	assert_eq 1 "$clients" "Vision update must preserve existing clients"
 	assert_eq none "$decryption" "Vision VLESS settings must keep decryption=none"
+	assert_eq none "$encryption" "Vision VLESS settings must keep encryption=none for subscription outbounds"
 }
 
 test_tor_balancer_uses_two_available_hosts() {
