@@ -107,6 +107,52 @@ test_resolve_panel_base_prioritizes_configured_web_port() {
 	assert_eq 1 "$HTTP_LOG_FAILURES" "HTTP_LOG_FAILURES was not restored"
 }
 
+test_normalize_base_path_accepts_empty_input() {
+	local result
+	result=$(normalize_base_path "")
+	assert_eq "" "$result" "empty base path must normalize to empty string"
+	normalize_base_path "" >/dev/null || fail "empty base path must return success"
+}
+
+test_http_request_temp_files_are_created_under_tmp_root() {
+	local tmp_root body
+	tmp_root=$(mktemp -d)
+	# shellcheck disable=SC2034 # http_request reads TMP_ROOT as a runtime global
+	TMP_ROOT=$tmp_root
+	# shellcheck disable=SC2034 # http_init/http_request read COOKIE_JAR as a runtime global
+	COOKIE_JAR="$tmp_root/cookies.txt"
+	http_init "$tmp_root"
+	curl() {
+		local out=
+		while (($# > 0)); do
+			case "$1" in
+			-o)
+				out=$2
+				shift 2
+				;;
+			-w)
+				shift 2
+				;;
+			*)
+				shift
+				;;
+			esac
+		done
+		printf '{"success":true}' >"$out"
+		printf '200'
+	}
+	http_request GET "http://127.0.0.1/test" || fail "http_request fixture failed"
+	body=$HTTP_BODY_FILE
+	case "$body" in
+	"$tmp_root"/*) ;;
+	*) fail "HTTP_BODY_FILE must be created under TMP_ROOT, got $body" ;;
+	esac
+	http_body | jq -e '.success == true' >/dev/null || fail "http_body must read successful response"
+	rm -rf "$tmp_root"
+	unset -f curl
+	unset TMP_ROOT COOKIE_JAR
+}
+
 test_custom_geo_resources_default_to_previous_dat_files() {
 	local resources count site_type site_alias ip_type ip_alias
 	unset CUSTOM_GEO_RESOURCES
@@ -192,7 +238,7 @@ test_vision_stream_restores_old_reality_external_proxy() {
 }
 
 test_vision_settings_include_traefik_fallback_preserving_clients() {
-	local inbound settings fallback_dest clients decryption
+	local inbound settings fallback_dest clients decryption encryption
 	export VISION_FALLBACK_HOST=traefik
 	export VISION_FALLBACK_PORT=4443
 	export VISION_FALLBACK_XVER=1
@@ -201,9 +247,11 @@ test_vision_settings_include_traefik_fallback_preserving_clients() {
 	fallback_dest=$(printf '%s' "$settings" | jq -r '.fallbacks[0].dest')
 	clients=$(printf '%s' "$settings" | jq '.clients | length')
 	decryption=$(printf '%s' "$settings" | jq -r '.decryption')
+	encryption=$(printf '%s' "$settings" | jq -r '.encryption')
 	assert_eq traefik:4443 "$fallback_dest" "Vision fallback must point to Traefik websecure"
 	assert_eq 1 "$clients" "Vision update must preserve existing clients"
 	assert_eq none "$decryption" "Vision VLESS settings must keep decryption=none"
+	assert_eq none "$encryption" "Vision VLESS settings must keep encryption=none for subscription outbounds"
 }
 
 test_tor_balancer_uses_two_available_hosts() {
@@ -281,12 +329,29 @@ test_existing_warp_outbound_endpoint_is_normalized() {
 	assert_eq engage.cloudflareclient.com:2408 "$endpoint" "Existing WARP outbound endpoint was not normalized"
 }
 
+test_xray_api_inbound_uses_documented_dokodemo_protocol() {
+	local protocol
+	protocol=$(jq -r '.inbounds[] | select(.tag=="api") | .protocol' "$ROOT_DIR/docker-proxy/3x-ui/configs/config.json")
+	assert_eq dokodemo-door "$protocol" "Xray API inbound must use documented dokodemo-door protocol"
+}
+
+test_lampac_hide_interface_waits_for_lampa_global() {
+	local file="$ROOT_DIR/docker-proxy/lampac-docker/plugins/override/hide_interface.js"
+	grep -Fq "function waitForLampa()" "$file" || fail "hide_interface must wait for window.Lampa"
+	grep -Fq "typeof window.Lampa !== 'undefined'" "$file" || fail "hide_interface must check window.Lampa before init"
+	if grep -Fq "if (typeof Lampa !== 'undefined')" "$file" || grep -Fq "Lampa.Listener.follow('app', function" "$file"; then
+		fail "hide_interface must not access Lampa.Listener from the undefined-Lampa startup branch"
+	fi
+}
+
 test_redaction_masks_secrets
 test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
 test_remove_managed_xray_artifacts_only_removes_our_tags
 test_desired_clients_are_deterministic
 test_resolve_panel_base_prioritizes_configured_web_port
+test_normalize_base_path_accepts_empty_input
+test_http_request_temp_files_are_created_under_tmp_root
 test_custom_geo_resources_default_to_previous_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields
@@ -301,4 +366,6 @@ test_warp_balancer_can_opt_in_console_warp
 test_managed_burst_observatory_preserves_custom_subjects
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
+test_xray_api_inbound_uses_documented_dokodemo_protocol
+test_lampac_hide_interface_waits_for_lampa_global
 printf 'test_libs.bash: OK\n'

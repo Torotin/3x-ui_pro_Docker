@@ -108,7 +108,7 @@ ENV
 	assert_contains 'USER_SSH="state-user"' "$INSTALL_STATE_DIR/install.env" "env must preserve existing SSH user when no override is provided"
 	assert_contains "CROWDSEC_API_KEY_FIREWALL=state-firewall-key" "$INSTALL_STATE_DIR/install.env" "env must preserve existing crowdsec key when no override is provided"
 	assert_contains 'HT_PASS_ENCODED="user:$$2y$$hash"' "$INSTALL_STATE_DIR/install.env" "env loader must preserve literal dollar signs"
-	assert_contains "ADGUARD_ADMIN_HASH='\$2y\$hash'" "$INSTALL_STATE_DIR/install.env" "env loader must derive AdGuard hash from escaped htpasswd"
+	assert_contains 'ADGUARD_ADMIN_HASH="$2y$hash"' "$INSTALL_STATE_DIR/install.env" "env loader must derive AdGuard hash from escaped htpasswd without single quotes"
 	assert_not_contains "ADGUARD_ADMIN_HASH=" "$INSTALL_ROOT/compose.d/.env" "compose env must not contain raw bcrypt hash with dollar signs"
 }
 
@@ -244,8 +244,18 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "ufw default allow routed" "$INSTALL_COMMAND_LOG" "firewall must allow Docker bridge routed traffic"
 	assert_contains "ufw allow 22022/tcp" "$INSTALL_COMMAND_LOG" "firewall must preserve configured SSH port"
 	assert_contains "ssh.apply bash -c" "$INSTALL_COMMAND_LOG" "ssh apply must render config through shell redirection"
+	assert_contains "ssh.detect" "$INSTALL_COMMAND_LOG" "ssh apply must detect the active SSH systemd unit"
 	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload SSH before restart fallback"
-	assert_not_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must not restart when reload succeeds"
+	assert_contains "ssh.listener.check" "$INSTALL_COMMAND_LOG" "ssh apply must verify the configured SSH port listener"
+	assert_not_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must not restart when reload and listener check succeed"
+}
+
+test_firewall_preserves_current_ssh_port_for_rollback() {
+	make_fixture
+	export SSH_CONNECTION="198.51.100.20 54321 203.0.113.10 22"
+	run_installer run firewall --apply --yes
+	assert_contains "ufw allow 22/tcp comment CURRENT_SSH_PORT" "$INSTALL_COMMAND_LOG" "firewall must preserve active SSH port before SSH policy changes"
+	assert_contains "ufw allow 22022/tcp comment PORT_REMOTE_SSH" "$INSTALL_COMMAND_LOG" "firewall must still allow configured target SSH port"
 }
 
 test_ssh_rejects_invalid_port_before_apply() {
@@ -256,6 +266,21 @@ test_ssh_rejects_invalid_port_before_apply() {
 	fi
 	assert_contains "PORT_REMOTE_SSH must be numeric" "$tmpdir/stderr" "ssh step must explain invalid port"
 	assert_not_contains "ssh.apply" "$INSTALL_COMMAND_LOG" "ssh step must not render config with invalid port"
+}
+
+test_ssh_restarts_when_listener_check_fails_after_reload() {
+	make_fixture
+	export INSTALL_MOCK_SSH_LISTENER_READY=0
+	run_installer run ssh --apply --yes
+	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload before fallback"
+	assert_contains "ssh.listener.check" "$INSTALL_COMMAND_LOG" "ssh apply must check configured listener"
+	assert_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must restart when listener check fails"
+}
+
+test_ssh_listener_mock_uses_realistic_address_pattern() {
+	make_fixture
+	run_installer run ssh --apply --yes
+	assert_contains '\[\^\[:space:\]\]\*:\$1' "$INSTALL_COMMAND_LOG" "ssh listener check must match address-prefixed sockets"
 }
 
 test_ssh_auth_mode_follows_optional_public_key() {
@@ -331,10 +356,17 @@ test_uninstall_apply_requires_confirmation() {
 
 test_uninstall_apply_uses_mock_runner_and_explicit_purge_flags() {
 	make_fixture
+	unset PORT_REMOTE_SSH
+	cat >"$INSTALL_STATE_DIR/install.env" <<'ENV'
+PORT_REMOTE_SSH="22022"
+PORT_REMOTE_TEST="2443"
+ENV
 	run_installer uninstall --apply --yes --purge-docker-data --purge-firewall --purge-ssh --purge-network --remove-project-root
 	assert_contains "compose.down" "$INSTALL_COMMAND_LOG" "uninstall must stop compose through runner"
 	assert_contains "docker.volume.prune" "$INSTALL_COMMAND_LOG" "docker data purge must be explicit"
 	assert_contains "firewall.purge" "$INSTALL_COMMAND_LOG" "firewall purge must be explicit"
+	assert_contains "ufw delete allow 22022/tcp" "$INSTALL_COMMAND_LOG" "firewall purge must load PORT_REMOTE_SSH from install-state"
+	assert_contains "ufw delete allow 2443/tcp" "$INSTALL_COMMAND_LOG" "firewall purge must load all PORT_REMOTE_* values from install-state"
 	assert_contains "ssh.restore" "$INSTALL_COMMAND_LOG" "ssh purge must be explicit"
 	assert_contains "network.restore" "$INSTALL_COMMAND_LOG" "network purge must be explicit"
 	assert_contains "project.remove" "$INSTALL_COMMAND_LOG" "project root removal must be explicit"
@@ -598,6 +630,8 @@ test_compose_uses_installer_state_lock() {
 	assert_contains "project.sync" "$INSTALL_COMMAND_LOG" "compose step must sync project files when runner is missing"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "compose step must render env when compose env is missing"
 	assert_contains "docker.network.ensure" "$INSTALL_COMMAND_LOG" "compose step must ensure external Docker networks"
+	assert_contains "COMPOSE_DIR=$INSTALL_ROOT/compose.d" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose directory"
+	assert_contains "ENV_FILE=$INSTALL_ROOT/compose.d/.env" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose env file"
 	assert_contains "LOCK_FILE=$INSTALL_STATE_DIR/docker-proxy-compose.lock" "$INSTALL_COMMAND_LOG" "compose step must avoid shared /tmp lock file"
 }
 
@@ -642,6 +676,10 @@ test_adguard_update_pass_updates_yaml_without_yq
 test_state_loader_keeps_explicit_values_over_state
 test_destructive_steps_require_explicit_flags
 test_destructive_steps_use_mock_runner_when_explicit
+test_firewall_preserves_current_ssh_port_for_rollback
+test_ssh_rejects_invalid_port_before_apply
+test_ssh_restarts_when_listener_check_fails_after_reload
+test_ssh_listener_mock_uses_realistic_address_pattern
 test_docker_install_handles_missing_docker_binary
 test_network_apply_uses_runner
 test_uninstall_plan_is_non_destructive
