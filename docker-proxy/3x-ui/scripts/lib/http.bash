@@ -13,7 +13,18 @@ HTTP_LOG_FAILURES=${HTTP_LOG_FAILURES:-1}
 http_init() {
 	local tmp_root=$1
 	COOKIE_JAR=${COOKIE_JAR:-"$tmp_root/cookies.txt"}
+	TMP_ROOT=${TMP_ROOT:-$tmp_root}
 	: >"$COOKIE_JAR"
+}
+
+http_mktemp() {
+	local name=${1:-http}
+	if [[ -n "${TMP_ROOT:-}" ]]; then
+		mkdir -p "$TMP_ROOT"
+		mktemp "$TMP_ROOT/${name}.XXXXXX"
+	else
+		mktemp
+	fi
 }
 
 http_request() {
@@ -27,8 +38,8 @@ http_request() {
 	HTTP_BODY_FILE=
 
 	while ((attempts > 0)); do
-		body=$(mktemp)
-		err=$(mktemp)
+		body=$(http_mktemp http-body)
+		err=$(http_mktemp http-error)
 		HTTP_CODE=$(
 			curl -k -sS \
 				--connect-timeout "$HTTP_CONNECT_TIMEOUT" \

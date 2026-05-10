@@ -35,6 +35,8 @@ require_tool yq
 
 assert_has_healthcheck "$COMPOSE_DIR/13-homepage.yml" homepage
 assert_has_healthcheck "$COMPOSE_DIR/14-lampac.yml" lampac
+assert_has_healthcheck "$COMPOSE_DIR/08-warp.yml" warp
+assert_has_healthcheck "$COMPOSE_DIR/09-usque.yml" usque
 adguard_healthcheck=$(compose_value '.services.adguard.healthcheck.test | join(" ")' "$COMPOSE_DIR/10-adguard.yml")
 case "$adguard_healthcheck" in
 	*127.0.0.1*80*) ;;
@@ -52,6 +54,14 @@ torproxy_retries=$(compose_value '.services.torproxy.healthcheck.retries // ""' 
 for dependency in crowdsec crowdsec-firewall-bouncer caddy dozzle adguard 3x-ui homepage lampac warp usque torproxy tor-proxy; do
 	assert_depends_on_healthy "$COMPOSE_DIR/06-traefik.yml" traefik "$dependency"
 done
+
+warp_start_period=$(compose_value '.services.warp.healthcheck.start_period // ""' "$COMPOSE_DIR/08-warp.yml")
+[[ "$warp_start_period" == "60s" ]] ||
+	fail "warp healthcheck start_period must tolerate slow WARP bootstrap; got '${warp_start_period:-<missing>}'"
+
+usque_start_period=$(compose_value '.services.usque.healthcheck.start_period // ""' "$COMPOSE_DIR/09-usque.yml")
+[[ "$usque_start_period" == "60s" ]] ||
+	fail "usque healthcheck start_period must tolerate slow proxy bootstrap; got '${usque_start_period:-<missing>}'"
 
 assert_depends_on_healthy "$COMPOSE_DIR/06-traefik-pem-export.yml" traefik-acme-exporter traefik
 exporter_interval=$(compose_value '.services."traefik-acme-exporter".healthcheck.interval // ""' "$COMPOSE_DIR/06-traefik-pem-export.yml")

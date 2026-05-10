@@ -14,6 +14,7 @@ USAGE
 }
 
 install_uninstall_command() {
+	install_load_state_env
 	local mode=plan
 	local purge_docker=0 purge_docker_engine=0 purge_firewall=0 purge_ssh=0 purge_network=0 remove_root=0
 	local -a original_args=("$@")

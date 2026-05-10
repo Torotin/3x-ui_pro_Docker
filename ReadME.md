@@ -16,19 +16,55 @@
 
 ## Быстрый старт
 
+### Вариант 1: через wizard
+
 ```bash
-cd /opt
+cd /srv
 git clone https://github.com/Torotin/3x-ui_pro_Docker.git
 cd 3x-ui_pro_Docker
+
+# Необязательно: каталог Docker-стека можно выбрать любой абсолютный путь.
+export INSTALL_ROOT=/srv/docker-proxy
+
 sudo script/install.sh doctor
 sudo script/install.sh wizard
 sudo script/install.sh doctor
 ```
 
+### Вариант 2: командами без wizard
+
+Перед batch-запуском задайте обязательные значения. `SSH_PBK` необязателен: если ключ задан, SSH будет настроен на public key auth; если не задан, будет включен password auth.
+
+```bash
+cd /srv
+git clone https://github.com/Torotin/3x-ui_pro_Docker.git
+cd 3x-ui_pro_Docker
+
+chmod +x script/install.sh
+
+export INSTALL_ROOT=/srv/docker-proxy
+export WEBDOMAIN=example.com
+export USER_SSH=deployer
+export PASS_SSH='change-me'
+export USER_WEB=admin
+export PASS_WEB='change-me'
+export SSH_PBK='ssh-ed25519 ... [optional]'
+
+sudo -E script/install.sh doctor
+sudo -E script/install.sh run apt --apply --yes
+sudo -E script/install.sh run env
+sudo -E script/install.sh run docker --destroy-docker-data
+sudo -E script/install.sh run user
+sudo -E script/install.sh run firewall ssh network --apply --yes
+sudo -E script/install.sh run compose
+sudo -E script/install.sh run final
+sudo -E script/install.sh doctor
+```
+
 Installer хранится отдельно от Docker-стека:
 
 - `3x-ui_pro_Docker/script` — installer, модули, шаблоны, state, logs, summary.
-- `3x-ui_pro_Docker/docker-proxy` — Docker Compose стек и runtime-данные сервисов.
+- `INSTALL_ROOT` — рабочий каталог Docker Compose стека и runtime-данных сервисов. По умолчанию `/opt/docker-proxy`, но можно использовать любой абсолютный путь, например `/srv/docker-proxy`.
 
 ## Команды installer
 
@@ -109,6 +145,8 @@ Wizard при старте автоматически проверяет обн�
 
 Compose fragments находятся в `docker-proxy/compose.d`. Host paths в них задаются относительно каталога `compose.d`, чтобы стек не зависел от хардкода `/opt/docker-proxy`.
 
+Traefik намеренно ожидает `service_healthy` для backend-сервисов: это делает старт строже, зато финальный `doctor` и healthcheck-и отражают реальную готовность всего стека. Reality-first TCP router для 3x-ui использует `HostSNI(*)` с низким priority; non-Reality TLS трафик возвращается из Xray в Traefik fallback.
+
 ## Безопасность и destructive actions
 
 Destructive и host-mutating действия требуют явного opt-in:
@@ -120,7 +158,7 @@ Destructive и host-mutating действия требуют явного opt-in
 - Network/sysctl apply: `run network --apply --yes`.
 - Uninstall purge: отдельные `--purge-*` флаги.
 
-SSH apply валидирует `sshd_config` через `sshd -t` и предпочитает `systemctl reload ssh`; restart используется только как fallback.
+SSH apply логирует выбранный auth mode, пользователя, порт, backup, systemd unit, результат `sshd -t`, reload/restart и проверку listening port. Сначала применяется `systemctl reload`, restart используется только если reload не поднял новый порт или сервис требует полного перезапуска.
 
 `doctor` не меняет окружение. Его можно запускать для диагностики до и после установки.
 
@@ -161,11 +199,18 @@ sudo script/install.sh uninstall --apply --yes \
 
 ## Файлы состояния
 
-- `/opt/script/install-state/install.env` — состояние installer.
-- `/opt/docker-proxy/compose.d/.env` — окружение Compose.
-- `/opt/script/install-state/install.summary` — финальное резюме установки.
-- `/opt/script/install-state/commands.log` — команды, прошедшие через runner.
-- `/opt/script/install-state/install.log` — лог installer.
+- `script/install-state/install.env` — состояние installer рядом с текущим `script/install.sh`, если `INSTALL_STATE_DIR` не переопределен.
+- `$INSTALL_ROOT/compose.d/.env` — окружение Compose.
+- `script/install-state/install.summary` — финальное резюме установки.
+- `script/install-state/commands.log` — команды, прошедшие через runner.
+- `script/install-state/install.log` — лог installer.
+
+Для нестандартного размещения можно задать:
+
+```bash
+export INSTALL_ROOT=/srv/docker-proxy
+export INSTALL_STATE_DIR=/srv/3x-ui-installer-state
+```
 
 ## Локальная разработка и проверки
 
@@ -203,8 +248,10 @@ git diff --check
 Минимальные тесты после установки:
 
 ```bash
-sudo /opt/script/install.sh doctor
-sudo /opt/docker-proxy/compose.d/run-compose.sh validate
-sudo /opt/docker-proxy/compose.d/run-compose.sh up
-sudo /opt/script/install.sh run final
+sudo -E script/install.sh doctor
+sudo -E "$INSTALL_ROOT/compose.d/run-compose.sh" validate
+sudo -E "$INSTALL_ROOT/compose.d/run-compose.sh" up
+sudo -E script/install.sh run final
 ```
+
+Конкретный SSH endpoint тестового сервера не фиксируется в README или проектном контексте: он передается только на время серверной приемки.

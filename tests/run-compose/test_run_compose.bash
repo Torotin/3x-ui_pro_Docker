@@ -102,6 +102,10 @@ run_runner() {
 	DOCKER_LOG="$tmpdir/docker.log" PATH="$tmpdir/bin:$PATH" COMPOSE_DIR="$tmpdir/compose.d" ENV_FILE="$tmpdir/compose.d/.env" "$RUNNER" "$@"
 }
 
+run_runner_default_env() {
+	DOCKER_LOG="$tmpdir/docker.log" PATH="$tmpdir/bin:$PATH" COMPOSE_DIR="$tmpdir/compose.d" "$RUNNER" "$@"
+}
+
 test_restart_uses_no_deps_by_default() {
 	make_fixture
 	run_runner restart traefik
@@ -139,6 +143,16 @@ test_lock_file_is_compose_local_and_world_writable() {
 	local mode
 	mode=$(stat -c '%a' "$lock_file")
 	[[ "$mode" == "666" ]] || fail "run-compose lock file must be writable across sudo/non-sudo runs; got $mode"
+}
+
+test_default_env_and_lock_follow_active_compose_dir() {
+	make_fixture
+	run_runner_default_env up >/tmp/run-compose-default-env.out 2>&1
+	assert_contains "Project root: $tmpdir" /tmp/run-compose-default-env.out "run-compose must report project root derived from active compose dir"
+	assert_contains "Каталог с compose-файлами: $tmpdir/compose.d" /tmp/run-compose-default-env.out "run-compose must use active compose dir"
+	assert_contains "Используем env-файл: $tmpdir/compose.d/.env" /tmp/run-compose-default-env.out "default env file must be active compose dir .env"
+	assert_contains "Lock file: $tmpdir/compose.d/.run-compose.lock" /tmp/run-compose-default-env.out "default lock file must be active compose dir local lock"
+	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env" "$tmpdir/docker.log" "docker compose must receive active compose dir env file"
 }
 
 test_rebuild_is_destructive_explicitly() {
@@ -232,6 +246,7 @@ test_restart_can_include_dependencies
 test_restart_logs_is_explicit
 test_up_is_safe_by_default
 test_lock_file_is_compose_local_and_world_writable
+test_default_env_and_lock_follow_active_compose_dir
 test_rebuild_is_destructive_explicitly
 test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files
