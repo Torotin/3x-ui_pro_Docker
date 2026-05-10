@@ -206,18 +206,20 @@ install_docker_ensure_network() {
 install_compose_command() {
 	local runner="$INSTALL_ROOT/compose.d/run-compose.sh"
 	local lock_file="$INSTALL_STATE_DIR/docker-proxy-compose.lock"
+	local compose_dir="$INSTALL_ROOT/compose.d"
+	local compose_env="$compose_dir/.env"
 	install_project_files
-	if [[ ! -f "$INSTALL_ROOT/compose.d/.env" ]]; then
+	if [[ ! -f "$compose_env" ]]; then
 		install_env_command
 	fi
 	install_docker_networks
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd compose.validate env "LOCK_FILE=$lock_file" "$runner" validate
+		run_cmd compose.validate env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
 		return 0
 	fi
 	[[ -x "$runner" ]] || die "compose runner not found or not executable: $runner"
-	run_cmd compose.validate env "LOCK_FILE=$lock_file" "$runner" validate
-	run_cmd compose.up env "LOCK_FILE=$lock_file" "$runner" up
+	run_cmd compose.validate env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+	run_cmd compose.up env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
 }
 
 install_project_files() {
