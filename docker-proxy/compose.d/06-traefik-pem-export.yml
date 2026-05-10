@@ -10,9 +10,9 @@ services:
       - no-new-privileges=true
       
     volumes:
-      - /opt/docker-proxy/traefik/acme.json:/acme.json:ro
-      - /opt/docker-proxy/traefik/pem:/export
-      - /opt/docker-proxy/traefik/exporter.sh:/usr/local/bin/exporter.sh:ro
+      - ../traefik/acme.json:/acme.json:ro
+      - ../traefik/pem:/export
+      - ../traefik/exporter.sh:/usr/local/bin/exporter.sh:ro
 
     entrypoint: ["/bin/sh", "/usr/local/bin/exporter.sh"]
 

@@ -20,7 +20,7 @@ services:
     environment:
       - WARP_SLEEP=5
     # volumes:
-    #   - /opt/docker-proxy/warp/data:/var/lib/cloudflare-warp
+    #   - ../warp/data:/var/lib/cloudflare-warp
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace | grep -E 'warp=(on|plus)'"]
       interval: 30s
