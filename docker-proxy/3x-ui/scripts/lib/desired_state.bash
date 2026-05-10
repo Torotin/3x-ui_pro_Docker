@@ -203,7 +203,7 @@ build_vless_settings_json() {
 		--argjson fallbackXver "${VISION_FALLBACK_XVER:-1}" \
 		--argjson clients "$clients" '
         if $kind == "vision" then
-          {clients:$clients, decryption:"none", fallbacks:[{dest:$fallbackDest,xver:$fallbackXver}]}
+          {clients:$clients, decryption:"none", encryption:"none", fallbacks:[{dest:$fallbackDest,xver:$fallbackXver}]}
         else
           {clients:$clients, decryption:$dec, encryption:$enc}
           | if ($label|length)>0 then . + {selectedAuth:$label} else . end
