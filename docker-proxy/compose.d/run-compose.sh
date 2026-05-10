@@ -13,10 +13,13 @@ fi
 
 COMPOSE_DIR="${COMPOSE_DIR:-$DEFAULT_COMPOSE_DIR}"
 ACTIVE_COMPOSE_DIR="$COMPOSE_DIR"
-ENV_FILE_DEFAULT="$SCRIPT_DIR/.env"
 ENV_FILE_USER_SET=false
 if [[ -n "${ENV_FILE+set}" ]]; then
 	ENV_FILE_USER_SET=true
+fi
+LOCK_FILE_USER_SET=false
+if [[ -n "${LOCK_FILE+set}" ]]; then
+	LOCK_FILE_USER_SET=true
 fi
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-docker-proxy}"
@@ -26,7 +29,7 @@ RETRY_COUNT="${RETRY_COUNT:-3}"
 RETRY_DELAY="${RETRY_DELAY:-5}"
 RESTART_WITH_DEPS="${RESTART_WITH_DEPS:-0}"
 CLEAN_UNHEALTHY="${CLEAN_UNHEALTHY:-0}"
-LOCK_FILE="${LOCK_FILE:-$COMPOSE_DIR/.run-compose.lock}"
+PROJECT_ROOT=
 
 ENV_ARGS=()
 COMPOSE_ARGS=()
@@ -63,6 +66,7 @@ USAGE
 
 pick_compose_dir() {
 	if [[ -d "$ACTIVE_COMPOSE_DIR" ]]; then
+		ACTIVE_COMPOSE_DIR="$(cd "$ACTIVE_COMPOSE_DIR" && pwd)"
 		return
 	fi
 
@@ -72,6 +76,17 @@ pick_compose_dir() {
 	if [[ ! -d "$ACTIVE_COMPOSE_DIR" ]]; then
 		log "ERROR: Каталог с compose-файлами не найден: $ACTIVE_COMPOSE_DIR"
 		exit 1
+	fi
+	ACTIVE_COMPOSE_DIR="$(cd "$ACTIVE_COMPOSE_DIR" && pwd)"
+}
+
+setup_runtime_paths() {
+	PROJECT_ROOT="$(cd "$ACTIVE_COMPOSE_DIR/.." && pwd)"
+	if [[ "$ENV_FILE_USER_SET" != "true" ]]; then
+		ENV_FILE="$ACTIVE_COMPOSE_DIR/.env"
+	fi
+	if [[ "$LOCK_FILE_USER_SET" != "true" ]]; then
+		LOCK_FILE="$ACTIVE_COMPOSE_DIR/.run-compose.lock"
 	fi
 }
 
@@ -101,10 +116,7 @@ build_compose_args() {
 }
 
 setup_env_file_path() {
-	if [[ "$ENV_FILE_USER_SET" == "true" ]]; then
-		return
-	fi
-	ENV_FILE="$ENV_FILE_DEFAULT"
+	:
 }
 
 ensure_env_file() {
@@ -373,8 +385,10 @@ acquire_lock() {
 
 main() {
 	pick_compose_dir
-	setup_env_file_path
+	setup_runtime_paths
 	log "Каталог с compose-файлами: $ACTIVE_COMPOSE_DIR"
+	log "Project root: $PROJECT_ROOT"
+	log "Lock file: $LOCK_FILE"
 	collect_compose_files
 	if [[ ${#COMPOSE_FILES[@]} -eq 0 ]]; then
 		log "ERROR: В каталоге $ACTIVE_COMPOSE_DIR нет файлов compose (*.yml или *.yaml)"
