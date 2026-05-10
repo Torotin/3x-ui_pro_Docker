@@ -37,13 +37,14 @@
    {
       "listen": "127.0.0.1",
       "port": 62789,
-      "protocol": "tunnel",
+      "protocol": "dokodemo-door",
       "settings": {
         "address": "127.0.0.1"
       },
       "streamSettings": null,
       "tag": "api",
-      "sniffing": null
+      "sniffing": null,
+      "allocate": null
     }
   ],
   "outbounds": [

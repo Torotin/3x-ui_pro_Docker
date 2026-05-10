@@ -335,7 +335,7 @@ install_doctor_check_compose() {
 		if ! (: >"$log_file") 2>/dev/null; then
 			log_file=$(mktemp "${TMPDIR:-/tmp}/install-doctor-compose.XXXXXX.log")
 		fi
-		if env "LOCK_FILE=$lock_file" "$runner" validate >"$log_file" 2>&1; then
+		if env "COMPOSE_DIR=$INSTALL_ROOT/compose.d" "ENV_FILE=$env_file" "LOCK_FILE=$lock_file" "$runner" validate >"$log_file" 2>&1; then
 			doctor_ok "compose configuration validates"
 		else
 			doctor_fail "compose configuration validation failed; log: $log_file" || status=1

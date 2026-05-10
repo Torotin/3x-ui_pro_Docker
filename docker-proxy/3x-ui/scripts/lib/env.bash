@@ -90,6 +90,7 @@ normalize_base_path() {
 	raw=${raw#"/"}
 	raw=${raw%"/"}
 	[[ -n "$raw" ]] && printf '/%s' "$raw"
+	return 0
 }
 
 require_apply_mode() {

@@ -250,14 +250,19 @@
         }
     }
 
-    // Start initialization process
-    if (typeof Lampa !== 'undefined') {
-        initPlugin();
-    } else {
-        Lampa.Listener.follow('app', function(e) {
-            if (e.type === 'ready') {
-                initPlugin();
-            }
-        });
+    // Start initialization process. Lampac can load override plugins before
+    // window.Lampa exists, so wait without touching Lampa until it is ready.
+    let lampaWaitAttempts = 0;
+    function waitForLampa() {
+        if (typeof window.Lampa !== 'undefined') {
+            initPlugin();
+            return;
+        }
+        lampaWaitAttempts++;
+        if (lampaWaitAttempts < 200) {
+            setTimeout(waitForLampa, 100);
+        }
     }
+
+    waitForLampa();
 })();
