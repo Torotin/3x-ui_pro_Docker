@@ -38,6 +38,49 @@ record_change() {
 	log INFO "$*"
 }
 
+detect_country_flag() {
+	log INFO "Detecting country flag by public IP."
+	EMOJI_FLAG="⚠"
+
+	local src jqpath mode resp value emoji
+	local curl_opts=(-sS --fail --location --retry 1 --connect-timeout 2 --max-time 4 -H "Accept:application/json")
+
+	while IFS='|' read -r src jqpath mode || [[ -n "${src:-}" ]]; do
+		[[ -n "$src" ]] || continue
+		[[ -n "$mode" ]] || mode=emoji
+
+		if ! resp=$(curl "${curl_opts[@]}" "$src" 2>/dev/null); then
+			log WARN "$src: country flag request failed."
+			continue
+		fi
+
+		if [[ "$mode" != "trace_loc" ]] && ! printf '%s' "$resp" | jq -e . >/dev/null 2>&1; then
+			log WARN "$src: country flag response is not valid JSON."
+			continue
+		fi
+
+		if [[ "$mode" == "trace_loc" ]]; then
+			value=$resp
+		else
+			value=$(printf '%s' "$resp" | jq -r "$jqpath // empty" 2>/dev/null || true)
+		fi
+		emoji=$(country_flag_value "$mode" "$value" 2>/dev/null || true)
+
+		if [[ -n "$emoji" ]]; then
+			EMOJI_FLAG=$emoji
+			export EMOJI_FLAG
+			log INFO "Country flag ($src): $EMOJI_FLAG"
+			return 0
+		fi
+
+		log WARN "$src: country flag value is empty."
+	done < <(country_flag_sources)
+
+	export EMOJI_FLAG
+	log WARN "Country flag was not detected, using ⚠."
+	return 1
+}
+
 plan_or_apply() {
 	local message=$1
 	if [[ "$MODE" == "plan" ]]; then
@@ -227,11 +270,13 @@ find_client_id() {
 }
 
 managed_conflict_check() {
-	local inbound=$1 expected_remark=$2 port=$3
+	local inbound=$1 expected_remarks_json=$2 port=$3
 	[[ -n "$inbound" && "$inbound" != "null" ]] || return 0
 	local remark
 	remark=$(jq -r '.remark // ""' <<<"$inbound")
-	if [[ "$remark" != "$expected_remark" && "$remark" != *"$expected_remark"* ]]; then
+	if ! jq -ne --arg remark "$remark" --argjson expected "$expected_remarks_json" '
+      $expected | any(. as $expectedRemark | $remark == $expectedRemark or ($remark | contains($expectedRemark)))
+    ' >/dev/null; then
 		die "Inbound port $port is occupied by unmanaged inbound remark='$remark'. Refusing to overwrite."
 	fi
 }
@@ -473,15 +518,15 @@ current_inbound_components_json() {
 }
 
 ensure_inbound() {
-	local kind=$1 desired=$2 inbounds id port protocol remark inbound args desired_components current_components
+	local kind=$1 desired=$2 inbounds id port protocol inbound args desired_components current_components expected_remarks
 	ENSURE_INBOUND_ID=
 	inbounds=$(inbounds_json)
 	port=$(jq -r ".inbounds.$kind.port" <<<"$desired")
 	protocol=$(jq -r ".inbounds.$kind.protocol" <<<"$desired")
-	remark=$(jq -r ".inbounds.$kind.remark" <<<"$desired")
+	expected_remarks=$(managed_inbound_remarks_json "$kind" "$desired")
 	id=$(find_inbound_by_port "$inbounds" "$port" "$protocol")
 	inbound=$(jq -c --arg id "$id" '.[] | select((.id|tostring)==$id)' <<<"$inbounds" | head -n1)
-	managed_conflict_check "$inbound" "$remark" "$port"
+	managed_conflict_check "$inbound" "$expected_remarks" "$port"
 
 	if [[ -n "$id" ]]; then
 		desired_components=$(build_inbound_components_json "$kind" "$desired" "$inbound")
@@ -749,6 +794,7 @@ main() {
 	fi
 
 	resolve_panel_base || die "Could not resolve and login to 3x-ui panel."
+	detect_country_flag || true
 	desired=$(build_desired_state)
 	ensure_panel_settings
 	update_admin_credentials_if_needed

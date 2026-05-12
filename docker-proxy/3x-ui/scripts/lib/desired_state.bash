@@ -1,13 +1,81 @@
 #!/usr/bin/env bash
 
+country_code_to_flag() {
+	local code=${1:-}
+	[[ "$code" =~ ^[A-Za-z][A-Za-z]$ ]] || return 1
+	jq -nr --arg code "$code" '$code | ascii_upcase | explode | map(. + 127397) | implode'
+}
+
+country_flag_value() {
+	local mode=$1 value=${2:-} code
+	case "$mode" in
+	emoji)
+		printf '%s' "$value"
+		;;
+	iso2)
+		country_code_to_flag "$value"
+		;;
+	trace_loc)
+		code=$(sed -n 's/^loc=//p' <<<"$value" | head -n1)
+		country_code_to_flag "$code"
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+country_flag_sources() {
+	cat <<'EOF'
+http://1.1.1.1/cdn-cgi/trace||trace_loc
+http://1.0.0.1/cdn-cgi/trace||trace_loc
+https://ipwho.is/|.flag.emoji|emoji
+https://ipwhois.io/json/|.country_flag_emoji|emoji
+https://ipapi.co/json/|.country_code|iso2
+https://ipinfo.io/json|.country|iso2
+https://api.country.is/|.country|iso2
+http://ip-api.com/json/|.countryCode|iso2
+EOF
+}
+
+inbound_remark_slug() {
+	case "$1" in
+	vision) printf '%s' vless-tcp-reality ;;
+	xhttp) printf '%s' vless-xhttp ;;
+	*) return 1 ;;
+	esac
+}
+
+inbound_remark() {
+	local kind=$1 flag=${EMOJI_FLAG:-⚠} slug
+	slug=$(inbound_remark_slug "$kind") || return 1
+	printf '%s %s' "$flag" "$slug"
+}
+
+legacy_managed_inbound_remark() {
+	local kind=$1 slug
+	slug=$(inbound_remark_slug "$kind") || return 1
+	printf 'managed:%s' "$slug"
+}
+
+managed_inbound_remarks_json() {
+	local kind=$1 desired=$2 desired_remark legacy_remark
+	desired_remark=$(jq -r ".inbounds.$kind.remark" <<<"$desired")
+	legacy_remark=$(legacy_managed_inbound_remark "$kind")
+	jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" '[$desired, $legacy] | unique'
+}
+
 build_desired_state() {
 	local prefix=${CLIENT_EMAIL_PREFIX:-autogen}
 	local vision_email=${CLIENT_EMAIL_VISION:-"$prefix-vision"}
 	local xhttp_email=${CLIENT_EMAIL_XHTTP:-"$prefix-xhttp"}
 	local sub_id=${CLIENT_SUB_ID:-}
+	local vision_remark xhttp_remark
 	if [[ -z "$sub_id" ]]; then
 		sub_id=$(printf '%s:%s:%s' "${WEBDOMAIN:-localhost}" "$vision_email" "$xhttp_email" | sha256sum | cut -c1-16)
 	fi
+	vision_remark=$(inbound_remark vision)
+	xhttp_remark=$(inbound_remark xhttp)
 
 	jq -nc \
 		--arg webListen "${webListen:-0.0.0.0}" \
@@ -21,6 +89,8 @@ build_desired_state() {
 		--arg visionEmail "$vision_email" \
 		--arg xhttpEmail "$xhttp_email" \
 		--arg subId "$sub_id" \
+		--arg visionRemark "$vision_remark" \
+		--arg xhttpRemark "$xhttp_remark" \
 		'{
           panel: {
             webListen: $webListen,
@@ -29,8 +99,8 @@ build_desired_state() {
             webBasePath: $webBasePath
           },
           inbounds: {
-            vision: {managed: true, protocol: "vless", port: ($visionPort|tonumber), remark: "managed:vless-tcp-reality"},
-            xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: "managed:vless-xhttp", path: $xhttpPath}
+            vision: {managed: true, protocol: "vless", port: ($visionPort|tonumber), remark: $visionRemark},
+            xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath}
           },
           clients: {
             vision: {email: $visionEmail, subId: $subId, flow: "xtls-rprx-vision-udp443"},
