@@ -84,6 +84,56 @@ test_desired_clients_are_deterministic() {
 	assert_eq stable-sub "$xhttp_sub" "xhttp sub id mismatch"
 }
 
+test_desired_inbound_remarks_use_country_flag() {
+	local desired vision_remark xhttp_remark
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	vision_remark=$(printf '%s' "$desired" | jq -r '.inbounds.vision.remark')
+	xhttp_remark=$(printf '%s' "$desired" | jq -r '.inbounds.xhttp.remark')
+	assert_eq "🇩🇪 vless-tcp-reality" "$vision_remark" "vision inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 vless-xhttp" "$xhttp_remark" "xhttp inbound remark must use the detected country flag"
+	unset EMOJI_FLAG
+}
+
+test_managed_inbound_remarks_include_legacy_names() {
+	local desired remarks has_new has_legacy
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	remarks=$(managed_inbound_remarks_json vision "$desired")
+	has_new=$(printf '%s' "$remarks" | jq -r 'index("🇩🇪 vless-tcp-reality") != null')
+	has_legacy=$(printf '%s' "$remarks" | jq -r 'index("managed:vless-tcp-reality") != null')
+	assert_eq true "$has_new" "managed remarks must include the desired flag-based name"
+	assert_eq true "$has_legacy" "managed remarks must include the legacy managed name for migration"
+	unset EMOJI_FLAG
+}
+
+test_country_flag_sources_include_iso_code_fallbacks() {
+	local sources first_source source_count has_ipapi has_country_is has_cloudflare_ip
+	sources=$(country_flag_sources)
+	first_source=$(printf '%s\n' "$sources" | sed '/^$/d' | head -n1)
+	source_count=$(printf '%s\n' "$sources" | sed '/^$/d' | wc -l | tr -d ' ')
+	has_ipapi=$(printf '%s\n' "$sources" | grep -Fc "https://ipapi.co/json/")
+	has_country_is=$(printf '%s\n' "$sources" | grep -Fc "https://api.country.is/")
+	has_cloudflare_ip=$(printf '%s\n' "$sources" | grep -Fc "http://1.1.1.1/cdn-cgi/trace")
+	[[ "$source_count" -ge 6 ]] || fail "country flag detection must try at least six providers"
+	assert_eq "http://1.1.1.1/cdn-cgi/trace||trace_loc" "$first_source" "DNS-free Cloudflare trace must be the primary country flag source"
+	assert_eq 1 "$has_ipapi" "country flag detection must include ipapi.co fallback"
+	assert_eq 1 "$has_country_is" "country flag detection must include country.is fallback"
+	assert_eq 1 "$has_cloudflare_ip" "country flag detection must include a DNS-free Cloudflare trace fallback"
+}
+
+test_country_code_to_flag_converts_iso_alpha2() {
+	local flag
+	flag=$(country_code_to_flag de)
+	assert_eq "🇩🇪" "$flag" "country code fallback must convert ISO alpha-2 to flag emoji"
+}
+
+test_country_flag_value_from_trace_extracts_loc() {
+	local flag
+	flag=$(country_flag_value trace_loc $'fl=1\nloc=DE\nwarp=off')
+	assert_eq "🇩🇪" "$flag" "Cloudflare trace fallback must convert loc to flag emoji"
+}
+
 test_resolve_panel_base_prioritizes_configured_web_port() {
 	local first_base
 	export USERNAME=admin PASSWORD=admin NEW_ADMIN_USERNAME='' NEW_ADMIN_PASSWORD=''
@@ -460,6 +510,11 @@ test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
 test_remove_managed_xray_artifacts_only_removes_our_tags
 test_desired_clients_are_deterministic
+test_desired_inbound_remarks_use_country_flag
+test_managed_inbound_remarks_include_legacy_names
+test_country_flag_sources_include_iso_code_fallbacks
+test_country_code_to_flag_converts_iso_alpha2
+test_country_flag_value_from_trace_extracts_loc
 test_resolve_panel_base_prioritizes_configured_web_port
 test_normalize_base_path_accepts_empty_input
 test_http_request_temp_files_are_created_under_tmp_root
