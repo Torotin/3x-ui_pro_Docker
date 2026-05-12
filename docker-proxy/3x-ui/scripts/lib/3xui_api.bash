@@ -1,21 +1,53 @@
 #!/usr/bin/env bash
 
 URL_BASE_RESOLVED=${URL_BASE_RESOLVED:-}
+XUI_API_TOKEN_RESOLVED=${XUI_API_TOKEN_RESOLVED:-}
 
 xui_url() {
 	local path=$1
 	printf '%s%s' "${URL_BASE_RESOLVED%/}" "$path"
 }
 
+xui_api_auth_args() {
+	local path=$1 token
+	[[ "$path" == /panel/api/* ]] || return 0
+	token=$(xui_api_token)
+	[[ -n "$token" ]] || return 0
+	printf '%s\0%s\0' -H "Authorization: Bearer $token"
+}
+
+xui_api_token() {
+	local token db_path
+	if [[ -n "${XUI_API_TOKEN:-}" ]]; then
+		printf '%s' "$XUI_API_TOKEN"
+		return 0
+	fi
+	if [[ -n "${XUI_API_TOKEN_RESOLVED:-}" ]]; then
+		printf '%s' "$XUI_API_TOKEN_RESOLVED"
+		return 0
+	fi
+	command -v sqlite3 >/dev/null 2>&1 || return 0
+	db_path=${XUI_DB_PATH:-/etc/x-ui/x-ui.db}
+	token=$(sqlite3 "$db_path" "select value from settings where key='secret';" 2>/dev/null | head -n1 || true)
+	[[ -n "$token" ]] || return 0
+	XUI_API_TOKEN_RESOLVED=$token
+	printf '%s' "$XUI_API_TOKEN_RESOLVED"
+}
+
 xui_api_get() {
-	local path=$1
-	http_request GET "$(xui_url "$path")" -H 'Accept: application/json'
+	local path=$1 auth_args=()
+	mapfile -d '' -t auth_args < <(xui_api_auth_args "$path")
+	http_request GET "$(xui_url "$path")" "${auth_args[@]}" -H 'Accept: application/json'
 }
 
 xui_api_post() {
-	local path=$1
+	local path=$1 auth_args=() csrf_args=()
 	shift
+	mapfile -d '' -t auth_args < <(xui_api_auth_args "$path")
+	mapfile -d '' -t csrf_args < <(xui_csrf_args)
 	http_request POST "$(xui_url "$path")" \
+		"${auth_args[@]}" \
+		"${csrf_args[@]}" \
 		-H 'Accept: application/json' \
 		-H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' \
 		-H 'X-Requested-With: XMLHttpRequest' \
@@ -36,11 +68,31 @@ xui_api_post_long() {
 	return "$ret"
 }
 
+xui_csrf_args() {
+	local csrf
+	csrf=$(xui_csrf_token)
+	[[ -n "$csrf" ]] || return 0
+	printf '%s\0%s\0' -H "X-CSRF-Token: $csrf"
+}
+
+xui_csrf_token() {
+	http_request GET "$(xui_url "/csrf-token")" \
+		-H 'Accept: application/json' \
+		-H 'X-Requested-With: XMLHttpRequest' || return 0
+	[[ "$HTTP_CODE" == "200" ]] || return 0
+	jq -r 'if .success == true and (.obj | type == "string") then .obj else "" end' "$HTTP_BODY_FILE" 2>/dev/null
+}
+
 xui_login() {
-	local base=$1 username=$2 password=$3
+	local base=$1 username=$2 password=$3 csrf csrf_args=()
 	URL_BASE_RESOLVED=${base%/}
+	csrf=$(xui_csrf_token)
+	[[ -n "$csrf" ]] && csrf_args=(-H "X-CSRF-Token: $csrf")
 	http_request POST "$(xui_url "/login")" \
+		-H 'Accept: application/json' \
 		-H 'Content-Type: application/x-www-form-urlencoded' \
+		-H 'X-Requested-With: XMLHttpRequest' \
+		"${csrf_args[@]}" \
 		--data-urlencode "username=$username" \
 		--data-urlencode "password=$password"
 	http_success_json
@@ -182,7 +234,7 @@ xui_restart_panel() {
 }
 
 xui_restart_xray() {
-	xui_api_post '/server/restartXrayService'
+	xui_api_post '/panel/api/server/restartXrayService'
 }
 
 xui_custom_geo_list() {

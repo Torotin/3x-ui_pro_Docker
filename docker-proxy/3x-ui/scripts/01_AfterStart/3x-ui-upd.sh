@@ -177,9 +177,11 @@ ensure_custom_geo_resources() {
 	done
 
 	if [[ "$MODE" == "apply" && "$CUSTOM_GEO_UPDATE_ALL_ON_START" == "true" ]]; then
-		xui_custom_geo_update_all || die "Failed to update all custom geo resources."
-		http_success_json || die "Custom geo update-all failed: $(http_body)"
-		log INFO "Custom geo resources refreshed through panel API."
+		if xui_custom_geo_update_all && http_success_json; then
+			log INFO "Custom geo resources refreshed through panel API."
+		else
+			log WARN "Custom geo update-all skipped: $(http_body)"
+		fi
 	elif [[ "$MODE" == "plan" && "$CUSTOM_GEO_UPDATE_ALL_ON_START" == "true" ]]; then
 		log INFO "PLAN: custom geo update-all would be requested."
 	fi
@@ -194,9 +196,11 @@ update_builtin_geofiles_if_enabled() {
 		log INFO "PLAN: built-in geofile update-all would be requested."
 		return 0
 	fi
-	xui_update_geofiles || die "Failed to request built-in geofile update."
-	http_success_json || die "Built-in geofile update failed: $(http_body)"
-	log INFO "Built-in geoip/geosite files refreshed through panel API."
+	if xui_update_geofiles && http_success_json; then
+		log INFO "Built-in geoip/geosite files refreshed through panel API."
+	else
+		log WARN "Built-in geofile update skipped: $(http_body)"
+	fi
 }
 
 inbounds_json() {
