@@ -153,6 +153,117 @@ test_http_request_temp_files_are_created_under_tmp_root() {
 	unset TMP_ROOT COOKIE_JAR
 }
 
+test_panel_api_requests_use_bearer_token_when_configured() {
+	local call_log auth_count path_count settings_auth_count
+	call_log=$(mktemp)
+	export XUI_API_TOKEN=test-token
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:2053/panel
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		return 0
+	}
+	xui_list_inbounds
+	xui_add_inbound --data-urlencode "remark=test"
+	xui_restart_xray
+	xui_get_panel_settings
+	auth_count=$(grep -Fc "Authorization: Bearer test-token" "$call_log")
+	path_count=$(grep -Fc "panel/api/inbounds" "$call_log")
+	grep -Fq "panel/api/server/restartXrayService" "$call_log" || fail "Xray restart must use the panel API server route"
+	settings_auth_count=$(grep -F "panel/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
+	rm -f "$call_log"
+	unset -f http_request
+	unset XUI_API_TOKEN
+	assert_eq 3 "$auth_count" "Bearer token must be sent on panel API requests"
+	assert_eq 2 "$path_count" "inbound API requests were not captured"
+	assert_eq 0 "$settings_auth_count" "Bearer token must not be sent on non-/panel/api routes"
+}
+
+test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty() {
+	local call_log auth_count
+	call_log=$(mktemp)
+	XUI_API_TOKEN=
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:2053
+	sqlite3() {
+		[[ "$1" == "/etc/x-ui/x-ui.db" ]] || fail "unexpected sqlite database path: $1"
+		[[ "$2" == "select value from settings where key='secret';" ]] || fail "unexpected sqlite query: $2"
+		printf '%s\n' db-token
+	}
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		return 0
+	}
+	xui_list_inbounds
+	auth_count=$(grep -Fc "Authorization: Bearer db-token" "$call_log")
+	rm -f "$call_log"
+	unset -f http_request sqlite3
+	unset XUI_API_TOKEN
+	assert_eq 1 "$auth_count" "Bearer token must fall back to the SQLite secret setting"
+}
+
+test_xui_login_replays_csrf_token() {
+	local call_log login_has_csrf
+	call_log=$(mktemp)
+	unset -f xui_login
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		case "$2" in
+		*/csrf-token)
+			# shellcheck disable=SC2034 # xui_csrf_token reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":"csrf-fixture"}' >"$HTTP_BODY_FILE"
+			;;
+		*/login)
+			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true}' >"$HTTP_BODY_FILE"
+			;;
+		esac
+		return 0
+	}
+	xui_login "http://127.0.0.1:25713/panel-base" admin admin || fail "xui_login fixture failed"
+	login_has_csrf=$(grep -F "/login" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
+	unset -f http_request
+	assert_eq 1 "$login_has_csrf" "login POST must include the minted CSRF token"
+}
+
+test_non_bearer_api_post_replays_csrf_token() {
+	local call_log settings_has_csrf
+	call_log=$(mktemp)
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:25713/panel-base
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		case "$2" in
+		*/csrf-token)
+			# shellcheck disable=SC2034 # xui_csrf_token reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":"csrf-fixture"}' >"$HTTP_BODY_FILE"
+			;;
+		*/panel/setting/all)
+			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":{}}' >"$HTTP_BODY_FILE"
+			;;
+		esac
+		return 0
+	}
+	xui_get_panel_settings || fail "xui_get_panel_settings fixture failed"
+	settings_has_csrf=$(grep -F "/panel/setting/all" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
+	unset -f http_request
+	assert_eq 1 "$settings_has_csrf" "non-Bearer POST requests must include a CSRF token"
+}
+
 test_custom_geo_resources_default_to_previous_dat_files() {
 	local resources count site_type site_alias ip_type ip_alias
 	unset CUSTOM_GEO_RESOURCES
@@ -352,6 +463,10 @@ test_desired_clients_are_deterministic
 test_resolve_panel_base_prioritizes_configured_web_port
 test_normalize_base_path_accepts_empty_input
 test_http_request_temp_files_are_created_under_tmp_root
+test_panel_api_requests_use_bearer_token_when_configured
+test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty
+test_xui_login_replays_csrf_token
+test_non_bearer_api_post_replays_csrf_token
 test_custom_geo_resources_default_to_previous_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields

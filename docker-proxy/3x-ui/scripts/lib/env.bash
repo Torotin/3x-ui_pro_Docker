@@ -23,6 +23,7 @@ init_defaults() {
 	: "${PASSWORD:=admin}"
 	: "${NEW_ADMIN_USERNAME:=}"
 	: "${NEW_ADMIN_PASSWORD:=}"
+	: "${XUI_API_TOKEN:=}"
 	: "${WEBDOMAIN:=}"
 	: "${webListen:=0.0.0.0}"
 	: "${webDomain:=}"
