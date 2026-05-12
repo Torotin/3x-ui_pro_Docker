@@ -84,6 +84,56 @@ test_desired_clients_are_deterministic() {
 	assert_eq stable-sub "$xhttp_sub" "xhttp sub id mismatch"
 }
 
+test_desired_inbound_remarks_use_country_flag() {
+	local desired vision_remark xhttp_remark
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	vision_remark=$(printf '%s' "$desired" | jq -r '.inbounds.vision.remark')
+	xhttp_remark=$(printf '%s' "$desired" | jq -r '.inbounds.xhttp.remark')
+	assert_eq "🇩🇪 vless-tcp-reality" "$vision_remark" "vision inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 vless-xhttp" "$xhttp_remark" "xhttp inbound remark must use the detected country flag"
+	unset EMOJI_FLAG
+}
+
+test_managed_inbound_remarks_include_legacy_names() {
+	local desired remarks has_new has_legacy
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	remarks=$(managed_inbound_remarks_json vision "$desired")
+	has_new=$(printf '%s' "$remarks" | jq -r 'index("🇩🇪 vless-tcp-reality") != null')
+	has_legacy=$(printf '%s' "$remarks" | jq -r 'index("managed:vless-tcp-reality") != null')
+	assert_eq true "$has_new" "managed remarks must include the desired flag-based name"
+	assert_eq true "$has_legacy" "managed remarks must include the legacy managed name for migration"
+	unset EMOJI_FLAG
+}
+
+test_country_flag_sources_include_iso_code_fallbacks() {
+	local sources first_source source_count has_ipapi has_country_is has_cloudflare_ip
+	sources=$(country_flag_sources)
+	first_source=$(printf '%s\n' "$sources" | sed '/^$/d' | head -n1)
+	source_count=$(printf '%s\n' "$sources" | sed '/^$/d' | wc -l | tr -d ' ')
+	has_ipapi=$(printf '%s\n' "$sources" | grep -Fc "https://ipapi.co/json/")
+	has_country_is=$(printf '%s\n' "$sources" | grep -Fc "https://api.country.is/")
+	has_cloudflare_ip=$(printf '%s\n' "$sources" | grep -Fc "http://1.1.1.1/cdn-cgi/trace")
+	[[ "$source_count" -ge 6 ]] || fail "country flag detection must try at least six providers"
+	assert_eq "http://1.1.1.1/cdn-cgi/trace||trace_loc" "$first_source" "DNS-free Cloudflare trace must be the primary country flag source"
+	assert_eq 1 "$has_ipapi" "country flag detection must include ipapi.co fallback"
+	assert_eq 1 "$has_country_is" "country flag detection must include country.is fallback"
+	assert_eq 1 "$has_cloudflare_ip" "country flag detection must include a DNS-free Cloudflare trace fallback"
+}
+
+test_country_code_to_flag_converts_iso_alpha2() {
+	local flag
+	flag=$(country_code_to_flag de)
+	assert_eq "🇩🇪" "$flag" "country code fallback must convert ISO alpha-2 to flag emoji"
+}
+
+test_country_flag_value_from_trace_extracts_loc() {
+	local flag
+	flag=$(country_flag_value trace_loc $'fl=1\nloc=DE\nwarp=off')
+	assert_eq "🇩🇪" "$flag" "Cloudflare trace fallback must convert loc to flag emoji"
+}
+
 test_resolve_panel_base_prioritizes_configured_web_port() {
 	local first_base
 	export USERNAME=admin PASSWORD=admin NEW_ADMIN_USERNAME='' NEW_ADMIN_PASSWORD=''
@@ -151,6 +201,117 @@ test_http_request_temp_files_are_created_under_tmp_root() {
 	rm -rf "$tmp_root"
 	unset -f curl
 	unset TMP_ROOT COOKIE_JAR
+}
+
+test_panel_api_requests_use_bearer_token_when_configured() {
+	local call_log auth_count path_count settings_auth_count
+	call_log=$(mktemp)
+	export XUI_API_TOKEN=test-token
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:2053/panel
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		return 0
+	}
+	xui_list_inbounds
+	xui_add_inbound --data-urlencode "remark=test"
+	xui_restart_xray
+	xui_get_panel_settings
+	auth_count=$(grep -Fc "Authorization: Bearer test-token" "$call_log")
+	path_count=$(grep -Fc "panel/api/inbounds" "$call_log")
+	grep -Fq "panel/api/server/restartXrayService" "$call_log" || fail "Xray restart must use the panel API server route"
+	settings_auth_count=$(grep -F "panel/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
+	rm -f "$call_log"
+	unset -f http_request
+	unset XUI_API_TOKEN
+	assert_eq 3 "$auth_count" "Bearer token must be sent on panel API requests"
+	assert_eq 2 "$path_count" "inbound API requests were not captured"
+	assert_eq 0 "$settings_auth_count" "Bearer token must not be sent on non-/panel/api routes"
+}
+
+test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty() {
+	local call_log auth_count
+	call_log=$(mktemp)
+	XUI_API_TOKEN=
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:2053
+	sqlite3() {
+		[[ "$1" == "/etc/x-ui/x-ui.db" ]] || fail "unexpected sqlite database path: $1"
+		[[ "$2" == "select value from settings where key='secret';" ]] || fail "unexpected sqlite query: $2"
+		printf '%s\n' db-token
+	}
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		return 0
+	}
+	xui_list_inbounds
+	auth_count=$(grep -Fc "Authorization: Bearer db-token" "$call_log")
+	rm -f "$call_log"
+	unset -f http_request sqlite3
+	unset XUI_API_TOKEN
+	assert_eq 1 "$auth_count" "Bearer token must fall back to the SQLite secret setting"
+}
+
+test_xui_login_replays_csrf_token() {
+	local call_log login_has_csrf
+	call_log=$(mktemp)
+	unset -f xui_login
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		case "$2" in
+		*/csrf-token)
+			# shellcheck disable=SC2034 # xui_csrf_token reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":"csrf-fixture"}' >"$HTTP_BODY_FILE"
+			;;
+		*/login)
+			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true}' >"$HTTP_BODY_FILE"
+			;;
+		esac
+		return 0
+	}
+	xui_login "http://127.0.0.1:25713/panel-base" admin admin || fail "xui_login fixture failed"
+	login_has_csrf=$(grep -F "/login" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
+	unset -f http_request
+	assert_eq 1 "$login_has_csrf" "login POST must include the minted CSRF token"
+}
+
+test_non_bearer_api_post_replays_csrf_token() {
+	local call_log settings_has_csrf
+	call_log=$(mktemp)
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:25713/panel-base
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		case "$2" in
+		*/csrf-token)
+			# shellcheck disable=SC2034 # xui_csrf_token reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":"csrf-fixture"}' >"$HTTP_BODY_FILE"
+			;;
+		*/panel/setting/all)
+			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":{}}' >"$HTTP_BODY_FILE"
+			;;
+		esac
+		return 0
+	}
+	xui_get_panel_settings || fail "xui_get_panel_settings fixture failed"
+	settings_has_csrf=$(grep -F "/panel/setting/all" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
+	unset -f http_request
+	assert_eq 1 "$settings_has_csrf" "non-Bearer POST requests must include a CSRF token"
 }
 
 test_custom_geo_resources_default_to_previous_dat_files() {
@@ -349,9 +510,18 @@ test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
 test_remove_managed_xray_artifacts_only_removes_our_tags
 test_desired_clients_are_deterministic
+test_desired_inbound_remarks_use_country_flag
+test_managed_inbound_remarks_include_legacy_names
+test_country_flag_sources_include_iso_code_fallbacks
+test_country_code_to_flag_converts_iso_alpha2
+test_country_flag_value_from_trace_extracts_loc
 test_resolve_panel_base_prioritizes_configured_web_port
 test_normalize_base_path_accepts_empty_input
 test_http_request_temp_files_are_created_under_tmp_root
+test_panel_api_requests_use_bearer_token_when_configured
+test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty
+test_xui_login_replays_csrf_token
+test_non_bearer_api_post_replays_csrf_token
 test_custom_geo_resources_default_to_previous_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields

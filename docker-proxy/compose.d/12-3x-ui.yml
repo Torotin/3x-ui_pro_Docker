@@ -1,4 +1,47 @@
 services:
+  sub-json-processor:
+    image: python:3.12-alpine
+    container_name: sub-json-processor
+    restart: unless-stopped
+    depends_on:
+      3x-ui:
+        condition: service_healthy
+    networks:
+      - traefik-proxy
+      - dns-net
+    volumes:
+      - ../3x-ui/sub-json-processor:/app:ro
+    env_file:
+      - ./.env
+      - ../3x-ui/3x-ui.env
+    environment:
+      - SUB_JSON_PROCESSOR_PORT=8080
+      - SUB_JSON_GEODATA_ENABLE=true
+      - SUB_JSON_GEODATA_CRON=0 4 * * *
+      - SUB_JSON_GEODATA_OUTBOUND=proxy
+      - SUB_JSON_GEODATA_ASSETS_JSON=
+      - SUB_JSON_PROCESSOR_FAIL_OPEN=true
+    command: ["python", "/app/server.py"]
+    security_opt:
+      - no-new-privileges=true
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import os, urllib.request; urllib.request.urlopen(\"http://127.0.0.1:%s/healthz\" % os.environ.get(\"SUB_JSON_PROCESSOR_PORT\", \"8080\"), timeout=3).read()'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+      - traefik.http.services.sub-json-processor-svc.loadbalancer.server.port=${SUB_JSON_PROCESSOR_PORT:-8080}
+      - traefik.http.routers.sub-json-processor.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
+      - traefik.http.routers.sub-json-processor.entrypoints=websecure
+      - traefik.http.routers.sub-json-processor.middlewares=bouncer@file,3xui-sub-chain
+      - traefik.http.routers.sub-json-processor.tls.certresolver=le
+      - traefik.http.routers.sub-json-processor.service=sub-json-processor-svc
+      - traefik.http.routers.sub-json-processor.priority=10000
+
   3x-ui:
     image: torotin/3x-ui:latest
     container_name: 3x-ui
@@ -111,8 +154,8 @@ services:
       - traefik.http.routers.3xui-panel.service=3xui-panel-svc
       - traefik.http.routers.3xui-panel.priority=9997
 
-      # Подписки и JSON-эндпоинты
-      - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_JSON_PATH}`) || PathPrefix(`${URI_CLASH_PATH:-/clash/}`))
+      # Подписки и Clash-эндпоинты. JSON-подписки перехватывает sub-json-processor.
+      - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_CLASH_PATH:-/clash/}`))
       - traefik.http.routers.3xui-sub.entrypoints=websecure
       - traefik.http.routers.3xui-sub.middlewares=bouncer@file,3xui-sub-chain
       - traefik.http.routers.3xui-sub.tls.certresolver=le
