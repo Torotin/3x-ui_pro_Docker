@@ -376,15 +376,27 @@ test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs() {
 	assert_eq https://connectivitycheck.gstatic.com/generate_204 "$burst_destination" "burstObservatory ping destination mismatch"
 }
 
-test_xhttp_stream_restores_old_headers_and_sockopt() {
-	local stream server access_origin tproxy force_tls
+test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
+	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls
 	stream=$(build_xhttp_stream_json /xhttp screenhub.linkpc.net)
+	headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers')
 	server=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers.Server')
+	content_type=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Content-Type"]')
+	connection=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers.Connection')
+	cache_control=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Cache-Control"]')
 	access_origin=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Access-Control-Allow-Origin"]')
+	access_methods=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Access-Control-Allow-Methods"]')
+	access_headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Access-Control-Allow-Headers"]')
 	tproxy=$(printf '%s' "$stream" | jq -r '.sockopt.tproxy')
 	force_tls=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
-	assert_eq nginx "$server" "old XHTTP Server header was not restored"
-	assert_eq https://screenhub.linkpc.net "$access_origin" "old XHTTP CORS origin was not restored"
+	assert_eq 3 "$(printf '%s' "$headers" | jq 'length')" "XHTTP headers should stay minimal"
+	assert_eq null "$server" "XHTTP headers must not spoof nginx Server"
+	assert_eq null "$content_type" "XHTTP headers must not force HTML content type"
+	assert_eq null "$connection" "XHTTP headers must not force hop-by-hop Connection"
+	assert_eq null "$access_headers" "XHTTP headers must not add unnecessary CORS request headers"
+	assert_eq no-store "$cache_control" "XHTTP cache policy should match transport semantics"
+	assert_eq "*" "$access_origin" "XHTTP CORS origin should match official transport guidance"
+	assert_eq "GET, POST" "$access_methods" "XHTTP CORS methods should match official transport guidance"
 	assert_eq tproxy "$tproxy" "old XHTTP sockopt tproxy was not restored"
 	assert_eq tls "$force_tls" "XHTTP externalProxy must publish TLS subscription links through Traefik"
 }
@@ -527,7 +539,7 @@ test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields
 test_warp_domains_restore_old_ru_rules
 test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs
-test_xhttp_stream_restores_old_headers_and_sockopt
+test_xhttp_stream_uses_minimal_context_headers_and_sockopt
 test_vision_stream_restores_old_reality_external_proxy
 test_vision_settings_include_traefik_fallback_preserving_clients
 test_tor_balancer_uses_two_available_hosts

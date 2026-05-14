@@ -366,13 +366,9 @@ build_xhttp_stream_json() {
         path:$path,
         host:$host,
         headers:{
-          Server:"nginx",
-          "Content-Type":"text/html; charset=UTF-8",
-          "Cache-Control":"no-cache",
-          Connection:"keep-alive",
-          "Access-Control-Allow-Origin":("https://" + $host),
-          "Access-Control-Allow-Methods":"GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers":"Content-Type"
+          "Cache-Control":"no-store",
+          "Access-Control-Allow-Origin":"*",
+          "Access-Control-Allow-Methods":"GET, POST"
         },
         scMaxBufferedPosts:50,
         scMaxEachPostBytes:"5000000",
