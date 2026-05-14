@@ -118,7 +118,6 @@ json_warp_managed_domains() {
         "ext:geosite_RU.dat:myoffice-ru",
         "ext:geosite_RU.dat:tbank-ru",
         "ext:geosite_RU.dat:tld-ru",
-        "ext:geosite_RU.dat:ucoz-ru",
         "ext:geosite_RU.dat:private",
         "ext:geosite_RU.dat:yandex",
         "ext:geosite_RU.dat:steam",

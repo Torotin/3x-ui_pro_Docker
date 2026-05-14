@@ -351,13 +351,15 @@ test_panel_keys_restore_old_cert_fields() {
 }
 
 test_warp_domains_restore_old_ru_rules() {
-	local domains has_gov has_yandex has_webdomain
+	local domains has_gov has_yandex has_ucoz has_webdomain
 	domains=$(json_warp_managed_domains screenhub.linkpc.net)
 	has_gov=$(printf '%s' "$domains" | jq 'index("ext:geosite_RU.dat:category-gov-ru") != null')
 	has_yandex=$(printf '%s' "$domains" | jq 'index("ext:geosite_RU.dat:yandex") != null')
+	has_ucoz=$(printf '%s' "$domains" | jq 'index("ext:geosite_RU.dat:ucoz-ru") != null')
 	has_webdomain=$(printf '%s' "$domains" | jq 'index("domain:screenhub.linkpc.net") != null')
 	assert_eq true "$has_gov" "old WARP gov RU rule was not restored"
 	assert_eq true "$has_yandex" "old WARP yandex rule was not restored"
+	assert_eq false "$has_ucoz" "WARP routing must not reference missing ucoz-ru geosite code"
 	assert_eq true "$has_webdomain" "web domain was not included in WARP routing domains"
 }
 
