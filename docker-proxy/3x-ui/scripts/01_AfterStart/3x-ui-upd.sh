@@ -260,11 +260,11 @@ find_inbound_by_port() {
 }
 
 find_client_id() {
-	local inbound=$1 email=$2 sub_id=$3
-	jq -r --arg email "$email" --arg subId "$sub_id" '
+	local inbound=$1 email=$2 _sub_id=$3
+	jq -r --arg email "$email" '
       (.settings | fromjson? // {} | .clients // [])
       | .[]
-      | select(.email == $email or .subId == $subId)
+      | select(.email == $email)
       | .id
     ' <<<"$inbound" | head -n1
 }
@@ -557,10 +557,11 @@ ensure_inbound() {
 
 client_settings_json() {
 	local inbound=$1 client_id=$2 email=$3 sub_id=$4 flow=$5
-	local existing
+	local existing stale_vision_xtls_email
 	existing=$(jq -c '.settings | fromjson? // {}' <<<"$inbound")
-	jq -c --arg id "$client_id" --arg email "$email" --arg sid "$sub_id" --arg flow "$flow" '
-      .clients = ((.clients // []) | map(select(.email != $email and .subId != $sid)) + [{
+	stale_vision_xtls_email="${CLIENT_EMAIL_VISION_XTLS:-${CLIENT_EMAIL_PREFIX:-autogen}-vision-xtls}"
+	jq -c --arg id "$client_id" --arg email "$email" --arg sid "$sub_id" --arg flow "$flow" --arg staleVisionXtlsEmail "$stale_vision_xtls_email" '
+      .clients = ((.clients // []) | map(select(.email != $email and .email != $staleVisionXtlsEmail)) + [{
         id:$id, flow:$flow, email:$email, limitIp:0, totalGB:0, expiryTime:0,
         enable:true, tgId:"", subId:$sid, comment:"", reset:0
       }])
@@ -568,7 +569,7 @@ client_settings_json() {
 }
 
 ensure_client() {
-	local kind=$1 inbound_id=$2 desired=$3 inbounds inbound email sub_id flow existing_client client_id settings current_client current_flow
+	local kind=$1 inbound_id=$2 desired=$3 inbounds inbound email sub_id flow existing_client client_id settings current_client current_flow current_email_count components args
 	[[ -n "$inbound_id" ]] || {
 		log INFO "$kind client skipped in plan mode because inbound id is not available."
 		return 0
@@ -584,18 +585,25 @@ ensure_client() {
 	if [[ -n "$existing_client" ]]; then
 		current_client=$(jq -c --arg id "$client_id" '(.settings | fromjson? // {} | .clients // [])[] | select(.id == $id)' <<<"$inbound" | head -n1)
 		current_flow=$(jq -r '.flow // ""' <<<"$current_client")
-		if [[ "$current_flow" == "$flow" ]]; then
+		current_email_count=$(jq -r --arg email "$email" '[(.settings | fromjson? // {} | .clients // [])[] | select(.email == $email)] | length' <<<"$inbound")
+		if [[ "$current_flow" == "$flow" && "$current_email_count" == "1" ]]; then
 			log INFO "$kind client already exists email=$email."
 			return 0
 		fi
 		if plan_or_apply "$kind client updated email=$email"; then
-			xui_update_client "$client_id" --data-urlencode "id=$inbound_id" --data-urlencode "settings=$settings" || die "Failed to update $kind client."
+			components=$(current_inbound_components_json "$inbound" | jq -c --argjson settings "$settings" '.settings = $settings')
+			mapfile -d '' -t args < <(inbound_components_payload "$components")
+			xui_update_inbound "$inbound_id" "${args[@]}" || die "Failed to update $kind client."
 			http_success_json || die "$kind client update failed: $(http_body)"
+			RESTART_XRAY_REQUIRED=1
 		fi
 	else
 		if plan_or_apply "$kind client created email=$email"; then
-			xui_add_client --data-urlencode "id=$inbound_id" --data-urlencode "settings=$settings" || die "Failed to add $kind client."
+			components=$(current_inbound_components_json "$inbound" | jq -c --argjson settings "$settings" '.settings = $settings')
+			mapfile -d '' -t args < <(inbound_components_payload "$components")
+			xui_update_inbound "$inbound_id" "${args[@]}" || die "Failed to add $kind client."
 			http_success_json || die "$kind client add failed: $(http_body)"
+			RESTART_XRAY_REQUIRED=1
 		fi
 	fi
 }

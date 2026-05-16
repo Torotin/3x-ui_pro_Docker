@@ -99,8 +99,12 @@ xui_login() {
 }
 
 resolve_panel_base() {
-	local bp bases=() base user pass old_attempts old_connect_timeout old_max_time old_log_failures
+	local bp bases=() credentials=() credential base user pass old_attempts old_connect_timeout old_max_time old_log_failures
 	bp=$(normalize_base_path "${webBasePath:-}")
+	credentials+=("$USERNAME"$'\t'"$PASSWORD")
+	if [[ -n "${NEW_ADMIN_USERNAME:-}" && -n "${NEW_ADMIN_PASSWORD:-}" ]]; then
+		credentials+=("$NEW_ADMIN_USERNAME"$'\t'"$NEW_ADMIN_PASSWORD")
+	fi
 
 	if [[ -n "${URL_BASE_RESOLVED:-}" ]]; then
 		bases+=("${URL_BASE_RESOLVED%/}")
@@ -145,13 +149,10 @@ resolve_panel_base() {
 
 	for base in "${bases[@]}"; do
 		[[ -n "$base" ]] || continue
-		for user in "$USERNAME" "${NEW_ADMIN_USERNAME:-}"; do
+		for credential in "${credentials[@]}"; do
+			user=${credential%%$'\t'*}
+			pass=${credential#*$'\t'}
 			[[ -n "$user" ]] || continue
-			if [[ "$user" == "$USERNAME" ]]; then
-				pass=$PASSWORD
-			else
-				pass=$NEW_ADMIN_PASSWORD
-			fi
 			[[ -n "$pass" ]] || continue
 			log DEBUG "Trying panel login base=$base username=$user"
 			if xui_login "$base" "$user" "$pass"; then

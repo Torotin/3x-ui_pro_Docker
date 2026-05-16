@@ -103,7 +103,7 @@ build_desired_state() {
             xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath}
           },
           clients: {
-            vision: {email: $visionEmail, subId: $subId, flow: "xtls-rprx-vision-udp443"},
+            vision: {email: $visionEmail, subId: $subId, flow: "xtls-rprx-vision"},
             xhttp: {email: $xhttpEmail, subId: $subId, flow: ""}
           },
           integrations: {
@@ -335,7 +335,7 @@ build_vision_stream_json() {
           security:"reality",
           externalProxy:$externalProxy,
           realitySettings:{
-            show:true,
+            show:false,
             xver:0,
             target:$target,
             serverNames:[$sni],

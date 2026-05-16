@@ -66,7 +66,7 @@ services:
       - traefik.http.middlewares.strip-adguard-prefix.stripPrefix.prefixes=/${URI_ADGUARD_PANEL}
 
       # Общая цепочка для AdGuard
-      - traefik.http.middlewares.adguard-chain.chain.middlewares=bouncer@file,adguard-basic-auth,strip-adguard-prefix,redirect-adguard-panel,compress
+      - traefik.http.middlewares.adguard-chain.chain.middlewares=bouncer@file,adguard-basic-auth,rate-limit,admin-security-headers,strip-adguard-prefix,redirect-adguard-panel,compress
       - traefik.http.middlewares.adguard-doh-chain.chain.middlewares=bouncer@file,adguard-doh-rate-limit,adguard-doh-path
 
       # Panel router

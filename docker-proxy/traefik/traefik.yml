@@ -21,7 +21,7 @@ accessLog:
 
 api:
   dashboard: true
-  insecure: true
+  insecure: false
 
 # -------------------
 # EntryPoints (оптимизированные)
@@ -32,7 +32,7 @@ entryPoints:
     http:
       redirections:
         entryPoint:
-          to: websecure
+          to: ":443"
           scheme: https
           permanent: true
     transport:
@@ -60,24 +60,6 @@ entryPoints:
       trustedIPs:
         - "172.18.0.0/24"
         - "172.19.0.0/24"
-    http3:
-      advertisedPort: 4443
-
-  l4tcp:
-    address: ":443"
-    transport:
-      respondingTimeouts:
-        readTimeout: 0s
-        writeTimeout: 0s
-        idleTimeout: 0s
-
-  l4udp:  
-    address: ":443/udp"
-    transport:
-      respondingTimeouts:
-        readTimeout: 0s
-        writeTimeout: 0s
-        idleTimeout: 0s
 
 # -------------------
 # Провайдеры (оптимизированные)

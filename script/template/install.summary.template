@@ -31,7 +31,7 @@ Service URLs:
   Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
 
 Local service endpoints:
-  Traefik HTTPS    : 127.0.0.1:${SUMMARY_PORT_LOCAL_TRAEFIK}
+  Traefik HTTPS    : internal Docker websecure :${SUMMARY_PORT_LOCAL_TRAEFIK} (not public)
   3X-UI panel      : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_PANEL}
   3X-UI subscribe  : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE}
   XHTTP            : 127.0.0.1:${SUMMARY_PORT_LOCAL_XHTTP}
