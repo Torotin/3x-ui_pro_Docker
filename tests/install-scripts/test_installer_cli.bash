@@ -719,7 +719,7 @@ test_compose_uses_installer_state_lock() {
 	assert_contains "COMPOSE_DIR=$INSTALL_ROOT/compose.d" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose directory"
 	assert_contains "ENV_FILE=$INSTALL_ROOT/compose.d/.env" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose env file"
 	assert_contains "LOCK_FILE=$INSTALL_STATE_DIR/docker-proxy-compose.lock" "$INSTALL_COMMAND_LOG" "compose step must avoid shared /tmp lock file"
-	assert_contains "compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH" "$INSTALL_COMMAND_LOG" "compose validation must not inherit escaped htpasswd from installer environment"
+	assert_contains "compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP" "$INSTALL_COMMAND_LOG" "compose validation must not inherit transformed values from installer environment"
 }
 
 test_final_summary_prints_details() {

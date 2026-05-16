@@ -35,6 +35,14 @@ ENV_ARGS=()
 COMPOSE_ARGS=()
 COMPOSE_BASE_ARGS=()
 COMPOSE_FILES=()
+COMPOSE_ENV_UNSET=(
+	HT_PASS_ENCODED
+	ADGUARD_ADMIN_HASH
+	URI_SUB_PATH
+	URI_JSON_PATH
+	URI_CLASH_PATH
+	URI_VLESS_XHTTP
+)
 
 log() {
 	printf '[%s] [run-compose] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2
@@ -145,7 +153,11 @@ build_base_args() {
 }
 
 run_compose() {
-	"${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"
+	local env_args=() name
+	for name in "${COMPOSE_ENV_UNSET[@]}"; do
+		env_args+=(-u "$name")
+	done
+	env "${env_args[@]}" "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"
 }
 
 compose_config_output() {
