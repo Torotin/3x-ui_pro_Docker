@@ -70,7 +70,7 @@ services:
       - traefik.http.routers.lampac-api.priority=40
 
       # Плагины (JS файлы)
-      - traefik.http.routers.lampac-plugins.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/.+\.js$`)
+      - traefik.http.routers.lampac-plugins.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/.+\.js$$`)
       - traefik.http.routers.lampac-plugins.entrypoints=websecure
       - traefik.http.routers.lampac-plugins.tls=true
       - traefik.http.routers.lampac-plugins.service=lampac

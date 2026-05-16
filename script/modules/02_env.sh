@@ -90,8 +90,17 @@ ensure_env_defaults() {
 generate_htpasswd_if_needed() {
 	[[ -n "${USER_WEB:-}" ]] || return 0
 	if [[ -n "${HT_PASS_ENCODED:-}" ]]; then
-		generate_adguard_hash_from_htpasswd
-		return 0
+		if [[ -z "${PASS_WEB:-}" ]]; then
+			generate_adguard_hash_from_htpasswd
+			return 0
+		fi
+		local existing_htpasswd=${HT_PASS_ENCODED//\$\$/\$}
+		if verify_htpasswd_entry "$existing_htpasswd" soft; then
+			generate_adguard_hash_from_htpasswd
+			return 0
+		fi
+		HT_PASS_ENCODED=
+		ADGUARD_ADMIN_HASH=
 	fi
 	[[ -n "${PASS_WEB:-}" ]] || die "PASS_WEB is required to generate HT_PASS_ENCODED"
 	local raw_htpasswd
@@ -112,15 +121,20 @@ generate_htpasswd_if_needed() {
 }
 
 verify_htpasswd_entry() {
-	local raw_htpasswd=$1 tmpfile verify_output
+	local raw_htpasswd=$1 mode=${2:-strict} tmpfile verify_output
 	tmpfile=$(mktemp) || die "could not create temporary htpasswd verification file"
 	printf '%s\n' "$raw_htpasswd" >"$tmpfile"
 	if ! verify_output=$(htpasswd -vb "$tmpfile" "$USER_WEB" "$PASS_WEB" 2>&1); then
 		rm -f "$tmpfile"
 		if grep -qiE 'unknown option|illegal option|usage' <<<"$verify_output"; then
+			if [[ "$mode" == "soft" ]]; then
+				log WARN "htpasswd verification unsupported; regenerating existing hash"
+				return 1
+			fi
 			log WARN "htpasswd verification unsupported; using generated hash"
 			return 0
 		fi
+		[[ "$mode" == "soft" ]] && return 1
 		die "htpasswd verification failed"
 	fi
 	rm -f "$tmpfile"

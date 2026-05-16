@@ -16,6 +16,8 @@ install_docker_command() {
 	install_docker_install_packages
 	install_docker_configure_daemon
 	run_cmd docker.service.enable systemctl enable docker
+	run_cmd docker.service.reset_failed systemctl reset-failed docker docker.socket || true
+	run_cmd docker.socket.start systemctl start docker.socket || true
 	run_cmd docker.service.restart systemctl restart docker
 	install_docker_networks
 }
@@ -214,12 +216,12 @@ install_compose_command() {
 	fi
 	install_docker_networks
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd compose.validate env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+		run_cmd compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
 		return 0
 	fi
 	[[ -x "$runner" ]] || die "compose runner not found or not executable: $runner"
-	run_cmd compose.validate env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
-	run_cmd compose.up env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
+	run_cmd compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+	run_cmd compose.up env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
 }
 
 install_project_files() {
