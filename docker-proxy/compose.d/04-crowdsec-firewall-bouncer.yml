@@ -15,7 +15,7 @@ services:
       API_KEY: ${CROWDSEC_API_KEY_FIREWALL}
       CROWDSEC_API: 127.0.0.1:8080
     volumes:
-      - ../_logs/crowdsec/firewall-bouncer.log:/var/log/crowdsec-firewall-bouncer.log
+      - ../_logs/crowdsec:/var/log
       - ../crowdsec/crowdsec-firewall-bouncer.yaml:/config/crowdsec-firewall-bouncer.yaml:ro
       - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
