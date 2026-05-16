@@ -19,8 +19,13 @@ fi
 : "${URL_LIST_FILE:=}"
 : "${DOWNLOAD_GEO_DIRECT:=false}"
 
-URL_LIST_DEFAULT='https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat|zxc-rv-adlist.dat
-https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat'
+URL_LIST_DEFAULT='https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat|geosite_refilter.dat
+https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat|geosite_v2fly.dat
+https://github.com/jameszeroX/zkeen-domains/releases/latest/download/zkeen.dat|geosite_zkeen.dat
+https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat|geoip_zkeenip.dat
+https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat|geoip_v2fly.dat
+https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat|geoip_refilter.dat
+https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat|adlist.dat'
 
 main() {
 

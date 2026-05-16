@@ -91,6 +91,14 @@ test_run_dispatches_named_steps_without_eval() {
 	assert_not_contains "eval" "$INSTALL_COMMAND_LOG" "dispatcher must not use eval"
 }
 
+test_compose_installs_docker_maintenance_timer() {
+	make_fixture
+	run_installer run compose
+	assert_contains "docker.maintenance.service.write" "$INSTALL_COMMAND_LOG" "compose install must write Docker maintenance service"
+	assert_contains "docker.maintenance.timer.write" "$INSTALL_COMMAND_LOG" "compose install must write Docker maintenance timer"
+	assert_contains "docker.maintenance.enable systemctl enable --now docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must enable maintenance timer"
+}
+
 test_env_reports_permission_problem_before_backup() {
 	make_fixture
 	export INSTALL_MOCK=0
@@ -754,6 +762,7 @@ test_doctor_is_mock_only_and_reports_supported_os
 test_doctor_verbose_keeps_detailed_success_output
 test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
+test_compose_installs_docker_maintenance_timer
 test_env_reports_permission_problem_before_backup
 test_env_preserves_existing_state_defaults
 test_state_loader_preserves_literal_dollars

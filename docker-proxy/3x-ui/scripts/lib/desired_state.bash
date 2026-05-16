@@ -140,8 +140,13 @@ desired_panel_keys() {
 
 custom_geo_default_resources() {
 	cat <<'EOF'
-geosite|zxc-rv-adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
-geoip|zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat
+geosite|geosite_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat
+geosite|geosite_v2fly|https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
+geosite|geosite_zkeen|https://github.com/jameszeroX/zkeen-domains/releases/latest/download/zkeen.dat
+geoip|geoip_zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat
+geoip|geoip_v2fly|https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+geoip|geoip_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat
+geosite|adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
 EOF
 }
 

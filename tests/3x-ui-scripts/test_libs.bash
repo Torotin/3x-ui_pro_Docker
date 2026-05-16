@@ -314,20 +314,26 @@ test_non_bearer_api_post_replays_csrf_token() {
 	assert_eq 1 "$settings_has_csrf" "non-Bearer POST requests must include a CSRF token"
 }
 
-test_custom_geo_resources_default_to_previous_dat_files() {
-	local resources count site_type site_alias ip_type ip_alias
+test_custom_geo_resources_default_to_requested_dat_files() {
+	local resources count first_type first_alias first_url fourth_type fourth_alias last_type last_alias
 	unset CUSTOM_GEO_RESOURCES
 	resources=$(custom_geo_resources_json)
 	count=$(printf '%s' "$resources" | jq 'length')
-	site_type=$(printf '%s' "$resources" | jq -r '.[0].type')
-	site_alias=$(printf '%s' "$resources" | jq -r '.[0].alias')
-	ip_type=$(printf '%s' "$resources" | jq -r '.[1].type')
-	ip_alias=$(printf '%s' "$resources" | jq -r '.[1].alias')
-	assert_eq 2 "$count" "default custom geo resource count mismatch"
-	assert_eq geosite "$site_type" "default geosite type mismatch"
-	assert_eq zxc-rv-adlist "$site_alias" "default geosite alias mismatch"
-	assert_eq geoip "$ip_type" "default geoip type mismatch"
-	assert_eq zkeenip "$ip_alias" "default geoip alias mismatch"
+	first_type=$(printf '%s' "$resources" | jq -r '.[0].type')
+	first_alias=$(printf '%s' "$resources" | jq -r '.[0].alias')
+	first_url=$(printf '%s' "$resources" | jq -r '.[0].url')
+	fourth_type=$(printf '%s' "$resources" | jq -r '.[3].type')
+	fourth_alias=$(printf '%s' "$resources" | jq -r '.[3].alias')
+	last_type=$(printf '%s' "$resources" | jq -r '.[6].type')
+	last_alias=$(printf '%s' "$resources" | jq -r '.[6].alias')
+	assert_eq 7 "$count" "default custom geo resource count mismatch"
+	assert_eq geosite "$first_type" "default first custom geo type mismatch"
+	assert_eq geosite_refilter "$first_alias" "default first custom geo alias mismatch"
+	assert_eq https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat "$first_url" "default first custom geo URL mismatch"
+	assert_eq geoip "$fourth_type" "default fourth custom geo type mismatch"
+	assert_eq geoip_zkeenip "$fourth_alias" "default fourth custom geo alias mismatch"
+	assert_eq geosite "$last_type" "default adlist custom geo type mismatch"
+	assert_eq adlist "$last_alias" "default adlist custom geo alias mismatch"
 }
 
 test_custom_geo_resources_parse_custom_entries() {
@@ -536,7 +542,7 @@ test_panel_api_requests_use_bearer_token_when_configured
 test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty
 test_xui_login_replays_csrf_token
 test_non_bearer_api_post_replays_csrf_token
-test_custom_geo_resources_default_to_previous_dat_files
+test_custom_geo_resources_default_to_requested_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields
 test_warp_domains_restore_old_ru_rules

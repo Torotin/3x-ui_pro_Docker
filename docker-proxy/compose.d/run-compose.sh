@@ -58,6 +58,7 @@ Usage:
   run-compose.sh rebuild [SERVICE...]     Pull, remove, and force recreate.
   run-compose.sh logs SERVICE [ARGS...]   Follow docker logs.
   run-compose.sh clean-unhealthy          Show logs and remove unhealthy containers.
+  run-compose.sh maintenance [report|prune]
   run-compose.sh down [ARGS...]           Pass through docker compose down.
 
 Environment:
@@ -367,6 +368,15 @@ run_logs() {
 	exec docker logs -f "$@"
 }
 
+run_maintenance() {
+	local script="$ACTIVE_COMPOSE_DIR/docker-maintenance.sh"
+	if [[ ! -x "$script" ]]; then
+		log "ERROR: maintenance script not found or not executable: $script"
+		exit 1
+	fi
+	"$script" "$@"
+}
+
 list_files() {
 	printf '%s\n' "${COMPOSE_FILES[@]}"
 }
@@ -374,7 +384,7 @@ list_files() {
 acquire_lock() {
 	local cmd=${1:-}
 	case "$cmd" in
-		help|--help|-h|list-files|logs|validate|config|ps) return ;;
+		help|--help|-h|list-files|logs|maintenance|validate|config|ps) return ;;
 	esac
 	command -v flock >/dev/null 2>&1 || {
 		log "WARN: flock недоступен, продолжаем без lock"
@@ -423,6 +433,14 @@ main() {
 		logs)
 			shift
 			run_logs "$@"
+			return
+			;;
+		maintenance|prune|gc)
+			shift
+			if [[ "${1:-}" == "" ]]; then
+				set -- prune
+			fi
+			run_maintenance "$@"
 			return
 			;;
 	esac
