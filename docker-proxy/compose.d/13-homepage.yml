@@ -54,7 +54,7 @@ services:
       - traefik.http.middlewares.homepage-strip.stripPrefix.prefixes=/${URI_HOMEPAGE}
       - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
       - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
-      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_HOMEPAGE}/$1
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_HOMEPAGE}/$$1
       - traefik.http.middlewares.homepage-compress.compress=true
       - traefik.http.middlewares.homepage-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-strip,homepage-rewrite,homepage-compress
       - traefik.http.middlewares.homepage-static-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rewrite,homepage-compress

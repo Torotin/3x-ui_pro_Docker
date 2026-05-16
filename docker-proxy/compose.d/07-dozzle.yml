@@ -70,7 +70,7 @@ services:
       - traefik.http.routers.dozzle-api.priority=1001
 
       # Манифесты Dozzle — открытый доступ
-      - traefik.http.routers.dozzle-manifest.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`/${URI_DOZZLE}/.*manifest(\\.webmanifest|\\.json)$`)
+      - traefik.http.routers.dozzle-manifest.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`/${URI_DOZZLE}/.*manifest(\\.webmanifest|\\.json)$$`)
       - traefik.http.routers.dozzle-manifest.entrypoints=websecure
       - traefik.http.routers.dozzle-manifest.service=dozzle-service
       - traefik.http.routers.dozzle-manifest.tls.certresolver=le

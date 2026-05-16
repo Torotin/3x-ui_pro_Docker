@@ -26,8 +26,6 @@ services:
         condition: service_healthy
       homepage:
         condition: service_healthy
-      lampac:
-        condition: service_healthy
     env_file:
       - ./.env
     volumes:
@@ -108,12 +106,12 @@ services:
       - traefik.http.middlewares.dash-strip-prefix.stripPrefix.prefixes=/${URI_TRAEFIK_DASHBOARD}
 
       # Редирект с /dashboard → /${URI_TRAEFIK_DASHBOARD}/dashboard
-      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.regex=^/dashboard(.*)$
-      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard$1
+      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.regex=^/dashboard(.*)$$
+      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard$$1
       - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.permanent=true
 
       # Редирект с /${URI_TRAEFIK_DASHBOARD}/ → UI
-      - traefik.http.middlewares.dash-redirect-root.redirectRegex.regex=^/${URI_TRAEFIK_DASHBOARD}/?$
+      - traefik.http.middlewares.dash-redirect-root.redirectRegex.regex=^/${URI_TRAEFIK_DASHBOARD}/?$$
       - traefik.http.middlewares.dash-redirect-root.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard/
       - traefik.http.middlewares.dash-redirect-root.redirectRegex.permanent=true
 
@@ -135,7 +133,7 @@ services:
 
       # Перезапись абсолютных /api внутри Dashboard
       - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.regex=^https?://([^/]+)/api/(.*)
-      - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.replacement=https://$1/${URI_TRAEFIK_DASHBOARD}/api/$2
+      - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.replacement=https://$$1/${URI_TRAEFIK_DASHBOARD}/api/$$2
 
       # Абсолютный /api (до удаления префикса)
       - traefik.http.routers.traefik-dashboard-api-absolute.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)

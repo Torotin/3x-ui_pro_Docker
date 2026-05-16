@@ -37,7 +37,7 @@ make_fixture() {
 	export PASS_SSH=secret
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
-	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG
+	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -55,13 +55,23 @@ test_doctor_is_mock_only_and_reports_supported_os() {
 	run_installer doctor
 	assert_contains "doctor: checking installer, dependencies and stack status" "$tmpdir/stdout" "doctor must describe expanded checks"
 	assert_contains "OK: OS is Debian/Ubuntu compatible" "$tmpdir/stdout" "doctor must report supported OS"
+	assert_contains "OK: commands:" "$tmpdir/stdout" "doctor must summarize command checks by default"
 	assert_contains "WARN: stack checks skipped in mock mode" "$tmpdir/stdout" "doctor must skip stack checks in mock mode"
 	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor must report success on Ubuntu fixture"
+	assert_not_contains "OK: command available: bash" "$tmpdir/stdout" "doctor must not spam individual successful commands by default"
 	assert_contains "doctor.command command -v apt-get" "$INSTALL_COMMAND_LOG" "doctor must check required commands through runner in mock mode"
 	assert_contains "doctor.command command -v docker" "$INSTALL_COMMAND_LOG" "doctor must check Docker command through runner in mock mode"
 	assert_not_contains "apt-get install" "$INSTALL_COMMAND_LOG" "doctor must not install apt packages"
 	assert_not_contains "systemctl restart" "$INSTALL_COMMAND_LOG" "doctor must not restart services"
 	assert_not_contains "/etc/" "$INSTALL_COMMAND_LOG" "doctor must not mutate /etc"
+}
+
+test_doctor_verbose_keeps_detailed_success_output() {
+	make_fixture
+	run_installer doctor --verbose
+	assert_contains "OK: command available: bash" "$tmpdir/stdout" "doctor --verbose must show individual successful command checks"
+	assert_contains "OK: path exists:" "$tmpdir/stdout" "doctor --verbose must show individual successful path checks"
+	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor --verbose must still report success"
 }
 
 test_exit_resets_script_and_project_permissions() {
@@ -96,20 +106,31 @@ test_env_reports_permission_problem_before_backup() {
 
 test_env_preserves_existing_state_defaults() {
 	make_fixture
-	unset WEBDOMAIN USER_SSH CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED
+	unset WEBDOMAIN USER_SSH CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 	cat >"$INSTALL_STATE_DIR/install.env" <<'ENV'
 WEBDOMAIN=state.example.test
 USER_SSH="state-user"
 CROWDSEC_API_KEY_FIREWALL=state-firewall-key
-HT_PASS_ENCODED="user:$$2y$$hash"
 ENV
 	run_installer run env
 	assert_contains "WEBDOMAIN=state.example.test" "$INSTALL_STATE_DIR/install.env" "env must preserve existing domain when no override is provided"
 	assert_contains 'USER_SSH="state-user"' "$INSTALL_STATE_DIR/install.env" "env must preserve existing SSH user when no override is provided"
 	assert_contains "CROWDSEC_API_KEY_FIREWALL=state-firewall-key" "$INSTALL_STATE_DIR/install.env" "env must preserve existing crowdsec key when no override is provided"
+}
+
+test_state_loader_preserves_literal_dollars() {
+	make_fixture
+	unset HT_PASS_ENCODED ADGUARD_ADMIN_HASH
+	cat >"$INSTALL_STATE_DIR/install.env" <<'ENV'
+HT_PASS_ENCODED="user:$$2y$$hash"
+ENV
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	install_load_state_env
 	assert_contains 'HT_PASS_ENCODED="user:$$2y$$hash"' "$INSTALL_STATE_DIR/install.env" "env loader must preserve literal dollar signs"
-	assert_contains 'ADGUARD_ADMIN_HASH="$2y$hash"' "$INSTALL_STATE_DIR/install.env" "env loader must derive AdGuard hash from escaped htpasswd without single quotes"
-	assert_not_contains "ADGUARD_ADMIN_HASH=" "$INSTALL_ROOT/compose.d/.env" "compose env must not contain raw bcrypt hash with dollar signs"
+	[[ "$HT_PASS_ENCODED" == 'user:$$2y$$hash' ]] || fail "state loader must not shell-expand dollar signs: $HT_PASS_ENCODED"
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	generate_adguard_hash_from_htpasswd
+	[[ "$ADGUARD_ADMIN_HASH" == '$2y$hash' ]] || fail "AdGuard hash must unescape doubled dollars: $ADGUARD_ADMIN_HASH"
 }
 
 test_env_prints_rendered_paths() {
@@ -152,6 +173,69 @@ BASH
 	PATH="$tmpdir/bin:$PATH" generate_htpasswd_if_needed
 	[[ "$HT_PASS_ENCODED" == 'admin:$$2y$$05$$abc' ]] || fail "HT_PASS_ENCODED mismatch: $HT_PASS_ENCODED"
 	[[ "$ADGUARD_ADMIN_HASH" == '$2y$05$abc' ]] || fail "ADGUARD_ADMIN_HASH mismatch: $ADGUARD_ADMIN_HASH"
+}
+
+test_env_writes_escaped_htpasswd_to_compose_env_for_labels() {
+	make_fixture
+	run_installer run env
+	assert_contains 'HT_PASS_ENCODED="admin:$$2y$$05$$mockhash"' "$INSTALL_STATE_DIR/install.env" "install state must keep shell-safe escaped bcrypt dollars"
+	assert_contains 'HT_PASS_ENCODED="admin:$$2y$$05$$mockhash"' "$INSTALL_ROOT/compose.d/.env" "compose env must keep escaped bcrypt dollars so Docker Compose emits raw Docker labels"
+}
+
+test_env_regenerates_stale_htpasswd_when_password_changes() {
+	make_fixture
+	mkdir -p "$tmpdir/bin"
+	cat >"$tmpdir/bin/htpasswd" <<'BASH'
+#!/usr/bin/env bash
+if [[ "$1" == "-nBb" ]]; then
+	printf '%s:$2y$05$new\n' "$2"
+	exit 0
+fi
+if [[ "$1" == "-vb" ]]; then
+	if grep -Fq '$2y$05$new' "$2" && [[ "$4" == "new-secret" ]]; then
+		exit 0
+	fi
+	exit 1
+fi
+exit 2
+BASH
+	chmod +x "$tmpdir/bin/htpasswd"
+	export HT_PASS_ENCODED='admin:$$2y$$05$$old'
+	export ADGUARD_ADMIN_HASH='$2y$05$old'
+	export PASS_WEB='new-secret'
+	export INSTALL_MOCK=0
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	PATH="$tmpdir/bin:$PATH" generate_htpasswd_if_needed
+	[[ "$HT_PASS_ENCODED" == 'admin:$$2y$$05$$new' ]] || fail "stale HT_PASS_ENCODED must be regenerated: $HT_PASS_ENCODED"
+	[[ "$ADGUARD_ADMIN_HASH" == '$2y$05$new' ]] || fail "stale ADGUARD_ADMIN_HASH must be regenerated: $ADGUARD_ADMIN_HASH"
+}
+
+test_env_regenerates_existing_hash_when_verify_is_unsupported() {
+	make_fixture
+	mkdir -p "$tmpdir/bin"
+	cat >"$tmpdir/bin/htpasswd" <<'BASH'
+#!/usr/bin/env bash
+if [[ "$1" == "-nBb" ]]; then
+	printf '%s:$2y$05$new\n' "$2"
+	exit 0
+fi
+if [[ "$1" == "-vb" ]]; then
+	printf 'usage: htpasswd [-nBb] user password\n' >&2
+	exit 1
+fi
+exit 2
+BASH
+	chmod +x "$tmpdir/bin/htpasswd"
+	export HT_PASS_ENCODED='admin:$$2y$$05$$old'
+	export ADGUARD_ADMIN_HASH='$2y$05$old'
+	export PASS_WEB='new-secret'
+	export INSTALL_MOCK=0
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	PATH="$tmpdir/bin:$PATH" generate_htpasswd_if_needed
+	[[ "$HT_PASS_ENCODED" == 'admin:$$2y$$05$$new' ]] || fail "existing hash must be regenerated when verification is unsupported: $HT_PASS_ENCODED"
+	[[ "$ADGUARD_ADMIN_HASH" == '$2y$05$new' ]] || fail "AdGuard hash must follow regenerated htpasswd hash: $ADGUARD_ADMIN_HASH"
 }
 
 test_adguard_update_pass_uses_precomputed_hash() {
@@ -237,6 +321,8 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "docker.daemon.json.validate printf python3\\ -m\\ json.tool\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker install must log daemon.json validation in mock mode"
 	assert_contains "docker.service.enable systemctl enable docker" "$INSTALL_COMMAND_LOG" "docker install must enable Docker service"
 	assert_not_contains "docker.service.enable systemctl enable --now docker" "$INSTALL_COMMAND_LOG" "docker install must not start service before daemon restart"
+	assert_contains "docker.service.reset_failed systemctl reset-failed docker docker.socket" "$INSTALL_COMMAND_LOG" "docker install must clear failed service/socket state before restart"
+	assert_contains "docker.socket.start systemctl start docker.socket" "$INSTALL_COMMAND_LOG" "docker install must start socket before dockerd fd activation restart"
 	assert_contains "docker.service.restart systemctl restart docker" "$INSTALL_COMMAND_LOG" "docker install must restart Docker after daemon config"
 	run_installer run firewall --apply --yes
 	run_installer run ssh --apply --yes
@@ -633,6 +719,7 @@ test_compose_uses_installer_state_lock() {
 	assert_contains "COMPOSE_DIR=$INSTALL_ROOT/compose.d" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose directory"
 	assert_contains "ENV_FILE=$INSTALL_ROOT/compose.d/.env" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose env file"
 	assert_contains "LOCK_FILE=$INSTALL_STATE_DIR/docker-proxy-compose.lock" "$INSTALL_COMMAND_LOG" "compose step must avoid shared /tmp lock file"
+	assert_contains "compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH" "$INSTALL_COMMAND_LOG" "compose validation must not inherit escaped htpasswd from installer environment"
 }
 
 test_final_summary_prints_details() {
@@ -664,13 +751,18 @@ OS
 }
 
 test_doctor_is_mock_only_and_reports_supported_os
+test_doctor_verbose_keeps_detailed_success_output
 test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
 test_env_reports_permission_problem_before_backup
 test_env_preserves_existing_state_defaults
+test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
+test_env_writes_escaped_htpasswd_to_compose_env_for_labels
+test_env_regenerates_stale_htpasswd_when_password_changes
+test_env_regenerates_existing_hash_when_verify_is_unsupported
 test_adguard_update_pass_uses_precomputed_hash
 test_adguard_update_pass_updates_yaml_without_yq
 test_state_loader_keeps_explicit_values_over_state

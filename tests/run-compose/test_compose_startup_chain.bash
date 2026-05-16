@@ -51,9 +51,13 @@ torproxy_retries=$(compose_value '.services.torproxy.healthcheck.retries // ""' 
 [[ "$torproxy_retries" == "10" ]] ||
 	fail "torproxy healthcheck retries must tolerate slow first Tor bootstrap; got '${torproxy_retries:-<missing>}'"
 
-for dependency in crowdsec crowdsec-firewall-bouncer caddy dozzle adguard 3x-ui homepage lampac warp usque torproxy tor-proxy; do
+for dependency in crowdsec crowdsec-firewall-bouncer caddy dozzle adguard 3x-ui homepage warp usque torproxy tor-proxy; do
 	assert_depends_on_healthy "$COMPOSE_DIR/06-traefik.yml" traefik "$dependency"
 done
+
+traefik_requires_lampac=$(compose_value '.services.traefik.depends_on | has("lampac")' "$COMPOSE_DIR/06-traefik.yml")
+[[ "$traefik_requires_lampac" == "false" ]] ||
+	fail "traefik must not require optional lampac because 14-lampac.yml may be absent"
 
 warp_start_period=$(compose_value '.services.warp.healthcheck.start_period // ""' "$COMPOSE_DIR/08-warp.yml")
 [[ "$warp_start_period" == "60s" ]] ||
