@@ -210,18 +210,19 @@ install_compose_command() {
 	local lock_file="$INSTALL_STATE_DIR/docker-proxy-compose.lock"
 	local compose_dir="$INSTALL_ROOT/compose.d"
 	local compose_env="$compose_dir/.env"
+	local compose_env_unset=(-u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP)
 	install_project_files
 	if [[ ! -f "$compose_env" ]]; then
 		install_env_command
 	fi
 	install_docker_networks
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+		run_cmd compose.validate env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
 		return 0
 	fi
 	[[ -x "$runner" ]] || die "compose runner not found or not executable: $runner"
-	run_cmd compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
-	run_cmd compose.up env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
+	run_cmd compose.validate env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+	run_cmd compose.up env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
 }
 
 install_project_files() {

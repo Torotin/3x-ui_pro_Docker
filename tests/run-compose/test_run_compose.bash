@@ -54,6 +54,8 @@ YAML
 set -euo pipefail
 printf '%s\n' "$*" >>"${DOCKER_LOG:?}"
 if [[ "${1:-}" == "compose" ]]; then
+	printf 'env HT_PASS_ENCODED=%s URI_SUB_PATH=%s URI_JSON_PATH=%s URI_CLASH_PATH=%s URI_VLESS_XHTTP=%s\n' \
+		"${HT_PASS_ENCODED-}" "${URI_SUB_PATH-}" "${URI_JSON_PATH-}" "${URI_CLASH_PATH-}" "${URI_VLESS_XHTTP-}" >>"${DOCKER_LOG:?}"
 	shift
 	case "$*" in
 		*version*) echo "Docker Compose version v2.0.0"; exit 0 ;;
@@ -133,6 +135,17 @@ test_up_is_safe_by_default() {
 	assert_contains "up -d" "$tmpdir/docker.log" "up must run detached by default"
 	assert_not_contains " pull" "$tmpdir/docker.log" "safe up must not pull by default"
 	assert_not_contains "rm --stop --force" "$tmpdir/docker.log" "safe up must not remove containers"
+}
+
+test_compose_invocation_sanitizes_transformed_environment() {
+	make_fixture
+	HT_PASS_ENCODED='admin:$$2y$$05$$bad' \
+		URI_SUB_PATH=noslash-sub \
+		URI_JSON_PATH=noslash-json \
+		URI_CLASH_PATH=noslash-clash \
+		URI_VLESS_XHTTP=noslash-xhttp \
+		run_runner validate
+	assert_contains "env HT_PASS_ENCODED= URI_SUB_PATH= URI_JSON_PATH= URI_CLASH_PATH= URI_VLESS_XHTTP=" "$tmpdir/docker.log" "run-compose must let --env-file provide transformed variables"
 }
 
 test_lock_file_is_compose_local_and_world_writable() {
@@ -245,6 +258,7 @@ test_restart_uses_no_deps_by_default
 test_restart_can_include_dependencies
 test_restart_logs_is_explicit
 test_up_is_safe_by_default
+test_compose_invocation_sanitizes_transformed_environment
 test_lock_file_is_compose_local_and_world_writable
 test_default_env_and_lock_follow_active_compose_dir
 test_rebuild_is_destructive_explicitly
