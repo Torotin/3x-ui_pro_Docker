@@ -70,7 +70,7 @@ test_remove_managed_xray_artifacts_only_removes_our_tags() {
 }
 
 test_desired_clients_are_deterministic() {
-	local desired vision_email xhttp_email vision_sub xhttp_sub
+	local desired vision_email xhttp_email vision_sub xhttp_sub vision_flow xhttp_flow
 	export CLIENT_EMAIL_PREFIX=autogen
 	export CLIENT_SUB_ID=stable-sub
 	desired=$(build_desired_state)
@@ -78,10 +78,14 @@ test_desired_clients_are_deterministic() {
 	xhttp_email=$(printf '%s' "$desired" | jq -r '.clients.xhttp.email')
 	vision_sub=$(printf '%s' "$desired" | jq -r '.clients.vision.subId')
 	xhttp_sub=$(printf '%s' "$desired" | jq -r '.clients.xhttp.subId')
+	vision_flow=$(printf '%s' "$desired" | jq -r '.clients.vision.flow')
+	xhttp_flow=$(printf '%s' "$desired" | jq -r '.clients.xhttp.flow')
 	assert_eq autogen-vision "$vision_email" "vision email default mismatch"
 	assert_eq autogen-xhttp "$xhttp_email" "xhttp email default mismatch"
 	assert_eq stable-sub "$vision_sub" "vision sub id mismatch"
 	assert_eq stable-sub "$xhttp_sub" "xhttp sub id mismatch"
+	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision REALITY client flow mismatch"
+	assert_eq "" "$xhttp_flow" "XHTTP client flow mismatch"
 }
 
 test_desired_inbound_remarks_use_country_flag() {
@@ -155,6 +159,30 @@ test_resolve_panel_base_prioritizes_configured_web_port() {
 	assert_eq "https://127.0.0.1:52025/panel" "$first_base" "configured webPort was not tried first"
 	assert_eq 4 "$HTTP_ATTEMPTS" "HTTP_ATTEMPTS was not restored"
 	assert_eq 1 "$HTTP_LOG_FAILURES" "HTTP_LOG_FAILURES was not restored"
+}
+
+test_resolve_panel_base_tries_new_password_when_username_is_unchanged() {
+	local attempts
+	export USERNAME=admin PASSWORD=old-password NEW_ADMIN_USERNAME=admin NEW_ADMIN_PASSWORD=new-password
+	export webPort=52025 webBasePath=/panel WEBDOMAIN=example.test
+	HTTP_ATTEMPTS=4
+	HTTP_LOG_FAILURES=1
+	# shellcheck disable=SC2034 # resolve_panel_base reads/restores these globals dynamically
+	HTTP_CONNECT_TIMEOUT=2
+	# shellcheck disable=SC2034 # resolve_panel_base reads/restores these globals dynamically
+	HTTP_MAX_TIME=8
+	xui_login() {
+		printf '%s %s %s\n' "$1" "$2" "$3" >>"$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+		[[ "$2" == "admin" && "$3" == "new-password" ]]
+	}
+	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+	resolve_panel_base || fail "resolve_panel_base must try NEW_ADMIN_PASSWORD even when username is unchanged"
+	attempts=$(cat "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts")
+	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+	grep -Fq "admin old-password" <<<"$attempts" || fail "old credential was not tried"
+	grep -Fq "admin new-password" <<<"$attempts" || fail "new credential was not tried"
+	assert_eq new-password "$PASSWORD" "resolved password must switch to NEW_ADMIN_PASSWORD"
+	unset -f xui_login
 }
 
 test_normalize_base_path_accepts_empty_input() {
@@ -418,6 +446,19 @@ test_vision_stream_restores_old_reality_external_proxy() {
 	assert_eq 2 "$short_id_count" "Vision shortIds were not preserved"
 }
 
+test_vision_stream_is_clean_self_steal() {
+	local stream show target server_name empty_short_ids
+	stream=$(build_vision_stream_json traefik:4443 screenhub.linkpc.net private public '["aa","bb"]' "$(build_sockopt_json false AsIs off)" '' '')
+	show=$(printf '%s' "$stream" | jq -r '.realitySettings.show')
+	target=$(printf '%s' "$stream" | jq -r '.realitySettings.target // empty')
+	server_name=$(printf '%s' "$stream" | jq -r '.realitySettings.serverNames[0]')
+	empty_short_ids=$(printf '%s' "$stream" | jq '[.realitySettings.shortIds[] | select(. == "")] | length')
+	assert_eq false "$show" "Reality show must be false for anti-probing clean install"
+	assert_eq traefik:4443 "$target" "Reality self-steal target must point to internal Traefik websecure"
+	assert_eq screenhub.linkpc.net "$server_name" "Reality serverNames must whitelist the public front domain"
+	assert_eq 0 "$empty_short_ids" "Reality shortIds must not contain empty example values"
+}
+
 test_vision_settings_include_traefik_fallback_preserving_clients() {
 	local inbound settings fallback_dest clients decryption encryption
 	export VISION_FALLBACK_HOST=traefik
@@ -536,6 +577,7 @@ test_country_flag_sources_include_iso_code_fallbacks
 test_country_code_to_flag_converts_iso_alpha2
 test_country_flag_value_from_trace_extracts_loc
 test_resolve_panel_base_prioritizes_configured_web_port
+test_resolve_panel_base_tries_new_password_when_username_is_unchanged
 test_normalize_base_path_accepts_empty_input
 test_http_request_temp_files_are_created_under_tmp_root
 test_panel_api_requests_use_bearer_token_when_configured
@@ -549,6 +591,7 @@ test_warp_domains_restore_old_ru_rules
 test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt
 test_vision_stream_restores_old_reality_external_proxy
+test_vision_stream_is_clean_self_steal
 test_vision_settings_include_traefik_fallback_preserving_clients
 test_tor_balancer_uses_two_available_hosts
 test_warp_balancer_uses_docker_and_usque_without_console_warp

@@ -44,13 +44,15 @@ services:
 
       # Сжатие и удаление префикса
       - traefik.http.middlewares.compress.compress=true
+      - traefik.http.middlewares.dozzle-rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.dozzle-rate-limit.ratelimit.burst=100
       - traefik.http.middlewares.dozzle-strip.stripPrefix.prefixes=/${URI_DOZZLE}
 
       # Основная цепочка middleware (включая auth и compress)
-      - traefik.http.middlewares.dozzle-chain.chain.middlewares=bouncer@file,basic-auth,compress
+      - traefik.http.middlewares.dozzle-chain.chain.middlewares=bouncer@file,basic-auth,dozzle-rate-limit,admin-security-headers,compress
 
       # API без compress — чтобы SSE не обрывались
-      - traefik.http.middlewares.dozzle-api-chain.chain.middlewares=bouncer@file,basic-auth
+      - traefik.http.middlewares.dozzle-api-chain.chain.middlewares=bouncer@file,basic-auth,dozzle-rate-limit,admin-security-headers
 
       # ---------- Роутеры ----------
       # Основной интерфейс Dozzle
@@ -69,9 +71,10 @@ services:
       - traefik.http.routers.dozzle-api.tls.certresolver=le
       - traefik.http.routers.dozzle-api.priority=1001
 
-      # Манифесты Dozzle — открытый доступ
+      # Манифесты Dozzle остаются частью admin UI и требуют защиты.
       - traefik.http.routers.dozzle-manifest.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`/${URI_DOZZLE}/.*manifest(\\.webmanifest|\\.json)$$`)
       - traefik.http.routers.dozzle-manifest.entrypoints=websecure
+      - traefik.http.routers.dozzle-manifest.middlewares=dozzle-chain
       - traefik.http.routers.dozzle-manifest.service=dozzle-service
       - traefik.http.routers.dozzle-manifest.tls.certresolver=le
       - traefik.http.routers.dozzle-manifest.priority=1000
