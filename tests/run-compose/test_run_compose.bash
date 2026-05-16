@@ -48,6 +48,8 @@ services:
   disabled:
     image: disabled:latest
 YAML
+	cp "$ROOT_DIR/docker-proxy/compose.d/docker-maintenance.sh" "$tmpdir/compose.d/docker-maintenance.sh"
+	chmod +x "$tmpdir/compose.d/docker-maintenance.sh"
 	: >"$tmpdir/compose.d/.env"
 	cat >"$tmpdir/bin/docker" <<'BASH'
 #!/usr/bin/env bash
@@ -208,6 +210,17 @@ test_list_files_does_not_require_env_file() {
 	fi
 }
 
+test_maintenance_prune_keeps_networks_and_volumes() {
+	make_fixture
+	run_runner maintenance prune >/tmp/run-compose-maintenance.out 2>&1
+	assert_contains "container prune --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune stopped containers"
+	assert_contains "builder prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune build cache"
+	assert_contains "image prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune unused images"
+	assert_not_contains "system prune" "$tmpdir/docker.log" "maintenance must not use docker system prune because it removes unused external networks"
+	assert_not_contains "network prune" "$tmpdir/docker.log" "maintenance must not prune Docker networks"
+	assert_not_contains "volume prune" "$tmpdir/docker.log" "maintenance must not prune Docker volumes"
+}
+
 test_up_reports_foreign_container_name_conflict() {
 	make_fixture
 	cat >"$tmpdir/bin/docker" <<'BASH'
@@ -265,6 +278,7 @@ test_rebuild_is_destructive_explicitly
 test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files
 test_list_files_does_not_require_env_file
+test_maintenance_prune_keeps_networks_and_volumes
 test_up_reports_foreign_container_name_conflict
 test_compose_fragments_do_not_hardcode_project_root
 printf 'test_run_compose.bash: OK\n'
