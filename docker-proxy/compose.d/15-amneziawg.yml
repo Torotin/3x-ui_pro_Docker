@@ -1,0 +1,32 @@
+services:
+  amneziawg:
+    image: ${AMNEZIAWG_IMAGE:-amneziavpn/amneziawg-go:0.2.17}
+    container_name: amneziawg
+    restart: unless-stopped
+    network_mode: bridge
+    env_file:
+      - ./.env
+    environment:
+      - WG_QUICK_USERSPACE_IMPLEMENTATION=amneziawg-go
+      - AMNEZIAWG_CONFIG_DIR=/config
+    ports:
+      - "${AMNEZIAWG_LISTEN_PORT:-443}:${AMNEZIAWG_INTERNAL_PORT:-51820}/udp"
+    volumes:
+      - ../amneziawg:/config:rw
+      - ../amneziawg/entrypoint.sh:/entrypoint.sh:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    security_opt:
+      - no-new-privileges=true
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "awg show ${AMNEZIAWG_INTERFACE:-awg0} >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

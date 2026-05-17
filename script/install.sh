@@ -51,7 +51,7 @@ Usage:
   install.sh self-update [--branch <branch>] [--check] [--yes] [--force]
   install.sh uninstall [--plan|--apply --yes] [--purge-docker-data]
     [--purge-docker-engine] [--purge-firewall] [--purge-ssh]
-    [--purge-network] [--remove-project-root]
+    [--purge-network] [--purge-amneziawg-configs] [--remove-project-root]
 
 Steps:
   apt env docker user firewall ssh network compose final uninstall

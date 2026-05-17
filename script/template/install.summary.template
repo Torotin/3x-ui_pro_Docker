@@ -40,6 +40,11 @@ Local service endpoints:
   Caddy fallback   : 127.0.0.1:${SUMMARY_PORT_LOCAL_CADDYWEB}
   CrowdSec API     : 127.0.0.1:${SUMMARY_PORT_LOCAL_CROWDSEC_API}
 
+AmneziaWG:
+  Enabled          : ${SUMMARY_AMNEZIAWG_ENABLED}
+  Client config    : ${SUMMARY_AMNEZIAWG_CLIENT_CONFIG}
+  Note             : sensitive file path only; key/config contents are not printed
+
 Operational commands:
   Doctor           : ${SCRIPT_DIR}/install.sh doctor
   Wizard           : ${SCRIPT_DIR}/install.sh wizard

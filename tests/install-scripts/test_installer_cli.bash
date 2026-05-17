@@ -38,6 +38,7 @@ make_fixture() {
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
+	unset ENABLE_AMNEZIAWG AMNEZIAWG_IMAGE AMNEZIAWG_ENDPOINT_HOST AMNEZIAWG_MTU AMNEZIAWG_NAT_BACKEND
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -72,6 +73,55 @@ test_doctor_verbose_keeps_detailed_success_output() {
 	assert_contains "OK: command available: bash" "$tmpdir/stdout" "doctor --verbose must show individual successful command checks"
 	assert_contains "OK: path exists:" "$tmpdir/stdout" "doctor --verbose must show individual successful path checks"
 	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor --verbose must still report success"
+}
+
+test_doctor_public_ports_distinguishes_amneziawg_stage() {
+	make_fixture
+	mkdir -p "$tmpdir/bin"
+	cat >"$tmpdir/bin/docker" <<'BASH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "ps" ]]; then
+	case "${DOCKER_PORT_FIXTURE:-pre}" in
+	pre)
+		cat <<'OUT'
+traefik	0.0.0.0:80->80/tcp, :::80->80/tcp
+3x-ui	0.0.0.0:443->443/tcp, :::443->443/tcp
+OUT
+		;;
+	post)
+		cat <<'OUT'
+traefik	0.0.0.0:80->80/tcp, :::80->80/tcp
+3x-ui	0.0.0.0:443->443/tcp, :::443->443/tcp
+amneziawg	0.0.0.0:443->51820/udp, :::443->51820/udp
+OUT
+		;;
+	bad)
+		cat <<'OUT'
+traefik	0.0.0.0:80->80/tcp, 0.0.0.0:443->443/udp
+lampac	0.0.0.0:9118->9118/tcp
+OUT
+		;;
+	esac
+	exit 0
+fi
+exit 0
+BASH
+	chmod +x "$tmpdir/bin/docker"
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	export INSTALL_MOCK=0
+	export ENABLE_AMNEZIAWG=false
+	PATH="$tmpdir/bin:$PATH" DOCKER_PORT_FIXTURE=pre install_doctor_check_public_ports >"$tmpdir/ports-pre.out"
+	assert_contains "OK: public port ownership matches pre-AmneziaWG stage" "$tmpdir/ports-pre.out" "doctor must accept free UDP 443 before AWG"
+
+	export ENABLE_AMNEZIAWG=true
+	PATH="$tmpdir/bin:$PATH" DOCKER_PORT_FIXTURE=post install_doctor_check_public_ports >"$tmpdir/ports-post.out"
+	assert_contains "OK: public port ownership matches AmneziaWG stage" "$tmpdir/ports-post.out" "doctor must accept AmneziaWG as UDP 443 owner"
+
+	if PATH="$tmpdir/bin:$PATH" DOCKER_PORT_FIXTURE=bad install_doctor_check_public_ports >"$tmpdir/ports-bad.out"; then
+		fail "doctor public port check must fail on UDP 443 conflicts and Lampac public ports"
+	fi
+	assert_contains "FAIL: UDP 443 must be owned only by amneziawg" "$tmpdir/ports-bad.out" "doctor must reject wrong UDP 443 owner"
+	assert_contains "FAIL: forbidden public port 9118" "$tmpdir/ports-bad.out" "doctor must reject direct Lampac port"
 }
 
 test_exit_resets_script_and_project_permissions() {
@@ -188,6 +238,18 @@ test_env_writes_escaped_htpasswd_to_compose_env_for_labels() {
 	run_installer run env
 	assert_contains 'HT_PASS_ENCODED="admin:$$2y$$05$$mockhash"' "$INSTALL_STATE_DIR/install.env" "install state must keep shell-safe escaped bcrypt dollars"
 	assert_contains 'HT_PASS_ENCODED="admin:$$2y$$05$$mockhash"' "$INSTALL_ROOT/compose.d/.env" "compose env must keep escaped bcrypt dollars so Docker Compose emits raw Docker labels"
+}
+
+test_env_renders_amneziawg_defaults_without_secrets() {
+	make_fixture
+	run_installer run env
+	assert_contains "ENABLE_AMNEZIAWG=false" "$INSTALL_ROOT/compose.d/.env" "AmneziaWG must be disabled by default"
+	assert_contains "AMNEZIAWG_IMAGE=amneziavpn/amneziawg-go:0.2.17" "$INSTALL_ROOT/compose.d/.env" "AmneziaWG image must be pinned to a non-latest tag"
+	assert_contains "AMNEZIAWG_ENDPOINT_HOST=example.test" "$INSTALL_ROOT/compose.d/.env" "AmneziaWG client endpoint must default to WEBDOMAIN"
+	assert_contains "AMNEZIAWG_MTU=1420" "$INSTALL_ROOT/compose.d/.env" "AmneziaWG MTU must have a documented default"
+	assert_contains "AMNEZIAWG_NAT_BACKEND=auto" "$INSTALL_ROOT/compose.d/.env" "AmneziaWG NAT backend must default to detection"
+	assert_not_contains "PrivateKey" "$INSTALL_ROOT/compose.d/.env" "env render must not contain AmneziaWG private keys"
+	assert_not_contains "PresharedKey" "$INSTALL_ROOT/compose.d/.env" "env render must not contain AmneziaWG preshared keys"
 }
 
 test_env_regenerates_stale_htpasswd_when_password_changes() {
@@ -464,6 +526,16 @@ ENV
 	assert_contains "ssh.restore" "$INSTALL_COMMAND_LOG" "ssh purge must be explicit"
 	assert_contains "network.restore" "$INSTALL_COMMAND_LOG" "network purge must be explicit"
 	assert_contains "project.remove" "$INSTALL_COMMAND_LOG" "project root removal must be explicit"
+}
+
+test_uninstall_purges_amneziawg_configs_only_with_explicit_flag() {
+	make_fixture
+	run_installer uninstall --apply --yes
+	assert_not_contains "amneziawg.configs.remove" "$INSTALL_COMMAND_LOG" "normal uninstall must keep AmneziaWG configs"
+
+	make_fixture
+	run_installer uninstall --apply --yes --purge-amneziawg-configs
+	assert_contains "amneziawg.configs.remove rm -rf -- $INSTALL_ROOT/amneziawg/server $INSTALL_ROOT/amneziawg/clients" "$INSTALL_COMMAND_LOG" "AmneziaWG config purge must require explicit flag"
 }
 
 test_uninstall_can_remove_docker_engine_with_explicit_flag() {
@@ -760,6 +832,7 @@ OS
 
 test_doctor_is_mock_only_and_reports_supported_os
 test_doctor_verbose_keeps_detailed_success_output
+test_doctor_public_ports_distinguishes_amneziawg_stage
 test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
 test_compose_installs_docker_maintenance_timer
@@ -770,6 +843,7 @@ test_env_prints_rendered_paths
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels
+test_env_renders_amneziawg_defaults_without_secrets
 test_env_regenerates_stale_htpasswd_when_password_changes
 test_env_regenerates_existing_hash_when_verify_is_unsupported
 test_adguard_update_pass_uses_precomputed_hash
@@ -786,6 +860,7 @@ test_network_apply_uses_runner
 test_uninstall_plan_is_non_destructive
 test_uninstall_apply_requires_confirmation
 test_uninstall_apply_uses_mock_runner_and_explicit_purge_flags
+test_uninstall_purges_amneziawg_configs_only_with_explicit_flag
 test_uninstall_can_remove_docker_engine_with_explicit_flag
 test_self_update_check_persists_branch_without_applying
 test_self_update_apply_tolerates_diff_changes

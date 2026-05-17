@@ -19,3 +19,12 @@ Thumbs.db
 /New*
 sync-lampac-docker.sh
 /.project_context*
+
+# AmneziaWG runtime secrets/configs
+/docker-proxy/amneziawg/server/
+/docker-proxy/amneziawg/clients/
+/docker-proxy/amneziawg/runtime/
+/docker-proxy/amneziawg/*.conf
+/docker-proxy/amneziawg/*.key
+/docker-proxy/amneziawg/*.psk
+/docker-proxy/amneziawg/*.pub

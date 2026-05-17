@@ -104,6 +104,40 @@ collect_compose_files() {
 		find "$ACTIVE_COMPOSE_DIR" -maxdepth 1 -type f \( -name "*.yml" -o -name "*.yaml" \) -print0 |
 			LC_ALL=C sort -z
 	)
+	filter_optional_compose_files
+}
+
+env_flag_enabled() {
+	local name=$1 value
+	value=$(printenv "$name" 2>/dev/null || true)
+	if [[ -z "$value" && -f "${ENV_FILE:-}" ]]; then
+		value=$(awk -F= -v key="$name" '
+			$1 == key {
+				gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+				gsub(/^["'\''"]|["'\''"]$/, "", $2)
+				print $2
+				exit
+			}
+		' "$ENV_FILE")
+	fi
+	case "${value,,}" in
+		1|true|yes|on) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+filter_optional_compose_files() {
+	local filtered=() file base
+	for file in "${COMPOSE_FILES[@]}"; do
+		base=$(basename "$file")
+		case "$base" in
+			*amneziawg*.yml|*amneziawg*.yaml)
+				env_flag_enabled ENABLE_AMNEZIAWG || continue
+				;;
+		esac
+		filtered+=("$file")
+	done
+	COMPOSE_FILES=("${filtered[@]}")
 }
 
 pick_compose_command() {

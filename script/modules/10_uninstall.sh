@@ -6,7 +6,8 @@ uninstall_usage() {
 Usage:
   install.sh uninstall --plan
   install.sh uninstall --apply --yes [--purge-docker-data] [--purge-firewall]
-    [--purge-docker-engine] [--purge-ssh] [--purge-network] [--remove-project-root]
+    [--purge-docker-engine] [--purge-ssh] [--purge-network]
+    [--purge-amneziawg-configs] [--remove-project-root]
 
 Default apply stops the compose stack. Purge flags remove additional project-owned
 state and installer-managed system changes.
@@ -16,7 +17,7 @@ USAGE
 install_uninstall_command() {
 	install_load_state_env
 	local mode=plan
-	local purge_docker=0 purge_docker_engine=0 purge_firewall=0 purge_ssh=0 purge_network=0 remove_root=0
+	local purge_docker=0 purge_docker_engine=0 purge_firewall=0 purge_ssh=0 purge_network=0 purge_amneziawg=0 remove_root=0
 	local -a original_args=("$@")
 	while (($# > 0)); do
 		case "$1" in
@@ -31,6 +32,7 @@ install_uninstall_command() {
 		--purge-firewall) purge_firewall=1 ;;
 		--purge-ssh) purge_ssh=1 ;;
 		--purge-network) purge_network=1 ;;
+		--purge-amneziawg-configs) purge_amneziawg=1 ;;
 		--remove-project-root) remove_root=1 ;;
 		-h | --help)
 			uninstall_usage
@@ -42,16 +44,16 @@ install_uninstall_command() {
 	done
 
 	if [[ "$mode" == "plan" ]]; then
-		uninstall_print_plan "$purge_docker" "$purge_docker_engine" "$purge_firewall" "$purge_ssh" "$purge_network" "$remove_root"
+		uninstall_print_plan "$purge_docker" "$purge_docker_engine" "$purge_firewall" "$purge_ssh" "$purge_network" "$purge_amneziawg" "$remove_root"
 		return 0
 	fi
 
 	require_apply_confirmation "${original_args[@]}"
-	uninstall_apply "$purge_docker" "$purge_docker_engine" "$purge_firewall" "$purge_ssh" "$purge_network" "$remove_root"
+	uninstall_apply "$purge_docker" "$purge_docker_engine" "$purge_firewall" "$purge_ssh" "$purge_network" "$purge_amneziawg" "$remove_root"
 }
 
 uninstall_print_plan() {
-	local purge_docker=$1 purge_docker_engine=$2 purge_firewall=$3 purge_ssh=$4 purge_network=$5 remove_root=$6
+	local purge_docker=$1 purge_docker_engine=$2 purge_firewall=$3 purge_ssh=$4 purge_network=$5 purge_amneziawg=$6 remove_root=$7
 	run_cmd uninstall.plan printf 'project uninstall plan\n'
 	cat <<PLAN
 Uninstall plan for $INSTALL_ROOT
@@ -83,6 +85,11 @@ PLAN
 - Restore the latest 99-xray.conf backup or remove the installer sysctl file, then reload sysctl.
 PLAN
 	fi
+	if ((purge_amneziawg)); then
+		cat <<PLAN
+- Remove AmneziaWG sensitive server/client configs under $INSTALL_ROOT/amneziawg.
+PLAN
+	fi
 	if ((remove_root)); then
 		cat <<PLAN
 - Remove project root: $INSTALL_ROOT
@@ -91,7 +98,7 @@ PLAN
 }
 
 uninstall_apply() {
-	local purge_docker=$1 purge_docker_engine=$2 purge_firewall=$3 purge_ssh=$4 purge_network=$5 remove_root=$6
+	local purge_docker=$1 purge_docker_engine=$2 purge_firewall=$3 purge_ssh=$4 purge_network=$5 purge_amneziawg=$6 remove_root=$7
 	uninstall_down_compose "$purge_docker"
 	if ((purge_docker)); then
 		uninstall_purge_docker_data
@@ -107,6 +114,9 @@ uninstall_apply() {
 	fi
 	if ((purge_network)); then
 		uninstall_restore_network
+	fi
+	if ((purge_amneziawg)); then
+		uninstall_purge_amneziawg_configs
 	fi
 	if ((remove_root)); then
 		uninstall_remove_project_root
@@ -197,4 +207,9 @@ uninstall_restore_network() {
 uninstall_remove_project_root() {
 	[[ -n "$INSTALL_ROOT" && "$INSTALL_ROOT" == /* && "$INSTALL_ROOT" != "/" ]] || die "refusing unsafe INSTALL_ROOT: $INSTALL_ROOT"
 	run_cmd project.remove rm -rf -- "$INSTALL_ROOT"
+}
+
+uninstall_purge_amneziawg_configs() {
+	[[ -n "$INSTALL_ROOT" && "$INSTALL_ROOT" == /* && "$INSTALL_ROOT" != "/" ]] || die "refusing unsafe INSTALL_ROOT: $INSTALL_ROOT"
+	run_cmd amneziawg.configs.remove rm -rf -- "$INSTALL_ROOT/amneziawg/server" "$INSTALL_ROOT/amneziawg/clients"
 }

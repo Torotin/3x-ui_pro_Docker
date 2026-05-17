@@ -148,6 +148,7 @@ Wizard при старте автоматически проверяет обн�
 - **Caddy** — fallback/error backend и вспомогательная статика.
 - **Homepage** — dashboard со ссылками на сервисы.
 - **Lampac** — публичный browser front/fallback за цепочкой Xray → Traefik.
+- **AmneziaWG** — опциональный Stage 6 UDP VPN на публичном `443/udp`.
 - **WARP/usque/TOR** — proxy helper-сервисы для маршрутизации.
 - **Dockcheck/logrotate** — эксплуатационные сервисы для обновлений и логов.
 
@@ -158,6 +159,45 @@ Clean install использует staged-модель публичных пор
 Traefik dashboard, 3x-ui, AdGuard, Dozzle, Homepage и Lampac admin не имеют прямых published ports и не используют отдельные поддомены. Доступ к админкам публикуется только как HTTPS path-routes на основном `${WEBDOMAIN}` в формате `https://${WEBDOMAIN}/${SUMMARY_URL_*}` и защищается BasicAuth, CrowdSec middleware, rate-limit и security/noindex headers. Root-domain Lampac front и frontend API `/reqinfo` и `/testaccsdb` не защищаются BasicAuth, но sensitive paths Lampac (`/admin`, `/adminpanel`, `/stats`, `/weblog`) закрываются admin middleware.
 
 Не открывайте наружу `4443`, `9118`, panel ports, metrics ports или CrowdSec ports. До включения отдельного AmneziaWG stage `443/udp` должен оставаться свободным; Traefik HTTP/3 и UDP entrypoints отключены.
+
+## Stage 6: AmneziaWG
+
+AmneziaWG включается только через `ENABLE_AMNEZIAWG=true`. До этого `run-compose.sh` исключает `15-amneziawg.yml`, а `doctor` ожидает, что публичный `443/udp` свободен. После включения единственным владельцем `443/udp` должен быть контейнер `amneziawg`; Traefik по-прежнему публикует только `80/tcp`, без HTTP/3 и без UDP.
+
+Используемый image по умолчанию: `amneziavpn/amneziawg-go:0.2.17`. Он выбран из официального Docker Hub namespace `amneziavpn` и исходников `amnezia-vpn/amneziawg-go`; `latest` в production-конфигурации не используется. Обновление image выполняется явной сменой `AMNEZIAWG_IMAGE` после проверки runtime-модели.
+
+Runtime-модель:
+
+- Docker bridge networking, без подключения к `traefik-proxy` или `dns-net`.
+- `/dev/net/tun` и capability `NET_ADMIN`.
+- `privileged: true` не используется по умолчанию.
+- `no-new-privileges=true` включён; если конкретный host/image докажет несовместимость с поднятием interface/NAT, отключение должно быть отдельным осознанным изменением.
+- IPv4 egress включён через NAT. `AMNEZIAWG_NAT_BACKEND=auto` предпочитает `nft`, если он доступен в контейнере, иначе принимает только `iptables-nft`; legacy iptables не используется молча.
+- IPv6 выключен по умолчанию (`AMNEZIAWG_IPV6_ENABLE=false`) и считается неподтверждённым до отдельной WAN-проверки.
+
+Основные переменные:
+
+- `ENABLE_AMNEZIAWG=false`
+- `AMNEZIAWG_IMAGE=amneziavpn/amneziawg-go:0.2.17`
+- `AMNEZIAWG_LISTEN_PORT=443`
+- `AMNEZIAWG_INTERNAL_PORT=51820`
+- `AMNEZIAWG_SERVER_ADDRESS=10.66.66.1/24`
+- `AMNEZIAWG_CLIENT_IPV4_PREFIX=10.66.66`
+- `AMNEZIAWG_CLIENT_COUNT=1`
+- `AMNEZIAWG_CLIENT_DNS=1.1.1.1,8.8.8.8`
+- `AMNEZIAWG_ENDPOINT_HOST=${WEBDOMAIN}`
+- `AMNEZIAWG_MTU=1420`
+- `AMNEZIAWG_NAT_BACKEND=auto`
+- `AMNEZIAWG_JC=4`, `AMNEZIAWG_JMIN=64`, `AMNEZIAWG_JMAX=128`
+- `AMNEZIAWG_S1=0`, `AMNEZIAWG_S2=0`, `AMNEZIAWG_H1=1`, `AMNEZIAWG_H2=2`, `AMNEZIAWG_H3=3`, `AMNEZIAWG_H4=4`
+
+Client config создаётся в `$INSTALL_ROOT/amneziawg/clients/client1.conf`. Summary и логи печатают только путь к файлу, без приватных ключей, preshared keys или содержимого client config. Каталоги `server/`, `clients/`, `runtime/` имеют права `0700`, конфиги и ключи `0600`; они добавлены в `.gitignore`.
+
+Удаление по умолчанию сохраняет AmneziaWG configs. Для удаления sensitive configs нужен явный флаг:
+
+```bash
+sudo script/install.sh uninstall --apply --yes --purge-amneziawg-configs
+```
 
 ## Безопасность и destructive actions
 
@@ -207,6 +247,7 @@ sudo script/install.sh uninstall --apply --yes \
 - `--purge-firewall` — удаление известных UFW правил проекта без глобального `ufw reset`.
 - `--purge-ssh` — восстановление backup `sshd_config`, проверка и reload/restart SSH.
 - `--purge-network` — восстановление или удаление installer sysctl файла.
+- `--purge-amneziawg-configs` — удаление `$INSTALL_ROOT/amneziawg/server` и `$INSTALL_ROOT/amneziawg/clients`; обычный uninstall их сохраняет.
 - `--remove-project-root` — удаление `INSTALL_ROOT`.
 
 ## Файлы состояния

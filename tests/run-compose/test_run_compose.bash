@@ -43,6 +43,12 @@ services:
     image: amir20/dozzle:latest
     container_name: dozzle
 YAML
+	cat >"$tmpdir/compose.d/15-amneziawg.yml" <<'YAML'
+services:
+  amneziawg:
+    image: amneziavpn/amneziawg-go:0.2.17
+    container_name: amneziawg
+YAML
 	cat >"$tmpdir/compose.d/99-disabled.yml.disable" <<'YAML'
 services:
   disabled:
@@ -116,6 +122,16 @@ test_restart_uses_no_deps_by_default() {
 	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml rm --stop --force traefik" "$tmpdir/docker.log" "restart must remove target service"
 	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml up -d --no-deps --force-recreate traefik" "$tmpdir/docker.log" "restart must recreate target without dependencies"
 	assert_not_contains "logs -f traefik" "$tmpdir/docker.log" "restart must not follow logs by default"
+}
+
+test_amneziawg_compose_file_is_gated_by_env() {
+	make_fixture
+	run_runner list-files >"$tmpdir/files.disabled"
+	assert_not_contains "15-amneziawg.yml" "$tmpdir/files.disabled" "AmneziaWG compose file must be skipped by default"
+
+	printf 'ENABLE_AMNEZIAWG=true\n' >"$tmpdir/compose.d/.env"
+	run_runner list-files >"$tmpdir/files.enabled"
+	assert_contains "15-amneziawg.yml" "$tmpdir/files.enabled" "AmneziaWG compose file must be included when enabled"
 }
 
 test_restart_can_include_dependencies() {
@@ -268,6 +284,7 @@ test_compose_fragments_do_not_hardcode_project_root() {
 }
 
 test_restart_uses_no_deps_by_default
+test_amneziawg_compose_file_is_gated_by_env
 test_restart_can_include_dependencies
 test_restart_logs_is_explicit
 test_up_is_safe_by_default

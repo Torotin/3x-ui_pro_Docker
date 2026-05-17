@@ -166,6 +166,7 @@ install_doctor_command() {
 	install_doctor_check_docker || status=1
 	install_doctor_check_compose || status=1
 	install_doctor_check_containers || status=1
+	install_doctor_check_public_ports || status=1
 	if ((status == 0)); then
 		printf 'doctor: OK\n'
 	else
@@ -429,6 +430,78 @@ install_doctor_check_containers() {
 		doctor_ok_detail "container running: $name ($health)"
 	done
 	((status == 0)) && doctor_ok "containers: $running/$checked running, $healthy healthy, $no_healthcheck without healthcheck"
+	return "$status"
+}
+
+install_bool_enabled() {
+	case "${1,,}" in
+	1|true|yes|on) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+install_doctor_check_public_ports() {
+	local status=0 ports owner udp443_owners=()
+	if ! command -v docker >/dev/null 2>&1; then
+		doctor_warn "Docker command is not installed; public port checks skipped"
+		return 0
+	fi
+	ports=$(docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null || true)
+	[[ -n "$ports" ]] || {
+		doctor_warn "no Docker published ports detected"
+		return 0
+	}
+
+	while IFS=$'\t' read -r owner published; do
+		[[ -n "$owner" ]] || continue
+		if grep -Eq '(^|, )[0-9.:]*:443->[0-9]+/udp' <<<"$published"; then
+			udp443_owners+=("$owner")
+		fi
+		install_doctor_check_forbidden_published_ports "$owner" "$published" || status=1
+	done <<<"$ports"
+
+	if install_bool_enabled "${ENABLE_AMNEZIAWG:-false}"; then
+		if ((${#udp443_owners[@]} != 1)) || [[ "${udp443_owners[0]:-}" != "amneziawg" ]]; then
+			doctor_fail "UDP 443 must be owned only by amneziawg when ENABLE_AMNEZIAWG=true (found: ${udp443_owners[*]:-none})" || status=1
+		fi
+	else
+		if ((${#udp443_owners[@]} > 0)); then
+			doctor_fail "UDP 443 must be unused before AmneziaWG stage (found: ${udp443_owners[*]})" || status=1
+		fi
+	fi
+
+	if ((status == 0)); then
+		if install_bool_enabled "${ENABLE_AMNEZIAWG:-false}"; then
+			doctor_ok "public port ownership matches AmneziaWG stage"
+		else
+			doctor_ok "public port ownership matches pre-AmneziaWG stage"
+		fi
+	fi
+	return "$status"
+}
+
+install_doctor_check_forbidden_published_ports() {
+	local owner=$1 published=$2 status=0 port
+	local -a forbidden_ports=(
+		4443
+		9118
+		"${PORT_LOCAL_VLESS_PANEL:-}"
+		"${PORT_LOCAL_VLESS_SUBSCRIBE:-}"
+		"${PORT_LOCAL_XHTTP:-}"
+		"${PORT_LOCAL_CROWDSEC_API:-}"
+		"${PORT_LOCAL_CROWDSEC_CADDY:-}"
+		"${PORT_LOCAL_CROWDSEC_APPSEC:-}"
+		"${PORT_LOCAL_CROWDSEC_PROMETHEUS:-}"
+	)
+	for port in "${forbidden_ports[@]}"; do
+		[[ "$port" =~ ^[0-9]+$ ]] || continue
+		if grep -Eq "(^|, )[0-9.:]*:${port}->" <<<"$published"; then
+			doctor_fail "forbidden public port ${port} published by ${owner}" || status=1
+		fi
+	done
+	if [[ "$owner" == "traefik" ]] && grep -Eq '(^|, )[0-9.:]*:443->[0-9]+/udp' <<<"$published"; then
+		doctor_fail "Traefik must not publish UDP 443" || status=1
+	fi
 	return "$status"
 }
 

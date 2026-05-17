@@ -181,11 +181,24 @@ for file_name, service_name, key in [
     for admin_domain in admin_domains:
         assert_true(admin_domain not in rule, f"{key} must not use separate admin subdomains")
 
+amneziawg_compose = load_yaml("docker-proxy/compose.d/15-amneziawg.yml")
+amneziawg_service = amneziawg_compose["services"]["amneziawg"]
+amneziawg_ports = [str(port) for port in (amneziawg_service.get("ports") or [])]
+assert_true(amneziawg_ports == ["${AMNEZIAWG_LISTEN_PORT:-443}:${AMNEZIAWG_INTERNAL_PORT:-51820}/udp"], f"AmneziaWG must publish only public 443/udp, got {amneziawg_ports}")
+assert_true(amneziawg_service.get("network_mode") == "bridge", "AmneziaWG must stay off internal Traefik/DNS networks")
+assert_true("NET_ADMIN" in (amneziawg_service.get("cap_add") or []), "AmneziaWG must use NET_ADMIN")
+assert_true("/dev/net/tun:/dev/net/tun" in [str(item) for item in (amneziawg_service.get("devices") or [])], "AmneziaWG must mount /dev/net/tun")
+assert_true("privileged" not in amneziawg_service, "AmneziaWG must not be privileged by default")
+assert_true("no-new-privileges=true" in (amneziawg_service.get("security_opt") or []), "AmneziaWG should keep no-new-privileges unless proven incompatible")
+assert_true("latest" not in str(amneziawg_service.get("image", "")), "AmneziaWG image must not use latest")
+
 for compose_path in sorted((root / "docker-proxy/compose.d").glob("*.yml")):
     data = load_yaml(compose_path.relative_to(root))
     for service_name, service in (data.get("services") or {}).items():
         ports = [str(port) for port in (service.get("ports") or [])]
         for port in ports:
+            if compose_path.name == "15-amneziawg.yml" and service_name == "amneziawg":
+                continue
             assert_true("/udp" not in port or not port.startswith("443:"), f"443/udp must be unused before AmneziaWG stage: {compose_path}:{service_name}:{port}")
 
 print("stage tcp clean architecture assertions OK")
