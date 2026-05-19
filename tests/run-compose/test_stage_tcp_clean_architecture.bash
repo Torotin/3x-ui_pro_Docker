@@ -29,6 +29,18 @@ def labels_for(service):
         out[key] = value
     return out
 
+def homepage_services():
+    return load_yaml("docker-proxy/homepage/services.yaml")
+
+def find_homepage_service(group_name, service_name):
+    for group in homepage_services():
+        if group_name not in group:
+            continue
+        for item in group[group_name] or []:
+            if service_name in item:
+                return item[service_name] or {}
+    raise AssertionError(f"Homepage service not found: {group_name}/{service_name}")
+
 def assert_true(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -37,6 +49,8 @@ traefik_compose = load_yaml("docker-proxy/compose.d/06-traefik.yml")
 traefik_service = traefik_compose["services"]["traefik"]
 traefik_ports = [str(port) for port in (traefik_service.get("ports") or [])]
 assert_true(traefik_ports == ["80:80"], f"Traefik must publish only 80:80, got {traefik_ports}")
+file_middlewares = (load_yaml("docker-proxy/traefik/dynamic/crowdsec.yml").get("http") or {}).get("middlewares") or {}
+assert_true("admin-security-headers" in file_middlewares, "admin-security-headers must be defined by the file provider")
 
 traefik_static = load_yaml("docker-proxy/traefik/traefik.yml")
 entrypoints = traefik_static.get("entryPoints") or {}
@@ -55,8 +69,34 @@ for key in traefik_labels:
     assert_true("traefik.udp." not in key, f"Traefik UDP label must not exist: {key}")
 for key, value in traefik_labels.items():
     if key.startswith("traefik.http.routers."):
-        assert_true("Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)" not in value, "Traefik dashboard must not expose root-domain /api")
         assert_true("Host(`${WEBDOMAIN}`) && PathPrefix(`/dashboard`)" not in value, "Traefik dashboard must not expose root-domain /dashboard")
+
+root_api_rule = traefik_labels.get("traefik.http.routers.traefik-dashboard-api-root.rule", "")
+root_api_middlewares = traefik_labels.get("traefik.http.routers.traefik-dashboard-api-root.middlewares", "")
+root_api_service = traefik_labels.get("traefik.http.routers.traefik-dashboard-api-root.service", "")
+assert_true(root_api_rule == "Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)", "Traefik dashboard root /api must route to api@internal")
+assert_true(root_api_middlewares == "secured-chain", "Traefik dashboard root /api must keep admin protection")
+assert_true(root_api_service == "api@internal", "Traefik dashboard root /api must use api@internal")
+
+homepage_compose = load_yaml("docker-proxy/compose.d/13-homepage.yml")
+homepage_labels = labels_for(homepage_compose["services"]["homepage"])
+homepage_static_rule = homepage_labels.get("traefik.http.routers.homepage-static.rule", "")
+homepage_static_service = homepage_labels.get("traefik.http.routers.homepage-static.service", "")
+homepage_static_priority = int(homepage_labels.get("traefik.http.routers.homepage-static.priority", "0"))
+root_api_priority = int(traefik_labels.get("traefik.http.routers.traefik-dashboard-api-root.priority", "0"))
+assert_true("PathPrefix(`/api/docker`)" in homepage_static_rule, "Homepage Docker stats API must route to Homepage, not Traefik dashboard /api")
+assert_true(homepage_static_service == "homepage-svc", "Homepage static/API router must use homepage-svc")
+assert_true(homepage_static_priority > root_api_priority, "Homepage root /api routes must outrank Traefik dashboard root /api")
+traefik_homepage_card = find_homepage_service("Admin", "Traefik Dashboard")
+traefik_homepage_widget = traefik_homepage_card.get("widget") or {}
+assert_true(
+    traefik_homepage_widget.get("url") == "https://{{HOMEPAGE_VAR_WEBDOMAIN}}:4443/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}",
+    "Homepage Traefik widget must use the internal Traefik websecure port with the public hostname",
+)
+assert_true(
+    traefik_homepage_widget.get("username") == "{{HOMEPAGE_VAR_USER_WEB}}" and traefik_homepage_widget.get("password") == "{{HOMEPAGE_VAR_PASS_WEB}}",
+    "Homepage Traefik widget must authenticate through the existing web credentials",
+)
 
 xui_compose = load_yaml("docker-proxy/compose.d/12-3x-ui.yml")
 xui_service = xui_compose["services"]["3x-ui"]
@@ -153,6 +193,13 @@ admin_domains = [
     "HOMEPAGE_ADMIN_DOMAIN",
     "LAMPAC_ADMIN_DOMAIN",
 ]
+shared_header_cases = {
+    "traefik.http.routers.traefik-dashboard-prefixed.middlewares",
+    "traefik.http.routers.dozzle-router.middlewares",
+    "traefik.http.routers.dozzle-api.middlewares",
+    "traefik.http.routers.adguard-panel.middlewares",
+    "traefik.http.routers.homepage-router.middlewares",
+}
 for file_name, service_name, key in admin_cases:
     service_labels = labels_for(load_yaml(f"docker-proxy/compose.d/{file_name}")["services"][service_name])
     middleware = service_labels.get(key, "")
@@ -162,10 +209,32 @@ for file_name, service_name, key in admin_cases:
         chain_key = f"traefik.http.middlewares.{name}.chain.middlewares"
         chain_parts.append(service_labels.get(chain_key) or traefik_labels.get(chain_key) or "")
     chain = ",".join(chain_parts)
+    if key in shared_header_cases:
+        assert_true(
+            "admin-security-headers@file" in chain,
+            f"{key} must reference admin-security-headers through the file provider",
+        )
+    assert_true(
+        "admin-security-headers," not in f"{chain}," and "admin-security-headers@docker" not in chain,
+        f"{key} must not reference bare/docker admin-security-headers",
+    )
     assert_true("basic-auth" in chain or "auth" in chain, f"{key} must require BasicAuth")
     assert_true("bouncer@file" in chain, f"{key} must include CrowdSec bouncer")
     assert_true("rate" in chain or "ratelimit" in chain, f"{key} must include rate limiting")
     assert_true("security" in chain or "noindex" in chain or "headers" in chain, f"{key} must include security/noindex headers")
+
+manifest_middleware = traefik_labels.get("traefik.http.routers.traefik-dashboard-manifest.middlewares", "")
+assert_true(manifest_middleware, "Traefik dashboard manifest router must define middleware")
+manifest_chain_parts = [manifest_middleware]
+for name in [part.strip() for part in manifest_middleware.split(",") if part.strip()]:
+    chain_key = f"traefik.http.middlewares.{name}.chain.middlewares"
+    manifest_chain_parts.append(traefik_labels.get(chain_key) or "")
+manifest_chain = ",".join(manifest_chain_parts)
+assert_true("basic-auth" not in manifest_chain, "Traefik dashboard manifest must not require BasicAuth")
+assert_true("bouncer@file" in manifest_chain, "Traefik dashboard manifest must include CrowdSec bouncer")
+assert_true("rate" in manifest_chain or "ratelimit" in manifest_chain, "Traefik dashboard manifest must include rate limiting")
+assert_true("admin-security-headers@file" in manifest_chain, "Traefik dashboard manifest must include admin security headers")
+assert_true("dash-strip-prefix" in manifest_chain, "Traefik dashboard manifest must strip the dashboard prefix")
 
 for file_name, service_name, key in [
     ("06-traefik.yml", "traefik", "traefik.http.routers.traefik-dashboard-prefixed.rule"),
@@ -186,7 +255,7 @@ for compose_path in sorted((root / "docker-proxy/compose.d").glob("*.yml")):
     for service_name, service in (data.get("services") or {}).items():
         ports = [str(port) for port in (service.get("ports") or [])]
         for port in ports:
-            assert_true("/udp" not in port or not port.startswith("443:"), f"443/udp must be unused before AmneziaWG stage: {compose_path}:{service_name}:{port}")
+            assert_true("/udp" not in port or not port.startswith("443:"), f"443/udp must be unused before an accepted UDP stage: {compose_path}:{service_name}:{port}")
 
 print("stage tcp clean architecture assertions OK")
 PY

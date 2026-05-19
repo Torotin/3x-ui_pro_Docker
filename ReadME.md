@@ -157,7 +157,7 @@ Clean install использует staged-модель публичных пор
 
 Traefik dashboard, 3x-ui, AdGuard, Dozzle, Homepage и Lampac admin не имеют прямых published ports и не используют отдельные поддомены. Доступ к админкам публикуется только как HTTPS path-routes на основном `${WEBDOMAIN}` в формате `https://${WEBDOMAIN}/${SUMMARY_URL_*}` и защищается BasicAuth, CrowdSec middleware, rate-limit и security/noindex headers. Root-domain Lampac front и frontend API `/reqinfo` и `/testaccsdb` не защищаются BasicAuth, но sensitive paths Lampac (`/admin`, `/adminpanel`, `/stats`, `/weblog`) закрываются admin middleware.
 
-Не открывайте наружу `4443`, `9118`, panel ports, metrics ports или CrowdSec ports. До включения отдельного AmneziaWG stage `443/udp` должен оставаться свободным; Traefik HTTP/3 и UDP entrypoints отключены.
+Не открывайте наружу `4443`, `9118`, panel ports, metrics ports или CrowdSec ports. `443/udp` должен оставаться свободным до отдельного явно принятого UDP-stage; Traefik HTTP/3 и UDP entrypoints отключены.
 
 ## Безопасность и destructive actions
 

@@ -1,29 +1,116 @@
-- Main:
-    - Main Page:
-        icon: mdi-home
-        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}
+- Admin:
+    - Homepage Dashboard:
+        icon: mdi-view-dashboard
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_HOMEPAGE}}/"
+        description: Dashboard and service inventory
+        server: dockerproxy
+        container: homepage
 
     - 3X-UI Web Panel:
         icon: https://github.com/MHSanaei/3x-ui/raw/main/media/3x-ui-dark.png
-        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_3X-UI_PATH}}/
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_3X-UI_PATH}}/"
+        description: Xray and subscription control panel
+        server: dockerproxy
+        container: 3x-ui
+
+    - Traefik Dashboard:
+        icon: sh-traefik.webp
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}/dashboard/#/"
+        description: Edge routing and middleware status
+        server: dockerproxy
+        container: traefik
+        widget:
+            type: traefik
+            url: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}:4443/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}"
+            username: "{{HOMEPAGE_VAR_USER_WEB}}"
+            password: "{{HOMEPAGE_VAR_PASS_WEB}}"
 
     - Dozzle:
         icon: sh-dozzle.webp
-        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_DOZZLE}}/
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_DOZZLE}}/"
+        description: Container log viewer
+        server: dockerproxy
+        container: dozzle
 
     - AdGuard Home:
         icon: sh-adguard-home.webp
-        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_ADGUARD_PANEL}}/
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_ADGUARD_PANEL}}/"
+        description: DNS filtering and DoH endpoint
+        server: dockerproxy
+        container: adguard
+        siteMonitor: http://adguard/
         widget:
             type: adguard
             url: http://adguard
-            username: {{HOMEPAGE_VAR_USER_WEB}}
-            password: {{HOMEPAGE_VAR_PASS_WEB}}
+            username: "{{HOMEPAGE_VAR_USER_WEB}}"
+            password: "{{HOMEPAGE_VAR_PASS_WEB}}"
 
-    - Traefik Dashboard:
-        description: Traefik dashboard
-        icon: sh-traefik.webp
-        href: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}/dashboard/#/
-        widget:
-            type: traefik
-            url: http://traefik:8080
+- Public:
+    - Main Page:
+        icon: mdi-home
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}"
+        description: Public root served
+        siteMonitor: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}:4443"
+
+    - Lampac:
+        icon: mdi-television-classic
+        description: Media aggregator frontend
+        server: dockerproxy
+        container: lampac
+
+    - Caddy Fallback:
+        icon: sh-caddy.webp
+        description: Internal fallback and error backend
+        server: dockerproxy
+        container: caddy
+
+    - Sub JSON Processor:
+        icon: mdi-file-code
+        description: JSON subscription geodata post-processor
+        server: dockerproxy
+        container: sub-json-processor
+        siteMonitor: http://sub-json-processor:8080/healthz
+
+- Network & Security:
+    - CrowdSec:
+        icon: mdi-shield-half-full
+        description: LAPI, AppSec, and security decisions
+        server: dockerproxy
+        container: crowdsec
+
+    - WARP:
+        icon: mdi-cloud-sync
+        description: Cloudflare WARP SOCKS backend
+        server: dockerproxy
+        container: warp
+
+    - Usque:
+        icon: mdi-transit-connection-variant
+        description: Alternate WARP-like SOCKS backend
+        server: dockerproxy
+        container: usque
+
+    - TOR Proxy:
+        icon: mdi-security-network
+        description: Internal TOR SOCKS backend
+        server: dockerproxy
+        container: tor-proxy
+
+- Maintenance:
+    - Dockcheck:
+        icon: mdi-package-variant
+        description: Docker image update checks
+        server: dockerproxy
+        container: dockcheck
+
+    - Logrotate:
+        icon: mdi-file-rotate-right
+        description: Container log rotation
+        server: dockerproxy
+        container: logrotate
+
+    - Traefik ACME Exporter:
+        icon: mdi-certificate
+        description: Certificate export worker
+        server: dockerproxy
+        container: traefik-acme-exporter

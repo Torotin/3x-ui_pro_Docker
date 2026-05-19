@@ -3,9 +3,12 @@
 # https://gethomepage.dev/configs/info-widgets/
 
 - resources:
+    label: Container
     cpu: true
     memory: true
     disk: /
+    uptime: true
+    refresh: 3000
 
 - search:
     provider: duckduckgo

@@ -70,11 +70,8 @@ services:
       - traefik.http.middlewares.rate-limit.ratelimit.burst=100
 
       # Основная защищённая цепочка для админок
-      - traefik.http.middlewares.admin-security-headers.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow
-      - traefik.http.middlewares.admin-security-headers.headers.stsSeconds=31536000
-      - traefik.http.middlewares.admin-security-headers.headers.browserXssFilter=true
-      - traefik.http.middlewares.admin-security-headers.headers.contentTypeNosniff=true
-      - traefik.http.middlewares.secured-chain.chain.middlewares=bouncer@file,basic-auth,rate-limit,admin-security-headers,compress
+      - traefik.http.middlewares.secured-chain.chain.middlewares=bouncer@file,basic-auth,rate-limit,admin-security-headers@file,compress
+      - traefik.http.middlewares.dashboard-manifest-chain.chain.middlewares=bouncer@file,rate-limit,admin-security-headers@file,dash-strip-prefix,compress
 
       # API-цепочка для внутренних web-service маршрутов без BasicAuth
       - traefik.http.middlewares.api-chain.chain.middlewares=rate-limit,compress
@@ -124,10 +121,18 @@ services:
       - traefik.http.routers.traefik-dashboard-prefixed.tls.certresolver=le
       - traefik.http.routers.traefik-dashboard-prefixed.priority=140
 
+      # API Dashboard использует абсолютные /api/* запросы из UI
+      - traefik.http.routers.traefik-dashboard-api-root.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.traefik-dashboard-api-root.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard-api-root.middlewares=secured-chain
+      - traefik.http.routers.traefik-dashboard-api-root.service=api@internal
+      - traefik.http.routers.traefik-dashboard-api-root.tls.certresolver=le
+      - traefik.http.routers.traefik-dashboard-api-root.priority=145
+
       # Manifest.json Dashboard
       - traefik.http.routers.traefik-dashboard-manifest.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_TRAEFIK_DASHBOARD}/dashboard/manifest.json`)
       - traefik.http.routers.traefik-dashboard-manifest.entrypoints=websecure
-      - traefik.http.routers.traefik-dashboard-manifest.middlewares=secured-chain,dash-strip-prefix
+      - traefik.http.routers.traefik-dashboard-manifest.middlewares=dashboard-manifest-chain
       - traefik.http.routers.traefik-dashboard-manifest.service=api@internal
       - traefik.http.routers.traefik-dashboard-manifest.tls.certresolver=le
       - traefik.http.routers.traefik-dashboard-manifest.priority=150
