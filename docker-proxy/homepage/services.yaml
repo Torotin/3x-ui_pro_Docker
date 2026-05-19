@@ -13,6 +13,13 @@
         server: dockerproxy
         container: 3x-ui
 
+    - Telemt Panel:
+        icon: mdi-telegram
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TELEMT_PANEL}}/"
+        description: MTProxy and Telemt control panel
+        server: dockerproxy
+        container: telemt-panel
+
     - Traefik Dashboard:
         icon: sh-traefik.webp
         href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}/dashboard/#/"
