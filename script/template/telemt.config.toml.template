@@ -1,0 +1,52 @@
+[general]
+data_path = "/var/lib/telemt"
+log_level = "normal"
+use_middle_proxy = true
+proxy_secret_path = "/var/lib/telemt/proxy-secret"
+proxy_config_v4_cache_path = "/var/lib/telemt/cache/proxy-config-v4.txt"
+proxy_config_v6_cache_path = "/var/lib/telemt/cache/proxy-config-v6.txt"
+quota_state_path = "/var/lib/telemt/telemt.limit.json"
+
+[general.modes]
+classic = false
+secure = false
+tls = true
+
+[general.links]
+show = "*"
+public_host = "${WEBDOMAIN}"
+public_port = 443
+
+[server]
+port = ${PORT_LOCAL_TELEMT_PROXY}
+proxy_protocol = true
+proxy_protocol_trusted_cidrs = ["172.18.0.0/24", "172.19.0.0/24"]
+metrics_listen = "0.0.0.0:${PORT_LOCAL_TELEMT_METRICS}"
+metrics_whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24"]
+
+[server.api]
+enabled = true
+listen = "0.0.0.0:${PORT_LOCAL_TELEMT_API}"
+whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24"]
+auth_header = "${TELEMT_API_AUTH_HEADER}"
+minimal_runtime_enabled = true
+
+[[server.listeners]]
+ip = "0.0.0.0"
+port = ${PORT_LOCAL_TELEMT_PROXY}
+proxy_protocol = true
+
+[censorship]
+tls_domain = "${WEBDOMAIN}"
+mask = true
+unknown_sni_action = "mask"
+mask_host = "traefik"
+mask_port = 4443
+mask_proxy_protocol = 1
+tls_emulation = true
+tls_front_dir = "/var/lib/telemt/tlsfront"
+mask_relay_timeout_ms = 300000
+mask_relay_idle_timeout_ms = 30000
+
+[access.users]
+"${TELEMT_BOOTSTRAP_USER}" = "${TELEMT_BOOTSTRAP_SECRET_HEX}"

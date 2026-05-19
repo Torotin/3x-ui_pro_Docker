@@ -33,6 +33,15 @@ detect_public_ip() {
 	curl -fsSL --max-time 5 "$url" 2>/dev/null || true
 }
 
+generate_hex_secret() {
+	local bytes=${1:-16}
+	if command -v openssl >/dev/null 2>&1; then
+		openssl rand -hex "$bytes"
+	else
+		od -An -N "$bytes" -tx1 /dev/urandom | tr -d ' \n'
+	fi
+}
+
 ensure_env_defaults() {
 	: "${WEBDOMAIN:=example.invalid}"
 	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
@@ -63,6 +72,7 @@ ensure_env_defaults() {
 	: "${URI_ADGUARD_PANEL:=$(generate_random_string 12 16)}"
 	: "${URI_ADGUARD_DOH:=$(generate_random_string 12 16)}"
 	: "${URI_HOMEPAGE:=$(generate_random_string 12 16)}"
+	: "${URI_TELEMT_PANEL:=$(generate_random_string 12 16)}"
 	: "${URI_TEST:=$(generate_random_string 12 16)}"
 	: "${PORT_LOCAL_CADDYWEB:=$(generate_random_port)}"
 	: "${PORT_LOCAL_SUB2SING:=$(generate_random_port)}"
@@ -71,6 +81,10 @@ ensure_env_defaults() {
 	: "${PORT_LOCAL_VLESS_PANEL:=$(generate_random_port)}"
 	: "${PORT_LOCAL_XHTTP:=$(generate_random_port)}"
 	: "${PORT_LOCAL_VISION:=$(generate_random_port)}"
+	: "${PORT_LOCAL_TELEMT_PROXY:=9443}"
+	: "${PORT_LOCAL_TELEMT_API:=9091}"
+	: "${PORT_LOCAL_TELEMT_METRICS:=9090}"
+	: "${PORT_LOCAL_TELEMT_PANEL:=8080}"
 	: "${PORT_LOCAL_CROWDSEC_API:=$(generate_random_port)}"
 	: "${PORT_LOCAL_CROWDSEC_CADDY:=$(generate_random_port)}"
 	: "${PORT_LOCAL_CROWDSEC_APPSEC:=$(generate_random_port)}"
@@ -79,16 +93,24 @@ ensure_env_defaults() {
 	: "${CROWDSEC_API_KEY_CADDY:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_TRAEFIK:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_FIREWALL:=$(generate_random_string 32 48)}"
+	: "${TELEMT_API_AUTH_HEADER:=$(generate_random_string 48 64)}"
+	: "${TELEMT_PANEL_JWT_SECRET:=$(generate_random_string 48 64)}"
+	: "${TELEMT_PANEL_PASSWORD_HASH:=}"
+	: "${TELEMT_BOOTSTRAP_USER:=bootstrap}"
+	: "${TELEMT_BOOTSTRAP_SECRET_HEX:=$(generate_hex_secret 16)}"
+	: "${TELEMT_PANEL_VERSION:=latest}"
 	: "${HT_PASS_ENCODED:=}"
 	: "${ADGUARD_ADMIN_HASH:=}"
 	export WEBDOMAIN PUBLIC_IPV4 PUBLIC_IPV6 USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
 	export URI_TRAEFIK_DASHBOARD URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
-	export URI_VLESS_XHTTP URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TEST
+	export URI_VLESS_XHTTP URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_TEST
 	export PORT_LOCAL_CADDYWEB PORT_LOCAL_SUB2SING PORT_LOCAL_DOZZLE PORT_LOCAL_VLESS_SUBSCRIBE
-	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_CROWDSEC_API
+	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_TELEMT_PROXY
+	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_CROWDSEC_API
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
+	export TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_PANEL_VERSION
 }
 
 generate_htpasswd_if_needed() {
@@ -152,6 +174,40 @@ generate_adguard_hash_from_htpasswd() {
 	export ADGUARD_ADMIN_HASH
 }
 
+generate_telemt_panel_hash_if_needed() {
+	[[ -n "${USER_WEB:-}" ]] || return 0
+	[[ -z "${TELEMT_PANEL_PASSWORD_HASH:-}" ]] || return 0
+	[[ -n "${PASS_WEB:-}" ]] || die "PASS_WEB is required to generate TELEMT_PANEL_PASSWORD_HASH"
+	local raw_htpasswd raw_hash
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		raw_htpasswd="${USER_WEB}"':$2y$05$mockpanelhash'
+	elif command -v htpasswd >/dev/null 2>&1; then
+		if ! raw_htpasswd=$(htpasswd -nBb "$USER_WEB" "$PASS_WEB" 2>/dev/null); then
+			die "htpasswd failed to generate Telemt panel password hash"
+		fi
+		raw_htpasswd=$(printf '%s' "$raw_htpasswd" | tr -d '\r\n')
+	else
+		die "htpasswd is required to generate TELEMT_PANEL_PASSWORD_HASH"
+	fi
+	raw_hash=${raw_htpasswd#*:}
+	TELEMT_PANEL_PASSWORD_HASH=${raw_hash//$/\$\$}
+	export TELEMT_PANEL_PASSWORD_HASH
+}
+
+render_telemt_configs() {
+	local templates telemt_config telemt_panel_config
+	templates=$(template_dir)
+	telemt_config="$INSTALL_ROOT/telemt/config/config.toml"
+	telemt_panel_config="$INSTALL_ROOT/telemt-panel/config/config.toml"
+	backup_file "$telemt_config"
+	backup_file "$telemt_panel_config"
+	TELEMT_PANEL_PASSWORD_HASH_RAW=${TELEMT_PANEL_PASSWORD_HASH//\$\$/\$}
+	export TELEMT_PANEL_PASSWORD_HASH_RAW
+	render_env_template "$templates/telemt.config.toml.template" "$telemt_config"
+	render_env_template "$templates/telemt-panel.config.toml.template" "$telemt_panel_config"
+	chmod 0600 "$telemt_config" "$telemt_panel_config" 2>/dev/null || true
+}
+
 install_env_command() {
 	require_writable_target "$INSTALL_STATE_DIR" "installer state directory"
 	require_writable_target "$INSTALL_STATE_DIR/backups" "installer backup directory"
@@ -159,6 +215,7 @@ install_env_command() {
 	install_load_state_env
 	ensure_env_defaults
 	generate_htpasswd_if_needed
+	generate_telemt_panel_hash_if_needed
 	local templates install_env compose_env
 	templates=$(template_dir)
 	install_env="$INSTALL_STATE_DIR/install.env"
@@ -167,6 +224,7 @@ install_env_command() {
 	backup_file "$compose_env"
 	render_env_template "$templates/install.env.template" "$install_env"
 	render_env_template "$templates/docker.env.template" "$compose_env"
+	render_telemt_configs
 	run_cmd env.render printf 'rendered env files\n'
-	printf 'rendered:\n- %s\n- %s\n' "$install_env" "$compose_env"
+	printf 'rendered:\n- %s\n- %s\n- %s\n- %s\n' "$install_env" "$compose_env" "$INSTALL_ROOT/telemt/config/config.toml" "$INSTALL_ROOT/telemt-panel/config/config.toml"
 }

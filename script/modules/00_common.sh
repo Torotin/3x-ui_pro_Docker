@@ -404,6 +404,9 @@ install_doctor_check_containers() {
 	if [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
 		containers+=(lampac)
 	fi
+	if [[ -f "$INSTALL_ROOT/compose.d/15-telemt.yml" || -f "$INSTALL_ROOT/compose.d/15-telemt.yaml" ]]; then
+		containers+=(telemt telemt-panel)
+	fi
 	for name in "${containers[@]}"; do
 		((checked++))
 		if ! docker inspect "$name" >/dev/null 2>&1; then
