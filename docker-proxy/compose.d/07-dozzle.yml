@@ -49,10 +49,10 @@ services:
       - traefik.http.middlewares.dozzle-strip.stripPrefix.prefixes=/${URI_DOZZLE}
 
       # Основная цепочка middleware (включая auth и compress)
-      - traefik.http.middlewares.dozzle-chain.chain.middlewares=bouncer@file,basic-auth,dozzle-rate-limit,admin-security-headers,compress
+      - traefik.http.middlewares.dozzle-chain.chain.middlewares=bouncer@file,basic-auth,dozzle-rate-limit,admin-security-headers@file,compress
 
       # API без compress — чтобы SSE не обрывались
-      - traefik.http.middlewares.dozzle-api-chain.chain.middlewares=bouncer@file,basic-auth,dozzle-rate-limit,admin-security-headers
+      - traefik.http.middlewares.dozzle-api-chain.chain.middlewares=bouncer@file,basic-auth,dozzle-rate-limit,admin-security-headers@file
 
       # ---------- Роутеры ----------
       # Основной интерфейс Dozzle
