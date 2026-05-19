@@ -1,0 +1,95 @@
+services:
+  telemt:
+    image: ghcr.io/telemt/telemt:latest
+    container_name: telemt
+    restart: unless-stopped
+    depends_on:
+      adguard:
+        condition: service_healthy
+    env_file:
+      - ./.env
+    user: "1000:1000"
+    working_dir: /var/lib/telemt
+    command: ["/etc/telemt/config.toml"]
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.15
+      dns-net:
+        ipv4_address: 172.19.0.15
+    dns:
+      - 172.19.0.10
+    volumes:
+      - ../telemt/config:/etc/telemt:rw
+      - ../telemt/data:/var/lib/telemt:rw
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    expose:
+      - "${PORT_LOCAL_TELEMT_PROXY:-9443}"
+      - "${PORT_LOCAL_TELEMT_API:-9091}"
+      - "${PORT_LOCAL_TELEMT_METRICS:-9090}"
+    healthcheck:
+      test: ["CMD", "/app/telemt", "healthcheck", "/etc/telemt/config.toml", "--mode", "liveness"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  telemt-panel:
+    build:
+      context: ../telemt-panel
+      args:
+        TELEMT_PANEL_VERSION: ${TELEMT_PANEL_VERSION:-latest}
+    container_name: telemt-panel
+    restart: unless-stopped
+    depends_on:
+      telemt:
+        condition: service_healthy
+    env_file:
+      - ./.env
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.16
+      dns-net:
+        ipv4_address: 172.19.0.16
+    dns:
+      - 172.19.0.10
+    volumes:
+      - ../telemt-panel/config:/etc/telemt-panel:ro
+      - ../telemt-panel/data:/var/lib/telemt-panel:rw
+      - ../telemt/config:/etc/telemt:rw
+    command: ["--config", "/etc/telemt-panel/config.toml"]
+    security_opt:
+      - no-new-privileges=true
+    expose:
+      - "${PORT_LOCAL_TELEMT_PANEL:-8080}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/${URI_TELEMT_PANEL}/ >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      - traefik.http.services.telemt-panel-svc.loadbalancer.server.port=${PORT_LOCAL_TELEMT_PANEL:-8080}
+
+      - traefik.http.middlewares.telemt-panel-compress.compress=true
+      - traefik.http.middlewares.telemt-panel-rate-limit.ratelimit.average=20
+      - traefik.http.middlewares.telemt-panel-rate-limit.ratelimit.burst=40
+      - traefik.http.middlewares.telemt-panel-basic-auth.basicauth.users=${HT_PASS_ENCODED}
+      - traefik.http.middlewares.telemt-panel-basic-auth.basicauth.realm=telemt-panel
+      - traefik.http.middlewares.telemt-panel-noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow
+      - traefik.http.middlewares.telemt-panel-chain.chain.middlewares=telemt-panel-basic-auth,telemt-panel-rate-limit,telemt-panel-noindex,telemt-panel-compress
+
+      - traefik.http.routers.telemt-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TELEMT_PANEL}`)
+      - traefik.http.routers.telemt-panel.entrypoints=websecure
+      - traefik.http.routers.telemt-panel.middlewares=bouncer@file,telemt-panel-chain,admin-security-headers@file
+      - traefik.http.routers.telemt-panel.tls.certresolver=le
+      - traefik.http.routers.telemt-panel.service=telemt-panel-svc
+      - traefik.http.routers.telemt-panel.priority=9994

@@ -167,7 +167,7 @@ services:
       - traefik.http.routers.3xui-sub.priority=9998
 
       # Optional HTTPS endpoint used by Traefik websecure (:4443) and by
-      # non-Vision TLS traffic after the Reality fallback to traefik:4443.
+      # non-Vision TLS traffic after the Reality -> Telemt fallback chain.
       - traefik.http.routers.xhttp3xui.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)
       - traefik.http.routers.xhttp3xui.entrypoints=websecure
       - traefik.http.routers.xhttp3xui.tls.certresolver=le

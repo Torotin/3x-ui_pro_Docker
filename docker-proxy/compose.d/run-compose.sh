@@ -109,10 +109,11 @@ collect_compose_files() {
 pick_compose_command() {
 	if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
 		COMPOSE_CMD=(docker compose)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		COMPOSE_CMD=(docker-compose)
 	else
-		log "ERROR: Не найден docker compose или docker-compose в PATH"
+		log "ERROR: Docker Compose v2 plugin is required: install docker-compose-plugin and use 'docker compose'"
+		if command -v docker-compose >/dev/null 2>&1; then
+			log "ERROR: legacy docker-compose is not supported"
+		fi
 		exit 1
 	fi
 }

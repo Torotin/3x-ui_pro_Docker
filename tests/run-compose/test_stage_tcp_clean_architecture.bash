@@ -108,6 +108,50 @@ for key, value in xui_labels.items():
     assert_true("traefik.udp." not in key, f"3x-ui Traefik UDP label must be removed: {key}")
     assert_true(value != "l4tcp", "No 3x-ui HTTP router may use l4tcp")
 
+telemt_compose = load_yaml("docker-proxy/compose.d/15-telemt.yml")
+telemt_service = telemt_compose["services"]["telemt"]
+telemt_ports = [str(port) for port in (telemt_service.get("ports") or [])]
+telemt_expose = [str(port) for port in (telemt_service.get("expose") or [])]
+assert_true(not telemt_ports, f"Telemt must not publish host ports, got {telemt_ports}")
+assert_true("${PORT_LOCAL_TELEMT_PROXY:-9443}" in telemt_expose, "Telemt must expose only the internal MTProxy port")
+
+telemt_panel = telemt_compose["services"]["telemt-panel"]
+telemt_panel_ports = [str(port) for port in (telemt_panel.get("ports") or [])]
+assert_true(not telemt_panel_ports, f"Telemt panel must not publish host ports, got {telemt_panel_ports}")
+telemt_labels = labels_for(telemt_panel)
+telemt_panel_rule = telemt_labels.get("traefik.http.routers.telemt-panel.rule", "")
+telemt_panel_middlewares = telemt_labels.get("traefik.http.routers.telemt-panel.middlewares", "")
+assert_true("Host(`${WEBDOMAIN}`)" in telemt_panel_rule and "PathPrefix(`/${URI_TELEMT_PANEL}`)" in telemt_panel_rule, "Telemt panel must be routed by WEBDOMAIN path")
+assert_true("telemt-panel-chain" in telemt_panel_middlewares, "Telemt panel must use the protected admin middleware chain")
+
+telemt_template = (root / "script/template/telemt.config.toml.template").read_text(encoding="utf-8")
+assert_true('proxy_protocol = true' in telemt_template, "Telemt must accept PROXY protocol from Xray")
+assert_true('"172.18.0.0/24"' in telemt_template, "Telemt must trust the internal Traefik/Xray network for PROXY protocol")
+assert_true('"172.19.0.0/24"' in telemt_template, "Telemt must trust the internal DNS/Xray network for PROXY protocol")
+assert_true('unknown_sni_action = "mask"' in telemt_template, "Telemt unknown SNI action must mask to Traefik")
+assert_true('mask_host = "traefik"' in telemt_template and 'mask_port = 4443' in telemt_template, "Telemt mask fallback must point to traefik:4443")
+assert_true('mask_proxy_protocol = 1' in telemt_template, "Telemt must forward PROXY protocol to Traefik")
+assert_true('middle_proxy_pool_size = ${TELEMT_MIDDLE_PROXY_POOL_SIZE}' in telemt_template, "Telemt balanced tuning must expose ME pool size")
+assert_true('me_reconnect_backoff_cap_ms = ${TELEMT_ME_RECONNECT_BACKOFF_CAP_MS}' in telemt_template, "Telemt balanced tuning must expose ME reconnect backoff cap")
+assert_true('[timeouts]' in telemt_template and 'me_one_retry = ${TELEMT_ME_ONE_RETRY}' in telemt_template, "Telemt balanced tuning must define timeout overrides")
+assert_true('[network]' in telemt_template and 'stun_use = ${TELEMT_STUN_USE}' in telemt_template, "Telemt balanced tuning must define network/STUN overrides")
+assert_true('stun_servers = ["${TELEMT_STUN_SERVER_1_TOML}", "${TELEMT_STUN_SERVER_2_TOML}"]' in telemt_template, "Telemt STUN servers must render as TOML array, not env JSON")
+assert_true('http_ip_detect_urls = ["${TELEMT_HTTP_IP_DETECT_URL_1_TOML}", "${TELEMT_HTTP_IP_DETECT_URL_2_TOML}"]' in telemt_template, "Telemt HTTP IP detect URLs must render as TOML array, not env JSON")
+assert_true('max_connections = ${TELEMT_MAX_CONNECTIONS}' in telemt_template, "Telemt balanced tuning must expose max_connections")
+assert_true('[server.conntrack_control]' in telemt_template, "Telemt must explicitly configure conntrack-control policy")
+assert_true('inline_conntrack_control = false' in telemt_template and 'mode = "tracked"' in telemt_template, "Telemt must remain locked down without NET_ADMIN/notrack")
+assert_true('mask_shape_hardening = ${TELEMT_MASK_SHAPE_HARDENING}' in telemt_template, "Telemt balanced tuning must expose mask hardening")
+assert_true('[[upstreams]]' in telemt_template and 'type = "direct"' in telemt_template, "Telemt must explicitly define direct upstream")
+
+install_env_template = (root / "script/template/install.env.template").read_text(encoding="utf-8")
+docker_env_template = (root / "script/template/docker.env.template").read_text(encoding="utf-8")
+for env_template_name, env_template in [("install.env.template", install_env_template), ("docker.env.template", docker_env_template)]:
+    assert_true("TELEMT_TUNING_PROFILE=${TELEMT_TUNING_PROFILE}" in env_template, f"{env_template_name} must persist TELEMT_TUNING_PROFILE")
+    assert_true("TELEMT_MIDDLE_PROXY_POOL_SIZE=${TELEMT_MIDDLE_PROXY_POOL_SIZE}" in env_template, f"{env_template_name} must persist ME pool size")
+    assert_true('TELEMT_STUN_SERVERS_JSON="${TELEMT_STUN_SERVERS_JSON_ENV}"' in env_template, f"{env_template_name} must persist STUN server list as dotenv-safe quoted JSON")
+    assert_true("TELEMT_MASK_RELAY_TIMEOUT_MS=${TELEMT_MASK_RELAY_TIMEOUT_MS}" in env_template, f"{env_template_name} must persist mask relay timeout")
+    assert_true("TELEMT_MAX_CONNECTIONS=${TELEMT_MAX_CONNECTIONS}" in env_template, f"{env_template_name} must persist max_connections")
+
 lampac_compose = load_yaml("docker-proxy/compose.d/14-lampac.yml")
 lampac_service = lampac_compose["services"]["lampac"]
 assert_true(not lampac_service.get("ports"), "Lampac must not publish direct ports")
@@ -184,6 +228,7 @@ admin_cases = [
     ("12-3x-ui.yml", "3x-ui", "traefik.http.routers.3xui-panel.middlewares"),
     ("13-homepage.yml", "homepage", "traefik.http.routers.homepage-router.middlewares"),
     ("14-lampac.yml", "lampac", "traefik.http.routers.lampac-sensitive.middlewares"),
+    ("15-telemt.yml", "telemt-panel", "traefik.http.routers.telemt-panel.middlewares"),
 ]
 admin_domains = [
     "TRAEFIK_ADMIN_DOMAIN",
@@ -243,6 +288,7 @@ for file_name, service_name, key in [
     ("12-3x-ui.yml", "3x-ui", "traefik.http.routers.3xui-panel.rule"),
     ("13-homepage.yml", "homepage", "traefik.http.routers.homepage-router.rule"),
     ("14-lampac.yml", "lampac", "traefik.http.routers.lampac-sensitive.rule"),
+    ("15-telemt.yml", "telemt-panel", "traefik.http.routers.telemt-panel.rule"),
 ]:
     service_labels = labels_for(load_yaml(f"docker-proxy/compose.d/{file_name}")["services"][service_name])
     rule = service_labels.get(key, "")
