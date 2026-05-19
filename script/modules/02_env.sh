@@ -42,6 +42,45 @@ generate_hex_secret() {
 	fi
 }
 
+normalize_json_env_value() {
+	local value=$1
+	if [[ "$value" == \'*\' ]]; then
+		value=${value#\'}
+		value=${value%\'}
+	fi
+	while [[ "$value" == *\\\"* ]]; do
+		value=${value//\\\"/\"}
+	done
+	printf '%s' "$value"
+}
+
+json_array_item_or_default() {
+	local json=$1 index=$2 fallback=$3
+	if command -v python3 >/dev/null 2>&1; then
+		python3 - "$json" "$index" "$fallback" <<'PY'
+import json
+import sys
+
+raw, idx, fallback = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+try:
+    value = json.loads(raw)[idx]
+except Exception:
+    value = fallback
+print(value if isinstance(value, str) and value else fallback)
+PY
+	else
+		printf '%s' "$fallback"
+	fi
+}
+
+escape_toml_basic_string_value() {
+	local value=$1
+	value=${value//\\/\\\\}
+	value=${value//\"/\\\"}
+	value=${value//$'\n'/}
+	printf '%s' "$value"
+}
+
 ensure_env_defaults() {
 	: "${WEBDOMAIN:=example.invalid}"
 	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
@@ -99,6 +138,54 @@ ensure_env_defaults() {
 	: "${TELEMT_BOOTSTRAP_USER:=bootstrap}"
 	: "${TELEMT_BOOTSTRAP_SECRET_HEX:=$(generate_hex_secret 16)}"
 	: "${TELEMT_PANEL_VERSION:=latest}"
+	: "${TELEMT_TUNING_PROFILE:=balanced}"
+	: "${TELEMT_MIDDLE_PROXY_NAT_PROBE:=true}"
+	: "${TELEMT_STUN_NAT_PROBE_CONCURRENCY:=16}"
+	: "${TELEMT_MIDDLE_PROXY_POOL_SIZE:=12}"
+	: "${TELEMT_ME_KEEPALIVE_ENABLED:=true}"
+	: "${TELEMT_ME_KEEPALIVE_INTERVAL_SECS:=20}"
+	: "${TELEMT_ME_KEEPALIVE_JITTER_SECS:=4}"
+	: "${TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC:=12}"
+	: "${TELEMT_ME_RECONNECT_BACKOFF_BASE_MS:=300}"
+	: "${TELEMT_ME_RECONNECT_BACKOFF_CAP_MS:=10000}"
+	: "${TELEMT_ME_RECONNECT_FAST_RETRY_COUNT:=10}"
+	: "${TELEMT_HARDSWAP:=true}"
+	: "${TELEMT_ME_REINIT_EVERY_SECS:=600}"
+	: "${TELEMT_ME_HARDSWAP_WARMUP_DELAY_MIN_MS:=500}"
+	: "${TELEMT_ME_HARDSWAP_WARMUP_DELAY_MAX_MS:=1200}"
+	: "${TELEMT_ME_HARDSWAP_WARMUP_EXTRA_PASSES:=2}"
+	: "${TELEMT_ME_HARDSWAP_WARMUP_PASS_BACKOFF_BASE_MS:=400}"
+	: "${TELEMT_ME_CONFIG_STABLE_SNAPSHOTS:=3}"
+	: "${TELEMT_ME_CONFIG_APPLY_COOLDOWN_SECS:=120}"
+	: "${TELEMT_PROXY_SECRET_STABLE_SNAPSHOTS:=3}"
+	: "${TELEMT_PROXY_SECRET_ROTATE_RUNTIME:=true}"
+	: "${TELEMT_PROXY_SECRET_LEN_MAX:=512}"
+	: "${TELEMT_UPDATE_EVERY:=300}"
+	: "${TELEMT_ME_POOL_DRAIN_TTL_SECS:=120}"
+	: "${TELEMT_ME_POOL_MIN_FRESH_RATIO:=0.9}"
+	: "${TELEMT_ME_REINIT_DRAIN_TIMEOUT_SECS:=180}"
+	: "${TELEMT_ME_ONE_RETRY:=8}"
+	: "${TELEMT_ME_ONE_TIMEOUT_MS:=1200}"
+	: "${TELEMT_STUN_USE:=true}"
+	: "${TELEMT_STUN_TCP_FALLBACK:=true}"
+	: "${TELEMT_STUN_SERVERS_JSON:=[\"stun1.l.google.com:19302\", \"stun2.l.google.com:19302\"]}"
+	: "${TELEMT_HTTP_IP_DETECT_URLS_JSON:=[\"https://api.ipify.org\", \"https://ifconfig.me/ip\"]}"
+	TELEMT_STUN_SERVERS_JSON=$(normalize_json_env_value "$TELEMT_STUN_SERVERS_JSON")
+	TELEMT_HTTP_IP_DETECT_URLS_JSON=$(normalize_json_env_value "$TELEMT_HTTP_IP_DETECT_URLS_JSON")
+	: "${TELEMT_STUN_SERVER_1:=$(json_array_item_or_default "$TELEMT_STUN_SERVERS_JSON" 0 "stun1.l.google.com:19302")}"
+	: "${TELEMT_STUN_SERVER_2:=$(json_array_item_or_default "$TELEMT_STUN_SERVERS_JSON" 1 "stun2.l.google.com:19302")}"
+	: "${TELEMT_HTTP_IP_DETECT_URL_1:=$(json_array_item_or_default "$TELEMT_HTTP_IP_DETECT_URLS_JSON" 0 "https://api.ipify.org")}"
+	: "${TELEMT_HTTP_IP_DETECT_URL_2:=$(json_array_item_or_default "$TELEMT_HTTP_IP_DETECT_URLS_JSON" 1 "https://ifconfig.me/ip")}"
+	: "${TELEMT_MAX_CONNECTIONS:=10000}"
+	: "${TELEMT_ACCEPT_PERMIT_TIMEOUT_MS:=250}"
+	: "${TELEMT_MASK_SHAPE_HARDENING:=true}"
+	: "${TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE:=false}"
+	: "${TELEMT_MASK_SHAPE_BUCKET_FLOOR_BYTES:=512}"
+	: "${TELEMT_MASK_SHAPE_BUCKET_CAP_BYTES:=4096}"
+	: "${TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR:=false}"
+	: "${TELEMT_MASK_RELAY_MAX_BYTES:=5242880}"
+	: "${TELEMT_MASK_RELAY_TIMEOUT_MS:=300000}"
+	: "${TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS:=30000}"
 	: "${HT_PASS_ENCODED:=}"
 	: "${ADGUARD_ADMIN_HASH:=}"
 	export WEBDOMAIN PUBLIC_IPV4 PUBLIC_IPV6 USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
@@ -111,6 +198,18 @@ ensure_env_defaults() {
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 	export TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_PANEL_VERSION
+	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
+	export TELEMT_ME_KEEPALIVE_ENABLED TELEMT_ME_KEEPALIVE_INTERVAL_SECS TELEMT_ME_KEEPALIVE_JITTER_SECS
+	export TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC TELEMT_ME_RECONNECT_BACKOFF_BASE_MS TELEMT_ME_RECONNECT_BACKOFF_CAP_MS TELEMT_ME_RECONNECT_FAST_RETRY_COUNT
+	export TELEMT_HARDSWAP TELEMT_ME_REINIT_EVERY_SECS TELEMT_ME_HARDSWAP_WARMUP_DELAY_MIN_MS TELEMT_ME_HARDSWAP_WARMUP_DELAY_MAX_MS
+	export TELEMT_ME_HARDSWAP_WARMUP_EXTRA_PASSES TELEMT_ME_HARDSWAP_WARMUP_PASS_BACKOFF_BASE_MS TELEMT_ME_CONFIG_STABLE_SNAPSHOTS TELEMT_ME_CONFIG_APPLY_COOLDOWN_SECS
+	export TELEMT_PROXY_SECRET_STABLE_SNAPSHOTS TELEMT_PROXY_SECRET_ROTATE_RUNTIME TELEMT_PROXY_SECRET_LEN_MAX TELEMT_UPDATE_EVERY
+	export TELEMT_ME_POOL_DRAIN_TTL_SECS TELEMT_ME_POOL_MIN_FRESH_RATIO TELEMT_ME_REINIT_DRAIN_TIMEOUT_SECS
+	export TELEMT_ME_ONE_RETRY TELEMT_ME_ONE_TIMEOUT_MS TELEMT_STUN_USE TELEMT_STUN_TCP_FALLBACK TELEMT_STUN_SERVERS_JSON TELEMT_HTTP_IP_DETECT_URLS_JSON
+	export TELEMT_STUN_SERVER_1 TELEMT_STUN_SERVER_2 TELEMT_HTTP_IP_DETECT_URL_1 TELEMT_HTTP_IP_DETECT_URL_2
+	export TELEMT_MAX_CONNECTIONS TELEMT_ACCEPT_PERMIT_TIMEOUT_MS TELEMT_MASK_SHAPE_HARDENING TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE
+	export TELEMT_MASK_SHAPE_BUCKET_FLOOR_BYTES TELEMT_MASK_SHAPE_BUCKET_CAP_BYTES TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR TELEMT_MASK_RELAY_MAX_BYTES
+	export TELEMT_MASK_RELAY_TIMEOUT_MS TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS
 }
 
 generate_htpasswd_if_needed() {
@@ -194,6 +293,14 @@ generate_telemt_panel_hash_if_needed() {
 	export TELEMT_PANEL_PASSWORD_HASH
 }
 
+escape_env_double_quoted_value() {
+	local value=$1
+	value=${value//\\/\\\\}
+	value=${value//\"/\\\"}
+	value=${value//$'\n'/}
+	printf '%s' "$value"
+}
+
 render_telemt_configs() {
 	local templates telemt_config telemt_panel_config
 	templates=$(template_dir)
@@ -216,6 +323,14 @@ install_env_command() {
 	ensure_env_defaults
 	generate_htpasswd_if_needed
 	generate_telemt_panel_hash_if_needed
+	TELEMT_STUN_SERVERS_JSON_ENV=$(escape_env_double_quoted_value "$TELEMT_STUN_SERVERS_JSON")
+	TELEMT_HTTP_IP_DETECT_URLS_JSON_ENV=$(escape_env_double_quoted_value "$TELEMT_HTTP_IP_DETECT_URLS_JSON")
+	TELEMT_STUN_SERVER_1_TOML=$(escape_toml_basic_string_value "$TELEMT_STUN_SERVER_1")
+	TELEMT_STUN_SERVER_2_TOML=$(escape_toml_basic_string_value "$TELEMT_STUN_SERVER_2")
+	TELEMT_HTTP_IP_DETECT_URL_1_TOML=$(escape_toml_basic_string_value "$TELEMT_HTTP_IP_DETECT_URL_1")
+	TELEMT_HTTP_IP_DETECT_URL_2_TOML=$(escape_toml_basic_string_value "$TELEMT_HTTP_IP_DETECT_URL_2")
+	export TELEMT_STUN_SERVERS_JSON_ENV TELEMT_HTTP_IP_DETECT_URLS_JSON_ENV
+	export TELEMT_STUN_SERVER_1_TOML TELEMT_STUN_SERVER_2_TOML TELEMT_HTTP_IP_DETECT_URL_1_TOML TELEMT_HTTP_IP_DETECT_URL_2_TOML
 	local templates install_env compose_env
 	templates=$(template_dir)
 	install_env="$INSTALL_STATE_DIR/install.env"

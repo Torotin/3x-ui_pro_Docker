@@ -190,6 +190,26 @@ test_env_writes_escaped_htpasswd_to_compose_env_for_labels() {
 	assert_contains 'HT_PASS_ENCODED="admin:$$2y$$05$$mockhash"' "$INSTALL_ROOT/compose.d/.env" "compose env must keep escaped bcrypt dollars so Docker Compose emits raw Docker labels"
 }
 
+test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state() {
+	make_fixture
+	cat >"$INSTALL_STATE_DIR/install.env" <<'ENV'
+WEBDOMAIN=example.test
+USER_WEB=admin
+PASS_WEB=secret
+USER_SSH=deployer
+PASS_SSH=secret
+SSH_PBK=ssh-ed25519-mock
+PORT_REMOTE_SSH=22022
+TELEMT_STUN_SERVERS_JSON='["stun1.l.google.com:19302", "stun2.l.google.com:19302"]'
+TELEMT_HTTP_IP_DETECT_URLS_JSON='["https://api.ipify.org", "https://ifconfig.me/ip"]'
+ENV
+	run_installer run env
+	assert_contains 'TELEMT_STUN_SERVERS_JSON="[\"stun1.l.google.com:19302\", \"stun2.l.google.com:19302\"]"' "$INSTALL_ROOT/compose.d/.env" "compose env must store dotenv-safe Telemt STUN list"
+	assert_contains 'stun_servers = ["stun1.l.google.com:19302", "stun2.l.google.com:19302"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render STUN servers as TOML array"
+	assert_contains 'http_ip_detect_urls = ["https://api.ipify.org", "https://ifconfig.me/ip"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render HTTP IP detect URLs as TOML array"
+	assert_not_contains "http_ip_detect_urls = '[" "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must not render HTTP IP detect URLs as TOML string"
+}
+
 test_env_regenerates_stale_htpasswd_when_password_changes() {
 	make_fixture
 	mkdir -p "$tmpdir/bin"
@@ -405,7 +425,10 @@ test_docker_install_handles_missing_docker_binary() {
 	assert_contains "Docker command not found; installing Docker engine" "$tmpdir/stdout" "docker install must explain fresh install path"
 	assert_not_contains "docker.containers.stop" "$INSTALL_COMMAND_LOG" "fresh install must not call docker before it exists"
 	assert_contains "docker.repo.update" "$INSTALL_COMMAND_LOG" "fresh install must update Docker repo before package install"
+	assert_contains "docker.legacy-compose.remove" "$INSTALL_COMMAND_LOG" "docker install must remove legacy docker-compose package"
+	assert_contains "apt-get remove -y docker-compose" "$INSTALL_COMMAND_LOG" "docker install must not leave Compose v1 package installed"
 	assert_contains "docker.install.packages" "$INSTALL_COMMAND_LOG" "fresh install must install Docker packages"
+	assert_contains "docker-compose-plugin" "$INSTALL_COMMAND_LOG" "docker install must install Compose v2 plugin"
 	assert_contains "docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker data purge must use rm -rf --"
 }
 
@@ -771,6 +794,7 @@ test_env_prints_rendered_paths
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels
+test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state
 test_env_regenerates_stale_htpasswd_when_password_changes
 test_env_regenerates_existing_hash_when_verify_is_unsupported
 test_adguard_update_pass_uses_precomputed_hash
