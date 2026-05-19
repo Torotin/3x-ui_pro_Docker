@@ -329,6 +329,11 @@ install_doctor_check_docker() {
 	else
 		doctor_fail "Docker Compose plugin is not available" || status=1
 	fi
+	if command -v docker-compose >/dev/null 2>&1; then
+		doctor_fail "legacy docker-compose is installed; remove it and use Docker Compose v2 plugin only" || status=1
+	else
+		doctor_ok_detail "legacy docker-compose is absent"
+	fi
 	if systemctl is-active --quiet docker; then
 		doctor_ok_detail "Docker service is active"
 	else

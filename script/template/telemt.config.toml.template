@@ -6,6 +6,31 @@ proxy_secret_path = "/var/lib/telemt/proxy-secret"
 proxy_config_v4_cache_path = "/var/lib/telemt/cache/proxy-config-v4.txt"
 proxy_config_v6_cache_path = "/var/lib/telemt/cache/proxy-config-v6.txt"
 quota_state_path = "/var/lib/telemt/telemt.limit.json"
+middle_proxy_nat_probe = ${TELEMT_MIDDLE_PROXY_NAT_PROBE}
+stun_nat_probe_concurrency = ${TELEMT_STUN_NAT_PROBE_CONCURRENCY}
+middle_proxy_pool_size = ${TELEMT_MIDDLE_PROXY_POOL_SIZE}
+me_keepalive_enabled = ${TELEMT_ME_KEEPALIVE_ENABLED}
+me_keepalive_interval_secs = ${TELEMT_ME_KEEPALIVE_INTERVAL_SECS}
+me_keepalive_jitter_secs = ${TELEMT_ME_KEEPALIVE_JITTER_SECS}
+me_reconnect_max_concurrent_per_dc = ${TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC}
+me_reconnect_backoff_base_ms = ${TELEMT_ME_RECONNECT_BACKOFF_BASE_MS}
+me_reconnect_backoff_cap_ms = ${TELEMT_ME_RECONNECT_BACKOFF_CAP_MS}
+me_reconnect_fast_retry_count = ${TELEMT_ME_RECONNECT_FAST_RETRY_COUNT}
+hardswap = ${TELEMT_HARDSWAP}
+me_reinit_every_secs = ${TELEMT_ME_REINIT_EVERY_SECS}
+me_hardswap_warmup_delay_min_ms = ${TELEMT_ME_HARDSWAP_WARMUP_DELAY_MIN_MS}
+me_hardswap_warmup_delay_max_ms = ${TELEMT_ME_HARDSWAP_WARMUP_DELAY_MAX_MS}
+me_hardswap_warmup_extra_passes = ${TELEMT_ME_HARDSWAP_WARMUP_EXTRA_PASSES}
+me_hardswap_warmup_pass_backoff_base_ms = ${TELEMT_ME_HARDSWAP_WARMUP_PASS_BACKOFF_BASE_MS}
+me_config_stable_snapshots = ${TELEMT_ME_CONFIG_STABLE_SNAPSHOTS}
+me_config_apply_cooldown_secs = ${TELEMT_ME_CONFIG_APPLY_COOLDOWN_SECS}
+proxy_secret_stable_snapshots = ${TELEMT_PROXY_SECRET_STABLE_SNAPSHOTS}
+proxy_secret_rotate_runtime = ${TELEMT_PROXY_SECRET_ROTATE_RUNTIME}
+proxy_secret_len_max = ${TELEMT_PROXY_SECRET_LEN_MAX}
+update_every = ${TELEMT_UPDATE_EVERY}
+me_pool_drain_ttl_secs = ${TELEMT_ME_POOL_DRAIN_TTL_SECS}
+me_pool_min_fresh_ratio = ${TELEMT_ME_POOL_MIN_FRESH_RATIO}
+me_reinit_drain_timeout_secs = ${TELEMT_ME_REINIT_DRAIN_TIMEOUT_SECS}
 
 [general.modes]
 classic = false
@@ -17,12 +42,28 @@ show = "*"
 public_host = "${WEBDOMAIN}"
 public_port = 443
 
+[timeouts]
+me_one_retry = ${TELEMT_ME_ONE_RETRY}
+me_one_timeout_ms = ${TELEMT_ME_ONE_TIMEOUT_MS}
+
+[network]
+stun_use = ${TELEMT_STUN_USE}
+stun_tcp_fallback = ${TELEMT_STUN_TCP_FALLBACK}
+stun_servers = ["${TELEMT_STUN_SERVER_1_TOML}", "${TELEMT_STUN_SERVER_2_TOML}"]
+http_ip_detect_urls = ["${TELEMT_HTTP_IP_DETECT_URL_1_TOML}", "${TELEMT_HTTP_IP_DETECT_URL_2_TOML}"]
+
 [server]
 port = ${PORT_LOCAL_TELEMT_PROXY}
 proxy_protocol = true
 proxy_protocol_trusted_cidrs = ["172.18.0.0/24", "172.19.0.0/24"]
 metrics_listen = "0.0.0.0:${PORT_LOCAL_TELEMT_METRICS}"
 metrics_whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24"]
+max_connections = ${TELEMT_MAX_CONNECTIONS}
+accept_permit_timeout_ms = ${TELEMT_ACCEPT_PERMIT_TIMEOUT_MS}
+
+[server.conntrack_control]
+inline_conntrack_control = false
+mode = "tracked"
 
 [server.api]
 enabled = true
@@ -45,8 +86,19 @@ mask_port = 4443
 mask_proxy_protocol = 1
 tls_emulation = true
 tls_front_dir = "/var/lib/telemt/tlsfront"
-mask_relay_timeout_ms = 300000
-mask_relay_idle_timeout_ms = 30000
+mask_shape_hardening = ${TELEMT_MASK_SHAPE_HARDENING}
+mask_shape_hardening_aggressive_mode = ${TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE}
+mask_shape_bucket_floor_bytes = ${TELEMT_MASK_SHAPE_BUCKET_FLOOR_BYTES}
+mask_shape_bucket_cap_bytes = ${TELEMT_MASK_SHAPE_BUCKET_CAP_BYTES}
+mask_shape_above_cap_blur = ${TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR}
+mask_relay_max_bytes = ${TELEMT_MASK_RELAY_MAX_BYTES}
+mask_relay_timeout_ms = ${TELEMT_MASK_RELAY_TIMEOUT_MS}
+mask_relay_idle_timeout_ms = ${TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS}
 
 [access.users]
 "${TELEMT_BOOTSTRAP_USER}" = "${TELEMT_BOOTSTRAP_SECRET_HEX}"
+
+[[upstreams]]
+type = "direct"
+weight = 1
+enabled = true

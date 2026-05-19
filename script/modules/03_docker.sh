@@ -13,6 +13,7 @@ install_docker_command() {
 	fi
 	install_docker_stop_services
 	install_docker_purge_data_dirs
+	install_docker_remove_legacy_compose
 	install_docker_install_packages
 	install_docker_configure_daemon
 	run_cmd docker.service.enable systemctl enable docker
@@ -88,6 +89,10 @@ install_docker_install_packages() {
 	run_cmd docker.install.packages env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
+install_docker_remove_legacy_compose() {
+	run_cmd docker.legacy-compose.remove env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-compose || true
+}
+
 install_docker_stop_services() {
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		run_cmd docker.service.stop systemctl stop docker containerd
@@ -152,7 +157,7 @@ install_docker_purge_data_dirs() {
 
 install_docker_remove_engine() {
 	install_docker_stop_services
-	run_cmd docker.remove.packages env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
+	run_cmd docker.remove.packages env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-compose docker-ce-rootless-extras
 	install_docker_purge_data_dirs
 }
 

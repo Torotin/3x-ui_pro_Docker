@@ -150,6 +150,31 @@ test_compose_invocation_sanitizes_transformed_environment() {
 	assert_contains "env HT_PASS_ENCODED= URI_SUB_PATH= URI_JSON_PATH= URI_CLASH_PATH= URI_VLESS_XHTTP=" "$tmpdir/docker.log" "run-compose must let --env-file provide transformed variables"
 }
 
+test_legacy_docker_compose_is_rejected() {
+	make_fixture
+	cat >"$tmpdir/bin/docker" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker %s\n' "$*" >>"${DOCKER_LOG:?}"
+if [[ "${1:-}" == "compose" ]]; then
+	exit 1
+fi
+exit 0
+BASH
+	cat >"$tmpdir/bin/docker-compose" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker-compose %s\n' "$*" >>"${DOCKER_LOG:?}"
+exit 0
+BASH
+	chmod +x "$tmpdir/bin/docker" "$tmpdir/bin/docker-compose"
+	if run_runner validate >/tmp/run-compose-legacy.out 2>&1; then
+		fail "run-compose must reject legacy docker-compose fallback"
+	fi
+	assert_contains "Docker Compose v2 plugin is required" /tmp/run-compose-legacy.out "missing compose v2 must explain required dependency"
+	assert_not_contains "docker-compose" "$tmpdir/docker.log" "run-compose must not execute legacy docker-compose"
+}
+
 test_lock_file_is_compose_local_and_world_writable() {
 	make_fixture
 	run_runner up
@@ -272,6 +297,7 @@ test_restart_can_include_dependencies
 test_restart_logs_is_explicit
 test_up_is_safe_by_default
 test_compose_invocation_sanitizes_transformed_environment
+test_legacy_docker_compose_is_rejected
 test_lock_file_is_compose_local_and_world_writable
 test_default_env_and_lock_follow_active_compose_dir
 test_rebuild_is_destructive_explicitly
