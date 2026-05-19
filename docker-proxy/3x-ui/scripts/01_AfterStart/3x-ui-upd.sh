@@ -450,7 +450,7 @@ build_inbound_stream_json() {
 
 	if [[ "$kind" == "vision" ]]; then
 		get_x25519_keys || die "Failed to get X25519 keys for Vision inbound."
-		build_vision_stream_json "traefik:$PORT_LOCAL_TRAEFIK" "$WEBDOMAIN" "$X25519_PRIVATE_KEY" "$X25519_PUBLIC_KEY" "$(generate_short_ids_json 8 8)" "$(build_sockopt_json false AsIs off)" "" ""
+		build_vision_stream_json "${REALITY_TARGET_HOST:-telemt}:${REALITY_TARGET_PORT:-${PORT_LOCAL_TELEMT_PROXY:-9443}}" "$WEBDOMAIN" "$X25519_PRIVATE_KEY" "$X25519_PUBLIC_KEY" "$(generate_short_ids_json 8 8)" "$(build_sockopt_json false AsIs off)" "" "" "${REALITY_TARGET_XVER:-1}"
 	else
 		build_xhttp_stream_json "$URI_VLESS_XHTTP" "$WEBDOMAIN"
 	fi

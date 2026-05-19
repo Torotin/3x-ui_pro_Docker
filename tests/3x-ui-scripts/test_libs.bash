@@ -447,22 +447,24 @@ test_vision_stream_restores_old_reality_external_proxy() {
 }
 
 test_vision_stream_is_clean_self_steal() {
-	local stream show target server_name empty_short_ids
-	stream=$(build_vision_stream_json traefik:4443 screenhub.linkpc.net private public '["aa","bb"]' "$(build_sockopt_json false AsIs off)" '' '')
+	local stream show target target_xver server_name empty_short_ids
+	stream=$(build_vision_stream_json telemt:9443 screenhub.linkpc.net private public '["aa","bb"]' "$(build_sockopt_json false AsIs off)" '' '' 1)
 	show=$(printf '%s' "$stream" | jq -r '.realitySettings.show')
 	target=$(printf '%s' "$stream" | jq -r '.realitySettings.target // empty')
+	target_xver=$(printf '%s' "$stream" | jq -r '.realitySettings.xver')
 	server_name=$(printf '%s' "$stream" | jq -r '.realitySettings.serverNames[0]')
 	empty_short_ids=$(printf '%s' "$stream" | jq '[.realitySettings.shortIds[] | select(. == "")] | length')
 	assert_eq false "$show" "Reality show must be false for anti-probing clean install"
-	assert_eq traefik:4443 "$target" "Reality self-steal target must point to internal Traefik websecure"
+	assert_eq telemt:9443 "$target" "Reality self-steal target must point to Telemt before Traefik"
+	assert_eq 1 "$target_xver" "Reality self-steal target must send PROXY protocol to Telemt"
 	assert_eq screenhub.linkpc.net "$server_name" "Reality serverNames must whitelist the public front domain"
 	assert_eq 0 "$empty_short_ids" "Reality shortIds must not contain empty example values"
 }
 
-test_vision_settings_include_traefik_fallback_preserving_clients() {
+test_vision_settings_include_telemt_fallback_preserving_clients() {
 	local inbound settings fallback_dest clients decryption encryption
-	export VISION_FALLBACK_HOST=traefik
-	export VISION_FALLBACK_PORT=4443
+	export VISION_FALLBACK_HOST=telemt
+	export VISION_FALLBACK_PORT=9443
 	export VISION_FALLBACK_XVER=1
 	inbound='{"settings":"{\"clients\":[{\"id\":\"client-id\",\"email\":\"a@example.test\"}],\"decryption\":\"none\",\"encryption\":\"none\"}"}'
 	settings=$(build_vless_settings_json vision "$inbound")
@@ -470,7 +472,7 @@ test_vision_settings_include_traefik_fallback_preserving_clients() {
 	clients=$(printf '%s' "$settings" | jq '.clients | length')
 	decryption=$(printf '%s' "$settings" | jq -r '.decryption')
 	encryption=$(printf '%s' "$settings" | jq -r '.encryption')
-	assert_eq traefik:4443 "$fallback_dest" "Vision fallback must point to Traefik websecure"
+	assert_eq telemt:9443 "$fallback_dest" "Vision fallback must point to Telemt"
 	assert_eq 1 "$clients" "Vision update must preserve existing clients"
 	assert_eq none "$decryption" "Vision VLESS settings must keep decryption=none"
 	assert_eq none "$encryption" "Vision VLESS settings must keep encryption=none for subscription outbounds"
@@ -592,7 +594,7 @@ test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt
 test_vision_stream_restores_old_reality_external_proxy
 test_vision_stream_is_clean_self_steal
-test_vision_settings_include_traefik_fallback_preserving_clients
+test_vision_settings_include_telemt_fallback_preserving_clients
 test_tor_balancer_uses_two_available_hosts
 test_warp_balancer_uses_docker_and_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp

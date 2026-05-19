@@ -268,7 +268,7 @@ build_vless_settings_json() {
 		enc=none
 		label=
 	fi
-	fallback_dest="${VISION_FALLBACK_HOST:-traefik}:${VISION_FALLBACK_PORT:-4443}"
+	fallback_dest="${VISION_FALLBACK_HOST:-telemt}:${VISION_FALLBACK_PORT:-${PORT_LOCAL_TELEMT_PROXY:-9443}}"
 	jq -nc \
 		--arg kind "$kind" \
 		--arg dec "$dec" \
@@ -318,7 +318,7 @@ build_external_proxy_json() {
 }
 
 build_vision_stream_json() {
-	local target=$1 sni=$2 private_key=$3 public_key=$4 short_ids=${5:-'[""]'} sockopt=${6:-'{}'} mldsa_seed=${7:-} mldsa_verify=${8:-}
+	local target=$1 sni=$2 private_key=$3 public_key=$4 short_ids=${5:-'[""]'} sockopt=${6:-'{}'} mldsa_seed=${7:-} mldsa_verify=${8:-} target_xver=${9:-0}
 	local external_proxy
 	external_proxy=$(build_external_proxy_json "$sni")
 	jq -nc \
@@ -330,13 +330,14 @@ build_vision_stream_json() {
 		--arg mldsaVerify "$mldsa_verify" \
 		--argjson shortIds "$short_ids" \
 		--argjson sockopt "$sockopt" \
+		--argjson targetXver "$target_xver" \
 		--argjson externalProxy "$external_proxy" '{
           network:"tcp",
           security:"reality",
           externalProxy:$externalProxy,
           realitySettings:{
             show:false,
-            xver:0,
+            xver:$targetXver,
             target:$target,
             serverNames:[$sni],
             privateKey:$privateKey,

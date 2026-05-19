@@ -6,14 +6,14 @@ install_firewall_command() {
 	require_opt_in --apply "$@"
 	require_apply_confirmation "$@"
 
-	run_cmd firewall.plan printf 'allow tcp/80 tcp/443 udp/443, current SSH port, and configured PORT_REMOTE_* values\n'
+	run_cmd firewall.plan printf 'allow tcp/80 tcp/443, current SSH port, and configured PORT_REMOTE_* values\n'
 
 	run_cmd firewall.apply ufw --force reset
 	run_cmd firewall.apply ufw default deny incoming
 	run_cmd firewall.apply ufw default allow outgoing
 	run_cmd firewall.apply ufw default allow routed
 
-	# install_firewall_allow_current_ssh_port
+	install_firewall_allow_current_ssh_port
 
 	local port_var port_value
 	for port_var in $(compgen -v PORT_REMOTE_); do
@@ -25,7 +25,6 @@ install_firewall_command() {
 
 	run_cmd firewall.apply ufw allow 80/tcp
 	run_cmd firewall.apply ufw allow 443/tcp
-	run_cmd firewall.apply ufw allow 443/udp
 
 	run_cmd firewall.apply ufw --force enable
 	run_cmd firewall.apply ufw status verbose
