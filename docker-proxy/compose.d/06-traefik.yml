@@ -12,13 +12,9 @@ services:
         condition: service_healthy
       dozzle:
         condition: service_healthy
-      warp:
-        condition: service_healthy
       usque:
         condition: service_healthy
       adguard:
-        condition: service_healthy
-      torproxy:
         condition: service_healthy
       tor-proxy:
         condition: service_healthy

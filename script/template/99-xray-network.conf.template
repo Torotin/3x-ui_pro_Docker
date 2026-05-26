@@ -119,8 +119,8 @@ net.ipv4.conf.default.arp_filter = 0
 # 7. IPv6 hardening
 #############################
 
-# Не отключаем IPv6 глобально: warp и 3x-ui включают IPv6 внутри своих network namespaces, а отключение ::1 может сломать локальные сервисы
-# Do not disable IPv6 globally: warp and 3x-ui enable IPv6 inside their network namespaces, and disabling ::1 may break local services
+# Не отключаем IPv6 глобально: 3x-ui и туннельные маршруты могут использовать IPv6, а отключение ::1 может сломать локальные сервисы
+# Do not disable IPv6 globally: 3x-ui and tunneled routes may use IPv6, and disabling ::1 may break local services
 # Если VPS должен быть строго IPv4-only, лучше использовать firewall/routing policy или осознанно раскомментировать строки ниже
 # If the VPS must be IPv4-only, prefer firewall/routing policy or uncomment the lines below consciously
 # net.ipv6.conf.all.disable_ipv6      = 1

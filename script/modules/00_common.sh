@@ -399,11 +399,9 @@ install_doctor_check_containers() {
 		homepage
 		logrotate
 		tor-proxy
-		torproxy
 		traefik
 		traefik-acme-exporter
 		usque
-		warp
 		3x-ui
 	)
 	if [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then

@@ -742,6 +742,18 @@ test_user_configures_ssh_sudo_groups_and_aliases() {
 	assert_contains "user.home.chown chown -R deployer:deployer /home/deployer" "$INSTALL_COMMAND_LOG" "user step must restore home ownership"
 }
 
+test_user_sudoers_content_uses_portable_defaults() {
+	make_fixture
+	# shellcheck source=script/modules/05_user.sh
+	. "$ROOT_DIR/script/modules/05_user.sh"
+	USER_SSH=deployer install_user_sudoers_content >"$tmpdir/sudoers"
+	assert_contains "deployer ALL=(ALL) NOPASSWD:ALL" "$tmpdir/sudoers" "sudoers must grant expected passwordless sudo"
+	assert_not_contains "log_output" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible log_output"
+	assert_not_contains "logfile" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible logfile"
+	assert_not_contains "tty_tickets" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible tty_tickets"
+	assert_not_contains "requiretty" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible requiretty"
+}
+
 test_compose_uses_installer_state_lock() {
 	make_fixture
 	run_installer run compose
@@ -836,6 +848,7 @@ test_wizard_confirms_apply_steps
 test_wizard_prompts_for_missing_user
 test_user_loads_rendered_state_env
 test_user_configures_ssh_sudo_groups_and_aliases
+test_user_sudoers_content_uses_portable_defaults
 test_compose_uses_installer_state_lock
 test_final_summary_prints_details
 test_doctor_rejects_unsupported_os

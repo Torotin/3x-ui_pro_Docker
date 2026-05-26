@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# Загружает существующий env-файл с экспортом значений и сохраняет режим nounset.
 load_env_file() {
 	local file=$1
 	[[ -f "$file" ]] || return 0
@@ -17,6 +18,7 @@ load_env_file() {
 	((nounset_was_on == 1)) && set -u
 }
 
+# Задает значения runtime-параметров, если они не были переданы окружением.
 init_defaults() {
 	: "${MODE:=apply}"
 	: "${USERNAME:=admin}"
@@ -44,6 +46,7 @@ init_defaults() {
 	: "${URI_VLESS_XHTTP:=}"
 	: "${URI_CLASH_PATH:=}"
 	: "${CLIENT_EMAIL_PREFIX:=autogen}"
+	: "${CLIENT_EMAIL_SHARED:=$CLIENT_EMAIL_PREFIX}"
 	: "${CLIENT_EMAIL_VISION:=${CLIENT_EMAIL_PREFIX}-vision}"
 	: "${CLIENT_EMAIL_XHTTP:=${CLIENT_EMAIL_PREFIX}-xhttp}"
 	: "${CLIENT_SUB_ID:=}"
@@ -56,14 +59,13 @@ init_defaults() {
 	: "${XRAY_MANAGED_TOR:=true}"
 	: "${WARP_REUSE_PANEL_CONFIG:=false}"
 	: "${WARP_ENDPOINT_HOST:=engage.cloudflareclient.com:2408}"
-	: "${WARP_DOCKER_HOST:=warp}"
-	: "${WARP_DOCKER_PORT:=1080}"
 	: "${USQUE_HOST:=usque}"
 	: "${USQUE_PORT:=1080}"
+	: "${EXTERNAL_PROXY_PROBE_TIMEOUT:=10}"
+	: "${WARP_PROXY_PROBE_URL:=https://www.cloudflare.com/cdn-cgi/trace}"
+	: "${TOR_PROXY_PROBE_URL:=https://check.torproject.org/api/ip}"
 	: "${TOR_PROXY_HOST:=tor-proxy}"
 	: "${TOR_PROXY_PORT:=1080}"
-	: "${TOR_PROXY_ALT_HOST:=torproxy}"
-	: "${TOR_PROXY_ALT_PORT:=9050}"
 	: "${CUSTOM_GEO_API_ENABLED:=true}"
 	: "${CUSTOM_GEO_UPDATE_ALL_ON_START:=true}"
 	: "${GEOFILES_UPDATE_ON_START:=true}"
@@ -73,6 +75,7 @@ init_defaults() {
 	: "${XRAY_RESTART_PORT_TIMEOUT:=30}"
 }
 
+# Объединяет локальное и смонтированное окружение, затем дополняет его значениями по умолчанию.
 load_runtime_env() {
 	local script_dir=$1
 	load_env_file "$PWD/.env"
@@ -80,9 +83,10 @@ load_runtime_env() {
 	init_defaults
 }
 
+# Проверяет наличие утилит, требуемых сценарию после запуска контейнера.
 check_dependencies() {
 	local missing=() cmd
-	for cmd in bash curl jq mktemp sed tr sort head awk base64 od; do
+	for cmd in bash curl jq grep mktemp sed tr sort head awk base64 od; do
 		command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 	done
 	if ((${#missing[@]} > 0)); then
@@ -90,6 +94,7 @@ check_dependencies() {
 	fi
 }
 
+# Нормализует base path панели до пустой строки или пути с одним начальным слешем.
 normalize_base_path() {
 	local raw=${1:-}
 	raw=${raw#"/"}
@@ -98,6 +103,7 @@ normalize_base_path() {
 	return 0
 }
 
+# Ограничивает режим выполнения вариантами проверки, плана и применения.
 require_apply_mode() {
 	case "$MODE" in
 	apply | plan | check) ;;
