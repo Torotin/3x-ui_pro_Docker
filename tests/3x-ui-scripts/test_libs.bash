@@ -16,6 +16,14 @@ SCRIPTS_DIR="$ROOT_DIR/docker-proxy/3x-ui/scripts"
 . "$SCRIPTS_DIR/lib/http.bash"
 # shellcheck source=/dev/null
 . "$SCRIPTS_DIR/lib/3xui_api.bash"
+# shellcheck source=/dev/null
+. "$SCRIPTS_DIR/lib/runtime_common.bash"
+# shellcheck source=/dev/null
+. "$SCRIPTS_DIR/lib/panel_runtime.bash"
+# shellcheck source=/dev/null
+. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+# shellcheck source=/dev/null
+. "$SCRIPTS_DIR/lib/xray_runtime.bash"
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
@@ -679,9 +687,62 @@ test_tor_proxy_probe_requires_confirmed_tor_route() {
 	unset -f curl
 }
 
+test_afterstart_entrypoint_loads_runtime_modules() {
+	local script module function
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	for module in runtime_common panel_runtime inbound_runtime xray_runtime; do
+		[[ -f "$SCRIPTS_DIR/lib/$module.bash" ]] ||
+			fail "after-start runtime module is missing: $module.bash"
+		grep -Fq ". \"\$LIB_DIR/$module.bash\"" "$script" ||
+			fail "after-start entrypoint must source $module.bash"
+	done
+	for function in record_change ensure_panel_settings ensure_inbound apply_managed_xray restart_if_needed; do
+		if grep -Eq "^${function}\\(\\)" "$script"; then
+			fail "after-start entrypoint must not retain domain function: $function"
+		fi
+	done
+}
+
+test_afterstart_entrypoint_preserves_pipeline_order() {
+	local script block expression line previous=0
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	block=$(sed -n '/^main()/,/^}/p' "$script")
+	for expression in \
+		'http_init "$TMP_ROOT"' \
+		'load_runtime_env "$SCRIPT_DIR"' \
+		'require_apply_mode' \
+		'check_dependencies' \
+		'resolve_panel_base || die "Could not resolve and login to 3x-ui panel."' \
+		'detect_country_flag || true' \
+		'desired=$(build_desired_state)' \
+		'ensure_panel_settings' \
+		'update_admin_credentials_if_needed' \
+		'resolve_panel_base || die "Could not login after panel settings update."' \
+		'ensure_custom_geo_resources' \
+		'update_builtin_geofiles_if_enabled' \
+		'ensure_inbound vision "$desired"' \
+		'ensure_inbound xhttp "$desired"' \
+		'ensure_shared_client "$vision_id" "$xhttp_id" "$desired"' \
+		'apply_managed_xray' \
+		'restart_if_needed'; do
+		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
+		[[ -n "$line" && "$line" -gt "$previous" ]] ||
+			fail "after-start pipeline order changed near: $expression"
+		previous=$line
+	done
+}
+
+test_afterstart_check_mode_bootstraps_without_apply() {
+	local output
+	output=$(MODE=check LIB_DIR="$SCRIPTS_DIR/lib" bash "$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh" 2>&1) ||
+		fail "MODE=check entrypoint startup failed"
+	grep -Fq 'Dependency and environment check passed.' <<<"$output" ||
+		fail "MODE=check must complete before panel or Xray mutations"
+}
+
 test_xray_template_update_requests_core_restart() {
 	local script block
-	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	script="$SCRIPTS_DIR/lib/xray_runtime.bash"
 	block=$(sed -n '/^apply_managed_xray()/,/^}/p' "$script")
 	grep -Fq 'RESTART_XRAY_REQUIRED=1' <<<"$block" ||
 		fail "managed Xray template update must request an Xray core restart"
@@ -689,7 +750,7 @@ test_xray_template_update_requests_core_restart() {
 
 test_panel_restart_does_not_suppress_xray_restart() {
 	local script block
-	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	script="$SCRIPTS_DIR/lib/xray_runtime.bash"
 	block=$(sed -n '/^restart_if_needed()/,/^}/p' "$script")
 	if grep -Fq 'elif ((RESTART_XRAY_REQUIRED == 1))' <<<"$block"; then
 		fail "panel restart must not suppress a required Xray core restart"
@@ -768,6 +829,9 @@ test_only_healthy_external_proxies_enter_xray_state
 test_runtime_does_not_probe_legacy_torproxy_endpoint
 test_warp_proxy_probe_requires_confirmed_warp_route
 test_tor_proxy_probe_requires_confirmed_tor_route
+test_afterstart_entrypoint_loads_runtime_modules
+test_afterstart_entrypoint_preserves_pipeline_order
+test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
