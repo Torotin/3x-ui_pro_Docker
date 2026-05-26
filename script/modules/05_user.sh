@@ -97,27 +97,21 @@ install_user_groups() {
 
 install_user_sudo() {
 	local home_dir=$1
-	local sudoers_file="/etc/sudoers.d/$USER_SSH" sudo_log="$home_dir/sudo_${USER_SSH}.log"
+	local sudoers_file="/etc/sudoers.d/$USER_SSH"
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		run_cmd user.sudoers.write install -m 0440 sudoers "$sudoers_file"
-		run_cmd user.sudo.log install -m 0600 -o root -g root /dev/null "$sudo_log"
 		return 0
 	fi
 	backup_file "$sudoers_file"
 	local tmp
 	tmp=$(mktemp)
-	cat >"$tmp" <<EOF
-$USER_SSH ALL=(ALL) NOPASSWD:ALL
-Defaults:$USER_SSH log_output
-Defaults:$USER_SSH logfile="$sudo_log"
-Defaults:$USER_SSH !tty_tickets
-Defaults:$USER_SSH !requiretty
-EOF
+	install_user_sudoers_content >"$tmp"
 	run_cmd user.sudoers.write install -m 0440 "$tmp" "$sudoers_file"
 	rm -f "$tmp"
-	run_cmd user.sudo.log touch "$sudo_log"
-	run_cmd user.sudo.log.chmod chmod 0600 "$sudo_log"
-	run_cmd user.sudo.log.chown chown root:root "$sudo_log"
+}
+
+install_user_sudoers_content() {
+	printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USER_SSH"
 }
 
 install_user_aliases() {

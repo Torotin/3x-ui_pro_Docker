@@ -2,7 +2,7 @@
 
 [![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 
-`3x-ui_pro_Docker` — готовый Docker Compose стек для развертывания прокси-инфраструктуры вокруг Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Lampac, WARP/usque и TOR helper-сервисов.
+`3x-ui_pro_Docker` — готовый Docker Compose стек для развертывания прокси-инфраструктуры вокруг Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Lampac, usque (WARP) и TOR helper-сервисов.
 
 Репозиторий содержит сам стек, installer CLI/wizard, шаблоны окружения и тесты для безопасной локальной разработки. Собственные образы проекта собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
 
@@ -148,7 +148,7 @@ Wizard при старте автоматически проверяет обн�
 - **Caddy** — fallback/error backend и вспомогательная статика.
 - **Homepage** — dashboard со ссылками на сервисы.
 - **Lampac** — публичный browser front/fallback за цепочкой Xray → Traefik.
-- **WARP/usque/TOR** — proxy helper-сервисы для маршрутизации.
+- **usque (WARP)/TOR** — proxy helper-сервисы для маршрутизации.
 - **Dockcheck/logrotate** — эксплуатационные сервисы для обновлений и логов.
 
 Compose fragments находятся в `docker-proxy/compose.d`. Host paths в них задаются относительно каталога `compose.d`, чтобы стек не зависел от хардкода `/opt/docker-proxy`.

@@ -48,7 +48,7 @@ services:
     hostname: ${WEBDOMAIN}
     restart: always
     depends_on:
-      warp:
+      usque:
         condition: service_healthy
       adguard:
         condition: service_healthy
@@ -157,6 +157,15 @@ services:
       - traefik.http.routers.3xui-panel.tls.certresolver=le
       - traefik.http.routers.3xui-panel.service=3xui-panel-svc
       - traefik.http.routers.3xui-panel.priority=9997
+
+      # Bearer-token API for bots and remote 3x-ui nodes. Keep UI/session
+      # routes on the BasicAuth-protected panel router above.
+      - traefik.http.routers.3xui-api.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}/panel/api`)
+      - traefik.http.routers.3xui-api.entrypoints=websecure
+      - traefik.http.routers.3xui-api.middlewares=bouncer@file,3xui-api-chain
+      - traefik.http.routers.3xui-api.tls.certresolver=le
+      - traefik.http.routers.3xui-api.service=3xui-panel-svc
+      - traefik.http.routers.3xui-api.priority=10001
 
       # Подписки и Clash-эндпоинты. JSON-подписки перехватывает sub-json-processor.
       - traefik.http.routers.3xui-sub.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`${URI_SUB_PATH}`) || PathPrefix(`${URI_CLASH_PATH:-/clash/}`))

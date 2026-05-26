@@ -20,12 +20,14 @@ fi
 : "${XRAY_SHA256:=}"
 XRAY_TMPDIR=
 
+# Удаляет временный каталог загрузки как при успехе, так и при аварийном выходе.
 cleanup_xray_tmpdir() {
 	[[ -n "${XRAY_TMPDIR:-}" ]] && rm -rf "$XRAY_TMPDIR"
 	return 0
 }
 trap cleanup_xray_tmpdir EXIT
 
+# Сопоставляет архитектуру контейнера с именами архива и бинарного файла Xray.
 detect_xray_arch() {
 	case "$(uname -m)" in
 	x86_64)
@@ -44,6 +46,7 @@ detect_xray_arch() {
 	esac
 }
 
+# Формирует ссылку на последний либо явно зафиксированный релиз Xray.
 xray_download_url() {
 	if [[ "$XRAY_VERSION" == "latest" ]]; then
 		printf 'https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-%s.zip' "$XRAY_ARCH"
@@ -52,6 +55,7 @@ xray_download_url() {
 	fi
 }
 
+# Скачивает, проверяет и атомарно устанавливает подходящий бинарный файл Xray.
 main() {
 	local tmp zip target backup url version_output
 	detect_xray_arch
@@ -70,6 +74,7 @@ main() {
 	version_output=$("$tmp/xray" version 2>/dev/null | head -n1 || true)
 	[[ -n "$version_output" ]] || die "Downloaded xray binary does not report a version."
 
+	# Резервная копия позволяет восстановить исполняемый файл при ошибке замены.
 	[[ -f "$target" ]] && cp -f "$target" "$backup"
 	if ! mv -f "$tmp/xray" "$target"; then
 		[[ -f "$backup" ]] && mv -f "$backup" "$target"

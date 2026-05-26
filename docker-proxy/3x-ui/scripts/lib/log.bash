@@ -2,6 +2,7 @@
 
 LOGLEVEL=${LOGLEVEL:-INFO}
 
+# Преобразует текстовый уровень лога в число для сравнения порога вывода.
 log_level_num() {
 	case "${1^^}" in
 	ERROR) printf '1' ;;
@@ -12,6 +13,7 @@ log_level_num() {
 	esac
 }
 
+# Маскирует типовые секреты, чтобы они не попадали в диагностические сообщения.
 redact_secrets() {
 	local input=$*
 	printf '%s' "$input" |
@@ -24,6 +26,7 @@ redact_secrets() {
 			-e 's/([Ss]ecret[Kk]ey[":= ]+)[^,"[:space:]]+/\1***REDACTED***/g'
 }
 
+# Печатает сообщение разрешенного уровня с временем и цветовой меткой.
 log() {
 	local level=${1:-INFO}
 	shift || true
@@ -44,6 +47,7 @@ log() {
 	printf '%s %b%s%b - %s\n' "$timestamp" "$color" "${level^^}" "$reset" "$message" >&2
 }
 
+# Завершает сценарий после записи критической ошибки в журнал.
 die() {
 	log ERROR "$*"
 	exit 1

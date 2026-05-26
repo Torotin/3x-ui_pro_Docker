@@ -41,10 +41,10 @@ test_redaction_masks_secrets() {
 test_upsert_outbound_by_tag_is_idempotent() {
 	local base first second count protocol
 	base=$(cat "$ROOT_DIR/tests/3x-ui-scripts/fixtures/xray-base.json")
-	first=$(json_upsert_outbound_by_tag "$base" '{"tag":"warp-docker","protocol":"socks","settings":{"servers":[{"address":"warp","port":1080}]}}')
-	second=$(json_upsert_outbound_by_tag "$first" '{"tag":"warp-docker","protocol":"socks","settings":{"servers":[{"address":"warp","port":1080}]}}')
-	count=$(printf '%s' "$second" | jq '[.xraySetting.outbounds[] | select(.tag=="warp-docker")] | length')
-	protocol=$(printf '%s' "$second" | jq -r '.xraySetting.outbounds[] | select(.tag=="warp-docker") | .protocol')
+	first=$(json_upsert_outbound_by_tag "$base" '{"tag":"usque","protocol":"socks","settings":{"servers":[{"address":"usque","port":1080}]}}')
+	second=$(json_upsert_outbound_by_tag "$first" '{"tag":"usque","protocol":"socks","settings":{"servers":[{"address":"usque","port":1080}]}}')
+	count=$(printf '%s' "$second" | jq '[.xraySetting.outbounds[] | select(.tag=="usque")] | length')
+	protocol=$(printf '%s' "$second" | jq -r '.xraySetting.outbounds[] | select(.tag=="usque") | .protocol')
 	assert_eq 1 "$count" "outbound was duplicated"
 	assert_eq socks "$protocol" "outbound protocol mismatch"
 }
@@ -61,31 +61,25 @@ test_dns_replace_preserves_unknown_fields() {
 
 test_remove_managed_xray_artifacts_only_removes_our_tags() {
 	local input cleaned managed_count direct_count
-	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-docker"},{"tag":"tor-proxy"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"}]}}}'
+	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"}]}}}'
 	cleaned=$(json_remove_managed_xray_artifacts "$input")
-	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-docker" or $t == "tor-proxy" or $t == "warp-balancer")] | length')
+	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-retired" or $t == "tor-proxy" or $t == "warp-balancer")] | length')
 	direct_count=$(printf '%s' "$cleaned" | jq '[.xraySetting.outbounds[]? | select(.tag=="direct")] | length')
 	assert_eq 0 "$managed_count" "managed artifacts were not removed"
 	assert_eq 1 "$direct_count" "unmanaged outbound was removed"
 }
 
 test_desired_clients_are_deterministic() {
-	local desired vision_email xhttp_email vision_sub xhttp_sub vision_flow xhttp_flow
+	local desired shared_email shared_sub shared_flow
 	export CLIENT_EMAIL_PREFIX=autogen
 	export CLIENT_SUB_ID=stable-sub
 	desired=$(build_desired_state)
-	vision_email=$(printf '%s' "$desired" | jq -r '.clients.vision.email')
-	xhttp_email=$(printf '%s' "$desired" | jq -r '.clients.xhttp.email')
-	vision_sub=$(printf '%s' "$desired" | jq -r '.clients.vision.subId')
-	xhttp_sub=$(printf '%s' "$desired" | jq -r '.clients.xhttp.subId')
-	vision_flow=$(printf '%s' "$desired" | jq -r '.clients.vision.flow')
-	xhttp_flow=$(printf '%s' "$desired" | jq -r '.clients.xhttp.flow')
-	assert_eq autogen-vision "$vision_email" "vision email default mismatch"
-	assert_eq autogen-xhttp "$xhttp_email" "xhttp email default mismatch"
-	assert_eq stable-sub "$vision_sub" "vision sub id mismatch"
-	assert_eq stable-sub "$xhttp_sub" "xhttp sub id mismatch"
-	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision REALITY client flow mismatch"
-	assert_eq "" "$xhttp_flow" "XHTTP client flow mismatch"
+	shared_email=$(printf '%s' "$desired" | jq -r '.clients.shared.email')
+	shared_sub=$(printf '%s' "$desired" | jq -r '.clients.shared.subId')
+	shared_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.flow')
+	assert_eq autogen "$shared_email" "shared client email default mismatch"
+	assert_eq stable-sub "$shared_sub" "shared client sub id mismatch"
+	assert_eq "xtls-rprx-vision" "$shared_flow" "shared VLESS client flow mismatch"
 }
 
 test_desired_inbound_remarks_use_country_flag() {
@@ -257,6 +251,65 @@ test_panel_api_requests_use_bearer_token_when_configured() {
 	assert_eq 0 "$settings_auth_count" "Bearer token must not be sent on non-/panel/api routes"
 }
 
+test_client_api_uses_3x_ui_31_json_routes() {
+	local call_log add_has_json update_has_json add_path update_path list_path attach_path
+	call_log=$(mktemp)
+	export XUI_API_TOKEN=test-token
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:2053/panel
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		return 0
+	}
+	xui_add_client '{"client":{"email":"a@example.test"},"inboundIds":[1]}'
+	xui_update_client a@example.test '{"email":"a@example.test"}'
+	xui_list_clients
+	xui_attach_client a@example.test '{"inboundIds":[2]}'
+	add_path=$(grep -Fc "panel/api/clients/add" "$call_log" || true)
+	update_path=$(grep -Fc "panel/api/clients/update/a@example.test" "$call_log" || true)
+	list_path=$(grep -Fc "panel/api/clients/list" "$call_log" || true)
+	attach_path=$(grep -Fc "panel/api/clients/a@example.test/attach" "$call_log" || true)
+	add_has_json=$(grep -F "panel/api/clients/add" "$call_log" | grep -Fc "Content-Type: application/json" || true)
+	update_has_json=$(grep -F "panel/api/clients/update/a@example.test" "$call_log" | grep -Fc "Content-Type: application/json" || true)
+	rm -f "$call_log"
+	unset -f http_request
+	unset XUI_API_TOKEN
+	assert_eq 1 "$add_path" "3x-ui 3.1 add client route mismatch"
+	assert_eq 1 "$update_path" "3x-ui 3.1 update client route mismatch"
+	assert_eq 1 "$list_path" "3x-ui 3.1 list clients route mismatch"
+	assert_eq 1 "$attach_path" "3x-ui 3.1 attach client route mismatch"
+	assert_eq 1 "$add_has_json" "3x-ui 3.1 add client must send JSON"
+	assert_eq 1 "$update_has_json" "3x-ui 3.1 update client must send JSON"
+}
+
+test_create_mutations_use_single_long_request() {
+	local observed=()
+	HTTP_ATTEMPTS=4
+	HTTP_MAX_TIME=8
+	# shellcheck disable=SC2034 # xui_api_post_once_long reads this runtime override dynamically
+	HTTP_LONG_MAX_TIME=180
+	XUI_API_TOKEN=
+	# shellcheck disable=SC2034 # xui_api_auth_args reads the cached token dynamically
+	XUI_API_TOKEN_RESOLVED=
+	URL_BASE_RESOLVED=http://127.0.0.1:2053
+	xui_csrf_args() {
+		return 0
+	}
+	http_request() {
+		observed+=("$HTTP_ATTEMPTS:$HTTP_MAX_TIME:$2")
+		return 0
+	}
+	xui_add_inbound --data-urlencode "port=62093"
+	xui_add_client '{"client":{"email":"a@example.test"},"inboundIds":[1]}'
+	unset -f http_request xui_csrf_args
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	assert_eq "1:180:http://127.0.0.1:2053/panel/api/inbounds/add" "${observed[0]}" "Inbound create must not retry a slow mutation"
+	assert_eq "1:180:http://127.0.0.1:2053/panel/api/clients/add" "${observed[1]}" "Client create must not retry a slow mutation"
+	assert_eq 4 "$HTTP_ATTEMPTS" "Mutation request must restore HTTP_ATTEMPTS"
+	assert_eq 8 "$HTTP_MAX_TIME" "Mutation request must restore HTTP_MAX_TIME"
+}
+
 test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty() {
 	local call_log auth_count
 	call_log=$(mktemp)
@@ -394,19 +447,36 @@ test_warp_domains_restore_old_ru_rules() {
 	assert_eq true "$has_gov" "old WARP gov RU rule was not restored"
 	assert_eq true "$has_yandex" "old WARP yandex rule was not restored"
 	assert_eq false "$has_ucoz" "WARP routing must not reference missing ucoz-ru geosite code"
-	assert_eq true "$has_webdomain" "web domain was not included in WARP routing domains"
+	assert_eq false "$has_webdomain" "web domain must be routed by a separate WARP rule"
+}
+
+test_managed_xray_inserts_webdomain_rule_between_api_and_warp_rules() {
+	local base dns updated api_index webdomain_index warp_index webdomain_balancer warp_balancer_count
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"blocked","protocol":"blackhole","settings":{}}],"routing":{"rules":[{"type":"field","inboundTag":["api"],"outboundTag":"api"},{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]},"dns":{"hosts":{"example.local":"127.0.0.1"}}}}'
+	dns='[]'
+	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false '[{"tag":"usque","host":"usque","port":1080}]' "screenhub.linkpc.net")
+	api_index=$(printf '%s' "$updated" | jq '.xraySetting.routing.rules | map((.outboundTag // "") == "api") | index(true)')
+	webdomain_index=$(printf '%s' "$updated" | jq '.xraySetting.routing.rules | map(((.balancerTag // "") == "warp-balancer") and ((.domain // []) == ["domain:screenhub.linkpc.net"])) | index(true)')
+	warp_index=$(printf '%s' "$updated" | jq '.xraySetting.routing.rules | map(((.balancerTag // "") == "warp-balancer") and (((.domain // []) | index("ext:geosite_RU.dat:category-gov-ru")) != null)) | index(true)')
+	webdomain_balancer=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[] | select((.domain // []) == ["domain:screenhub.linkpc.net"]) | .balancerTag')
+	warp_balancer_count=$(printf '%s' "$updated" | jq '[.xraySetting.routing.rules[] | select((.balancerTag // "") == "warp-balancer")] | length')
+	assert_eq 0 "$api_index" "API rule must remain first in fixture"
+	assert_eq 1 "$webdomain_index" "web domain WARP rule must be inserted immediately after API"
+	assert_eq 2 "$warp_index" "broad WARP rule must be inserted after the web domain rule"
+	assert_eq warp-balancer "$webdomain_balancer" "web domain rule must use WARP balancer"
+	assert_eq 2 "$warp_balancer_count" "managed state must create separate web domain and broad WARP rules"
 }
 
 test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs() {
 	local base dns updated selector_count tor_port dns_first burst_destination
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"blocked","protocol":"blackhole","settings":{}}],"routing":{"rules":[]},"dns":{"hosts":{"example.local":"127.0.0.1"}}}}'
 	dns='[{"address":"adguard","port":53,"skipFallback":false}]'
-	updated=$(json_apply_managed_xray_state "$base" "$dns" true true true true "screenhub.linkpc.net")
-	selector_count=$(printf '%s' "$updated" | jq '[.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .selector[] | select(.=="warp-docker")] | length')
+	updated=$(json_apply_managed_xray_state "$base" "$dns" true true true '[{"tag":"usque","host":"usque","port":1080}]' "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]')
+	selector_count=$(printf '%s' "$updated" | jq '[.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .selector[] | select(.=="usque")] | length')
 	tor_port=$(printf '%s' "$updated" | jq -r '.xraySetting.outbounds[] | select(.tag=="tor-proxy") | .settings.servers[0].port')
 	dns_first=$(printf '%s' "$updated" | jq -r '.xraySetting.dns.servers[0].address')
 	burst_destination=$(printf '%s' "$updated" | jq -r '.xraySetting.burstObservatory.pingConfig.destination')
-	assert_eq 1 "$selector_count" "WARP balancer does not reference available warp-docker"
+	assert_eq 1 "$selector_count" "WARP balancer does not reference available usque"
 	assert_eq 1080 "$tor_port" "TOR outbound must use current tor-proxy:1080 endpoint"
 	assert_eq adguard "$dns_first" "DNS servers were not restored"
 	assert_eq https://connectivitycheck.gstatic.com/generate_204 "$burst_destination" "burstObservatory ping destination mismatch"
@@ -478,34 +548,50 @@ test_vision_settings_include_telemt_fallback_preserving_clients() {
 	assert_eq none "$encryption" "Vision VLESS settings must keep encryption=none for subscription outbounds"
 }
 
-test_tor_balancer_uses_two_available_hosts() {
+test_vless_client_api_payloads_match_3x_ui_31_contract() {
+	local client create_payload tg_id inbound_count create_email update_email legacy_settings
+	client=$(vless_client_api_json client-id a@example.test stable-sub xtls-rprx-vision)
+	create_payload=$(vless_client_create_payload_json '[12,13]' "$client")
+	tg_id=$(printf '%s' "$client" | jq -r '.tgId')
+	update_email=$(printf '%s' "$client" | jq -r '.email')
+	inbound_count=$(printf '%s' "$create_payload" | jq '.inboundIds | length')
+	create_email=$(printf '%s' "$create_payload" | jq -r '.client.email')
+	legacy_settings=$(printf '%s' "$create_payload" | jq -r '.settings // empty')
+	assert_eq 0 "$tg_id" "3x-ui 3.1 client tgId must be numeric"
+	assert_eq a@example.test "$update_email" "3x-ui 3.1 update payload must be the direct client object"
+	assert_eq 2 "$inbound_count" "3x-ui 3.1 create payload must support shared client attachments"
+	assert_eq a@example.test "$create_email" "3x-ui 3.1 create payload must wrap client object"
+	assert_eq "" "$legacy_settings" "3x-ui 3.1 client create payload must not use legacy settings wrapper"
+}
+
+test_tor_balancer_uses_single_proxy_endpoint() {
 	local base dns updated selector_count rule_balancer ports
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[]}}}'
 	dns='[]'
-	updated=$(json_apply_managed_xray_state "$base" "$dns" false true false false "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080},{"tag":"torproxy","host":"torproxy","port":9050}]')
+	updated=$(json_apply_managed_xray_state "$base" "$dns" false true false '[]' "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]')
 	selector_count=$(printf '%s' "$updated" | jq '[.xraySetting.routing.balancers[] | select(.tag=="tor-balancer") | .selector[]] | length')
 	rule_balancer=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[] | select(.balancerTag=="tor-balancer") | .balancerTag')
 	ports=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="tor-proxy" or .tag=="torproxy") | "\(.tag):\(.settings.servers[0].port)"] | sort | join(",")')
-	assert_eq 2 "$selector_count" "TOR balancer must include two selectors"
+	assert_eq 1 "$selector_count" "TOR balancer must include one selector"
 	assert_eq tor-balancer "$rule_balancer" "TOR routing must use balancerTag"
-	assert_eq "tor-proxy:1080,torproxy:9050" "$ports" "TOR outbound endpoints mismatch"
+	assert_eq "tor-proxy:1080" "$ports" "TOR outbound endpoints mismatch"
 }
 
-test_warp_balancer_uses_docker_and_usque_without_console_warp() {
+test_warp_balancer_uses_usque_without_console_warp() {
 	local base dns updated selectors protocols usque_port burst_subjects observatory fallback
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[]}}}'
 	dns='[]'
-	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false true "screenhub.linkpc.net" '[]')
+	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false '[{"tag":"usque","host":"usque","port":1080}]' "screenhub.linkpc.net" '[]')
 	selectors=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .selector | sort | join(",")')
-	protocols=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="warp" or .tag=="warp-docker" or .tag=="usque") | "\(.tag):\(.protocol)"] | sort | join(",")')
+	protocols=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="warp" or .tag=="usque") | "\(.tag):\(.protocol)"] | sort | join(",")')
 	usque_port=$(printf '%s' "$updated" | jq -r '.xraySetting.outbounds[] | select(.tag=="usque") | .settings.servers[0].port')
 	burst_subjects=$(printf '%s' "$updated" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
 	observatory=$(printf '%s' "$updated" | jq -r '.xraySetting.observatory')
 	fallback=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .fallbackTag')
-	assert_eq "usque,warp-docker" "$selectors" "WARP balancer selectors mismatch"
-	assert_eq "usque:socks,warp-docker:socks" "$protocols" "WARP outbound protocols mismatch"
+	assert_eq "usque" "$selectors" "WARP balancer selectors mismatch"
+	assert_eq "usque:socks" "$protocols" "WARP outbound protocols mismatch"
 	assert_eq 1080 "$usque_port" "usque outbound port mismatch"
-	assert_eq "usque,warp-docker" "$burst_subjects" "WARP burstObservatory selectors mismatch"
+	assert_eq "usque" "$burst_subjects" "WARP burstObservatory selectors mismatch"
 	assert_eq null "$observatory" "legacy observatory must not be used with managed balancers"
 	assert_eq blocked "$fallback" "WARP balancer fallbackTag mismatch"
 }
@@ -515,24 +601,99 @@ test_warp_balancer_can_opt_in_console_warp() {
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[]}}}'
 	dns='[]'
 	warp_console='{"tag":"warp","protocol":"wireguard","settings":{"secretKey":"test","address":["172.16.0.2/32"],"peers":[{"publicKey":"peer","allowedIPs":["0.0.0.0/0"],"endpoint":"engage.cloudflareclient.com:2408"}]}}'
-	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false true "screenhub.linkpc.net" '[]' "$warp_console")
+	updated=$(json_apply_managed_xray_state "$base" "$dns" true false false '[{"tag":"usque","host":"usque","port":1080}]' "screenhub.linkpc.net" '[]' "$warp_console")
 	selectors=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.balancers[] | select(.tag=="warp-balancer") | .selector | sort | join(",")')
-	protocols=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="warp" or .tag=="warp-docker" or .tag=="usque") | "\(.tag):\(.protocol)"] | sort | join(",")')
+	protocols=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="warp" or .tag=="usque") | "\(.tag):\(.protocol)"] | sort | join(",")')
 	burst_subjects=$(printf '%s' "$updated" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
-	assert_eq "usque,warp,warp-docker" "$selectors" "Console WARP opt-in selectors mismatch"
-	assert_eq "usque:socks,warp-docker:socks,warp:wireguard" "$protocols" "Console WARP opt-in protocols mismatch"
-	assert_eq "usque,warp,warp-docker" "$burst_subjects" "Console WARP opt-in burstObservatory selectors mismatch"
+	assert_eq "usque,warp" "$selectors" "Console WARP opt-in selectors mismatch"
+	assert_eq "usque:socks,warp:wireguard" "$protocols" "Console WARP opt-in protocols mismatch"
+	assert_eq "usque,warp" "$burst_subjects" "Console WARP opt-in burstObservatory selectors mismatch"
 }
 
 test_managed_burst_observatory_preserves_custom_subjects() {
 	local base dns updated subjects custom_observatory
 	base='{"xraySetting":{"outbounds":[],"routing":{"rules":[],"balancers":[]},"burstObservatory":{"subjectSelector":["custom-out"],"pingConfig":{"destination":"https://old.example/204"}}}}'
 	dns='[]'
-	updated=$(json_apply_managed_xray_state "$(json_remove_managed_xray_artifacts "$base")" "$dns" false true false false "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]')
+	updated=$(json_apply_managed_xray_state "$(json_remove_managed_xray_artifacts "$base")" "$dns" false true false '[]' "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]')
 	subjects=$(printf '%s' "$updated" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
 	custom_observatory=$(printf '%s' "$updated" | jq -r '.xraySetting.observatory')
 	assert_eq "custom-out,tor-proxy" "$subjects" "custom burstObservatory subjects were not preserved"
 	assert_eq null "$custom_observatory" "unexpected observatory object was created"
+}
+
+test_unhealthy_external_proxies_create_no_managed_xray_artifacts() {
+	local base updated managed_outbounds managed_balancers managed_rules subjects
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"blocked","protocol":"blackhole","settings":{}}],"routing":{"rules":[],"balancers":[]},"burstObservatory":null}}'
+	updated=$(json_apply_managed_xray_state "$base" '[]' true true false '[]' "screenhub.linkpc.net" '[]')
+	managed_outbounds=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[] | select(.tag=="usque" or .tag=="tor-proxy" or .tag=="torproxy")] | length')
+	managed_balancers=$(printf '%s' "$updated" | jq '[.xraySetting.routing.balancers[] | select(.tag=="warp-balancer" or .tag=="tor-balancer")] | length')
+	managed_rules=$(printf '%s' "$updated" | jq '[.xraySetting.routing.rules[] | select(.balancerTag=="warp-balancer" or .balancerTag=="tor-balancer")] | length')
+	subjects=$(printf '%s' "$updated" | jq '[.xraySetting.burstObservatory.subjectSelector[]?] | length')
+	assert_eq 0 "$managed_outbounds" "unhealthy proxies must not produce managed outbounds"
+	assert_eq 0 "$managed_balancers" "unhealthy proxies must not produce managed balancers"
+	assert_eq 0 "$managed_rules" "unhealthy proxies must not produce managed routing rules"
+	assert_eq 0 "$subjects" "unhealthy proxies must not produce observatory subjects"
+}
+
+test_only_healthy_external_proxies_enter_xray_state() {
+	local base updated outbounds subjects
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"blocked","protocol":"blackhole","settings":{}}],"routing":{"rules":[],"balancers":[]}}}'
+	updated=$(json_apply_managed_xray_state "$base" '[]' true true false '[{"tag":"usque","host":"usque","port":1080}]' "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]')
+	outbounds=$(printf '%s' "$updated" | jq -r '[.xraySetting.outbounds[] | select(.tag=="usque" or .tag=="tor-proxy" or .tag=="torproxy") | .tag] | sort | join(",")')
+	subjects=$(printf '%s' "$updated" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
+	assert_eq "tor-proxy,usque" "$outbounds" "only healthy proxy endpoints must become outbounds"
+	assert_eq "tor-proxy,usque" "$subjects" "only healthy proxy endpoints must be observed"
+}
+
+test_runtime_does_not_probe_legacy_torproxy_endpoint() {
+	if grep -Rq 'TOR_PROXY_ALT_' "$SCRIPTS_DIR/01_AfterStart" "$SCRIPTS_DIR/lib"; then
+		fail "managed runtime must not retain alternate torproxy endpoint defaults or probes"
+	fi
+}
+
+test_warp_proxy_probe_requires_confirmed_warp_route() {
+	curl() {
+		printf 'fl=1\nwarp=on\n'
+	}
+	warp_proxy_available usque 1080 || fail "warp=on response must pass WARP proxy probe"
+	curl() {
+		printf 'fl=1\nwarp=off\n'
+	}
+	if warp_proxy_available usque 1080; then
+		fail "warp=off response must fail WARP proxy probe"
+	fi
+	unset -f curl
+}
+
+test_tor_proxy_probe_requires_confirmed_tor_route() {
+	curl() {
+		printf '{"IsTor":true}\n'
+	}
+	tor_proxy_available tor-proxy 1080 || fail "IsTor=true response must pass TOR proxy probe"
+	curl() {
+		printf '{"IsTor":false}\n'
+	}
+	if tor_proxy_available tor-proxy 1080; then
+		fail "IsTor=false response must fail TOR proxy probe"
+	fi
+	unset -f curl
+}
+
+test_xray_template_update_requests_core_restart() {
+	local script block
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	block=$(sed -n '/^apply_managed_xray()/,/^}/p' "$script")
+	grep -Fq 'RESTART_XRAY_REQUIRED=1' <<<"$block" ||
+		fail "managed Xray template update must request an Xray core restart"
+}
+
+test_panel_restart_does_not_suppress_xray_restart() {
+	local script block
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	block=$(sed -n '/^restart_if_needed()/,/^}/p' "$script")
+	if grep -Fq 'elif ((RESTART_XRAY_REQUIRED == 1))' <<<"$block"; then
+		fail "panel restart must not suppress a required Xray core restart"
+	fi
 }
 
 test_warp_outbound_from_registration_prefers_panel_host_endpoint() {
@@ -583,6 +744,8 @@ test_resolve_panel_base_tries_new_password_when_username_is_unchanged
 test_normalize_base_path_accepts_empty_input
 test_http_request_temp_files_are_created_under_tmp_root
 test_panel_api_requests_use_bearer_token_when_configured
+test_client_api_uses_3x_ui_31_json_routes
+test_create_mutations_use_single_long_request
 test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty
 test_xui_login_replays_csrf_token
 test_non_bearer_api_post_replays_csrf_token
@@ -595,10 +758,18 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt
 test_vision_stream_restores_old_reality_external_proxy
 test_vision_stream_is_clean_self_steal
 test_vision_settings_include_telemt_fallback_preserving_clients
-test_tor_balancer_uses_two_available_hosts
-test_warp_balancer_uses_docker_and_usque_without_console_warp
+test_vless_client_api_payloads_match_3x_ui_31_contract
+test_tor_balancer_uses_single_proxy_endpoint
+test_warp_balancer_uses_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp
 test_managed_burst_observatory_preserves_custom_subjects
+test_unhealthy_external_proxies_create_no_managed_xray_artifacts
+test_only_healthy_external_proxies_enter_xray_state
+test_runtime_does_not_probe_legacy_torproxy_endpoint
+test_warp_proxy_probe_requires_confirmed_warp_route
+test_tor_proxy_probe_requires_confirmed_tor_route
+test_xray_template_update_requests_core_restart
+test_panel_restart_does_not_suppress_xray_restart
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol

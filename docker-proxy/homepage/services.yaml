@@ -85,15 +85,9 @@
         server: dockerproxy
         container: crowdsec
 
-    - WARP:
-        icon: mdi-cloud-sync
-        description: Cloudflare WARP SOCKS backend
-        server: dockerproxy
-        container: warp
-
     - Usque:
         icon: mdi-transit-connection-variant
-        description: Alternate WARP-like SOCKS backend
+        description: Cloudflare WARP SOCKS backend
         server: dockerproxy
         container: usque
 

@@ -107,6 +107,20 @@ for key, value in xui_labels.items():
     assert_true("traefik.tcp." not in key, f"3x-ui Traefik TCP label must be removed: {key}")
     assert_true("traefik.udp." not in key, f"3x-ui Traefik UDP label must be removed: {key}")
     assert_true(value != "l4tcp", "No 3x-ui HTTP router may use l4tcp")
+panel_priority = int(xui_labels.get("traefik.http.routers.3xui-panel.priority", "0"))
+api_rule = xui_labels.get("traefik.http.routers.3xui-api.rule", "")
+api_middlewares = xui_labels.get("traefik.http.routers.3xui-api.middlewares", "")
+api_priority = int(xui_labels.get("traefik.http.routers.3xui-api.priority", "0"))
+assert_true(
+    api_rule == "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}/panel/api`)",
+    "3x-ui Bearer API must have a dedicated base-path API router",
+)
+assert_true(api_middlewares == "bouncer@file,3xui-api-chain", "3x-ui Bearer API router must avoid panel BasicAuth")
+assert_true("3xui-basic-auth" not in xui_labels.get("traefik.http.middlewares.3xui-api-chain.chain.middlewares", ""), "3x-ui API chain must not require BasicAuth")
+assert_true(xui_labels.get("traefik.http.routers.3xui-api.service", "") == "3xui-panel-svc", "3x-ui API router must use panel service")
+assert_true(xui_labels.get("traefik.http.routers.3xui-api.entrypoints", "") == "websecure", "3x-ui API router must use websecure")
+assert_true(xui_labels.get("traefik.http.routers.3xui-api.tls.certresolver", "") == "le", "3x-ui API router must use TLS certificate resolver")
+assert_true(api_priority > panel_priority, "3x-ui Bearer API router must outrank the BasicAuth panel router")
 
 telemt_compose = load_yaml("docker-proxy/compose.d/15-telemt.yml")
 telemt_service = telemt_compose["services"]["telemt"]

@@ -50,12 +50,12 @@ ensure_socks_outbound() {
 }
 update_xray_routing_warp() {
     # Объединённый функционал: регистрация WARP (при необходимости),
-    # добавление outbounds (warp, warp-docker), добавление balancer и rule.
+    # добавление outbounds (warp, usque), добавление balancer и rule.
 
     TAG_WARP="warp"
-    TAG_SOCKS="warp-docker"
+    TAG_SOCKS="usque"
     TAG_SOCKS_V5="warp_socks_v5"
-    WARP="warp"
+    WARP="usque"
     WARP_PORT=1080
     WARP_V5="warp_socks_v5"
     WARP_PORT_V5=9091
@@ -185,7 +185,7 @@ update_xray_routing_warp() {
     fi
 
     # Добавим/обновим routing.balancers и observatory
-    balancer_json=$(jq -nc '{ tag:"warp-balancer", selector:["warp-docker","warp_socks_v5"], fallbackTag:"warp", strategy:{type:"leastPing"} }')
+    balancer_json=$(jq -nc '{ tag:"warp-balancer", selector:["usque","warp_socks_v5"], fallbackTag:"warp", strategy:{type:"leastPing"} }')
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq --argjson bal "$balancer_json" '
         .xraySetting.routing.balancers = (
           (.xraySetting.routing.balancers // [])
@@ -197,7 +197,7 @@ update_xray_routing_warp() {
     XRAY_SETTINGS_JSON=$(echo "$XRAY_SETTINGS_JSON" | jq '
         .xraySetting.observatory = (
           .xraySetting.observatory // {
-            subjectSelector:["warp","warp-docker","warp_socks_v5"],
+            subjectSelector:["warp","usque","warp_socks_v5"],
             probeURL:"http://www.google.com/gen_204",
             probeInterval:"10m",
             enableConcurrency:true

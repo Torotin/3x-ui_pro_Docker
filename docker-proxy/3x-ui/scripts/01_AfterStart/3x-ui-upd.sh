@@ -28,16 +28,19 @@ ENSURE_INBOUND_ID=
 # shellcheck source=../lib/desired_state.bash
 . "$LIB_DIR/desired_state.bash"
 
+# Удаляет временный каталог HTTP-ответов и подготовленных JSON при завершении.
 cleanup() {
 	[[ -n "${TMP_ROOT:-}" ]] && rm -rf "$TMP_ROOT"
 }
 trap cleanup EXIT
 
+# Учитывает планируемое либо примененное изменение и выводит его в журнал.
 record_change() {
 	CHANGE_COUNT=$((CHANGE_COUNT + 1))
 	log INFO "$*"
 }
 
+# Определяет флаг страны по публичному IP для человекочитаемых имен inbound.
 detect_country_flag() {
 	log INFO "Detecting country flag by public IP."
 	EMOJI_FLAG="⚠"
@@ -45,6 +48,7 @@ detect_country_flag() {
 	local src jqpath mode resp value emoji
 	local curl_opts=(-sS --fail --location --retry 1 --connect-timeout 2 --max-time 4 -H "Accept:application/json")
 
+	# Источники проверяются по очереди; недоступный сервис не блокирует запуск.
 	while IFS='|' read -r src jqpath mode || [[ -n "${src:-}" ]]; do
 		[[ -n "$src" ]] || continue
 		[[ -n "$mode" ]] || mode=emoji
@@ -81,6 +85,7 @@ detect_country_flag() {
 	return 1
 }
 
+# Записывает намерение в режиме plan либо разрешает применение в режиме apply.
 plan_or_apply() {
 	local message=$1
 	if [[ "$MODE" == "plan" ]]; then
@@ -91,14 +96,24 @@ plan_or_apply() {
 	return 0
 }
 
+# Преобразует тело последнего HTTP-ответа в компактный JSON.
 body_json() {
 	http_body | jq -c .
 }
 
+# Возвращает полезную часть obj из успешного ответа API панели.
 api_obj_json() {
 	jq -c '.obj // {}' "$HTTP_BODY_FILE"
 }
 
+# Формирует краткую диагностику ответа API для сообщений об ошибках.
+api_error_summary() {
+	local body
+	body=$(http_body | tr '\n' ' ')
+	printf 'HTTP %s: %s' "$HTTP_CODE" "$body"
+}
+
+# Готовит form-urlencoded параметры панели из env или сохраненных значений.
 panel_settings_args() {
 	local current=$1 var env_val value args=()
 	while IFS= read -r var; do
@@ -113,6 +128,7 @@ panel_settings_args() {
 	printf '%s\0' "${args[@]}"
 }
 
+# Строит сравнимый JSON желаемых настроек панели из окружения и текущего состояния.
 panel_desired_json() {
 	local current=$1 var env_val value desired='{}'
 	while IFS= read -r var; do
@@ -127,6 +143,7 @@ panel_desired_json() {
 	printf '%s' "$desired"
 }
 
+# Выделяет из ответа панели только ключи, которыми управляет этот runtime.
 panel_current_managed_json() {
 	local current=$1 var value projected='{}'
 	while IFS= read -r var; do
@@ -136,6 +153,7 @@ panel_current_managed_json() {
 	printf '%s' "$projected"
 }
 
+# Сверяет управляемые настройки панели и применяет только фактическое расхождение.
 ensure_panel_settings() {
 	local current current_projected desired args
 	xui_get_panel_settings || die "Failed to read panel settings."
@@ -156,6 +174,7 @@ ensure_panel_settings() {
 	fi
 }
 
+# При необходимости заменяет учетные данные администратора и обновляет сессию.
 update_admin_credentials_if_needed() {
 	[[ -n "$NEW_ADMIN_USERNAME" && -n "$NEW_ADMIN_PASSWORD" ]] || {
 		log INFO "Admin credential update skipped."
@@ -174,12 +193,14 @@ update_admin_credentials_if_needed() {
 	fi
 }
 
+# Получает массив пользовательских geo-ресурсов из ответа панели.
 custom_geo_list_json() {
 	xui_custom_geo_list || die "Failed to list custom geo resources."
 	http_success_json || die "Custom geo list API failed: $(http_body)"
 	jq -c '.obj // []' "$HTTP_BODY_FILE"
 }
 
+# Синхронизирует список пользовательских geo-файлов через API панели.
 ensure_custom_geo_resources() {
 	local desired existing count index type alias url match id current_url
 	[[ "$CUSTOM_GEO_API_ENABLED" == "true" ]] || {
@@ -195,6 +216,7 @@ ensure_custom_geo_resources() {
 	fi
 
 	existing=$(custom_geo_list_json)
+	# Каждый ресурс сопоставляется по типу и alias, поэтому изменение URL обновляется на месте.
 	for ((index = 0; index < count; index++)); do
 		type=$(jq -r ".[$index].type" <<<"$desired")
 		alias=$(jq -r ".[$index].alias" <<<"$desired")
@@ -230,6 +252,7 @@ ensure_custom_geo_resources() {
 	fi
 }
 
+# Запускает штатное обновление встроенных geo-файлов, если оно включено.
 update_builtin_geofiles_if_enabled() {
 	[[ "$GEOFILES_UPDATE_ON_START" == "true" ]] || {
 		log INFO "Built-in geofile update skipped."
@@ -246,12 +269,21 @@ update_builtin_geofiles_if_enabled() {
 	fi
 }
 
+# Получает массив входящих подключений из API панели.
 inbounds_json() {
 	xui_list_inbounds || die "Failed to list inbounds."
 	http_success_json || die "Inbound list API failed: $(http_body)"
 	jq -c '.obj // []' "$HTTP_BODY_FILE"
 }
 
+# Получает массив общих клиентских объектов из API панели 3.1.
+clients_json() {
+	xui_list_clients || die "Failed to list clients."
+	http_success_json || die "Client list API failed: $(api_error_summary)"
+	jq -c '.obj // []' "$HTTP_BODY_FILE"
+}
+
+# Находит идентификатор inbound по уникальной паре порта и протокола.
 find_inbound_by_port() {
 	local inbounds=$1 port=$2 protocol=$3
 	jq -r --argjson port "$port" --arg protocol "$protocol" '
@@ -259,16 +291,7 @@ find_inbound_by_port() {
     ' <<<"$inbounds" | head -n1
 }
 
-find_client_id() {
-	local inbound=$1 email=$2 _sub_id=$3
-	jq -r --arg email "$email" '
-      (.settings | fromjson? // {} | .clients // [])
-      | .[]
-      | select(.email == $email)
-      | .id
-    ' <<<"$inbound" | head -n1
-}
-
+# Запрещает перезаписывать inbound на занятом порту, если он не управляется runtime.
 managed_conflict_check() {
 	local inbound=$1 expected_remarks_json=$2 port=$3
 	[[ -n "$inbound" && "$inbound" != "null" ]] || return 0
@@ -281,6 +304,7 @@ managed_conflict_check() {
 	fi
 }
 
+# Генерирует UUID клиента через ядро либо запасной генератор.
 new_uuid() {
 	if [[ -r /proc/sys/kernel/random/uuid ]]; then
 		cat /proc/sys/kernel/random/uuid
@@ -289,6 +313,7 @@ new_uuid() {
 	fi
 }
 
+# Генерирует набор случайных shortId для REALITY inbound.
 generate_short_ids_json() {
 	local count=${1:-8} max_bytes=${2:-8} ids='[]' raw len hex i
 	for ((i = 0; i < count; i++)); do
@@ -304,6 +329,7 @@ generate_short_ids_json() {
 	printf '%s' "$ids"
 }
 
+# Находит исполняемый файл Xray с учетом архитектуры и переопределений окружения.
 find_xray_bin() {
 	local candidate arch_name
 	case "$(uname -m)" in
@@ -325,6 +351,7 @@ find_xray_bin() {
 	return 1
 }
 
+# Генерирует WireGuard-ключи и reserved-байты для регистрации WARP.
 generate_wg_keys() {
 	local xray_bin output hash decoded b1 b2 b3
 	xray_bin=$(find_xray_bin) || die "Failed to find xray binary for WARP registration."
@@ -335,6 +362,7 @@ generate_wg_keys() {
 	hash=$(awk -F': ' '/Hash32/ {print $2}' <<<"$output" | head -n1)
 	WG_RESERVED_JSON='[10,14,188]'
 	if [[ -n "$hash" ]]; then
+		# Новые версии Xray возвращают reserved-байты в Hash32; иначе остается значение по умолчанию.
 		decoded=$(printf '%s' "$hash" | base64 -d 2>/dev/null | head -c 3 || true)
 		if [[ -n "$decoded" ]]; then
 			read -r b1 b2 b3 < <(printf '%s' "$decoded" | od -An -tu1 | tr -s ' ' | sed 's/^ //')
@@ -346,20 +374,24 @@ generate_wg_keys() {
 	[[ -n "$WG_PRIVATE_KEY" && -n "$WG_PUBLIC_KEY" ]] || die "xray wg did not return WARP keys."
 }
 
+# Извлекает объект WARP из ответа, поддерживая строковое и объектное представление.
 extract_warp_obj() {
 	local file=$1
 	jq -cr 'try (.obj | fromjson) catch (.obj // empty)' "$file"
 }
 
+# Нормализует вложенность конфигурации WARP, различающуюся между версиями API.
 warp_config_json_from_obj() {
 	local obj=$1
 	jq -c '.config.config // .config // {}' <<<"$obj"
 }
 
+# Получает или регистрирует console WARP outbound и возвращает готовый JSON Xray.
 ensure_warp_console_outbound() {
 	local current=$1 existing obj config outbound private_key
 	existing=$(jq -c '.xraySetting.outbounds[]? | select(.tag=="warp" and .protocol=="wireguard")' <<<"$current" | head -n1)
 	if [[ -n "$existing" ]]; then
+		# Для существующего outbound обновляется endpoint, но сохраняется его приватный ключ.
 		xui_warp_config || true
 		if http_success_json; then
 			obj=$(extract_warp_obj "$HTTP_BODY_FILE")
@@ -376,6 +408,7 @@ ensure_warp_console_outbound() {
 		return 0
 	fi
 	if [[ "$WARP_REUSE_PANEL_CONFIG" == "true" ]]; then
+		# Сохраненная конфигурация панели используется до создания новой регистрации.
 		xui_warp_config || true
 		if http_success_json; then
 			obj=$(extract_warp_obj "$HTTP_BODY_FILE")
@@ -404,13 +437,14 @@ ensure_warp_console_outbound() {
 	printf '%s' "$outbound"
 }
 
+# Выбирает параметры VLESS-аутентификации, предпочитая post-quantum вариант панели.
 get_vless_auth() {
 	if [[ "$USE_VLESS_PQ" != "true" ]]; then
-		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
+		# shellcheck disable=SC2034 # используется в build_vless_settings_json из desired_state.bash
 		VLESS_DEC=none
-		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
+		# shellcheck disable=SC2034 # используется в build_vless_settings_json из desired_state.bash
 		VLESS_ENC=none
-		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
+		# shellcheck disable=SC2034 # используется в build_vless_settings_json из desired_state.bash
 		VLESS_LABEL=
 		return 0
 	fi
@@ -423,16 +457,17 @@ get_vless_auth() {
 		VLESS_ENC=$(jq -r '.encryption // "none"' <<<"$picked")
 		VLESS_LABEL=$(jq -r '.label // ""' <<<"$picked")
 	else
-		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
+		# shellcheck disable=SC2034 # используется в build_vless_settings_json из desired_state.bash
 		VLESS_DEC=none
-		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
+		# shellcheck disable=SC2034 # используется в build_vless_settings_json из desired_state.bash
 		VLESS_ENC=none
-		# shellcheck disable=SC2034 # consumed by build_vless_settings_json from desired_state.bash
+		# shellcheck disable=SC2034 # используется в build_vless_settings_json из desired_state.bash
 		VLESS_LABEL=
 		log WARN "VLESS auth API failed; falling back to none."
 	fi
 }
 
+# Запрашивает у панели пару ключей X25519 для нового REALITY inbound.
 get_x25519_keys() {
 	xui_get_x25519 || return 1
 	http_success_json || return 1
@@ -441,9 +476,11 @@ get_x25519_keys() {
 	[[ -n "$X25519_PRIVATE_KEY" && -n "$X25519_PUBLIC_KEY" ]]
 }
 
+# Строит streamSettings нового inbound, сохраняя существующий Vision stream.
 build_inbound_stream_json() {
 	local kind=$1 current=${2:-}
 	if [[ -n "$current" && "$current" != "null" && "$kind" == "vision" ]]; then
+		# Существующие ключи REALITY нельзя регенерировать при повторной сверке состояния.
 		json_field_object "$current" streamSettings
 		return 0
 	fi
@@ -456,6 +493,7 @@ build_inbound_stream_json() {
 	fi
 }
 
+# Собирает все компоненты нового inbound для передачи в API панели.
 build_inbound_components_json() {
 	local kind=$1 desired=$2 current=${3:-}
 	local settings stream sniffing allocate port remark protocol
@@ -480,6 +518,7 @@ build_inbound_components_json() {
         }'
 }
 
+# Преобразует JSON-компоненты inbound в параметры form-urlencoded API.
 inbound_components_payload() {
 	local components=$1
 	printf '%s\0' \
@@ -498,6 +537,7 @@ inbound_components_payload() {
 		--data-urlencode "allocate=$(jq -c '.allocate' <<<"$components")"
 }
 
+# Нормализует сохраненный inbound в JSON для сравнения с желаемой структурой.
 current_inbound_components_json() {
 	local inbound=$1
 	jq -c '{
@@ -517,8 +557,9 @@ current_inbound_components_json() {
     }' <<<"$inbound"
 }
 
+# Создает отсутствующий управляемый inbound и сохраняет его идентификатор.
 ensure_inbound() {
-	local kind=$1 desired=$2 inbounds id port protocol inbound args desired_components current_components expected_remarks
+	local kind=$1 desired=$2 inbounds id port protocol inbound args desired_components expected_remarks
 	ENSURE_INBOUND_ID=
 	inbounds=$(inbounds_json)
 	port=$(jq -r ".inbounds.$kind.port" <<<"$desired")
@@ -529,16 +570,8 @@ ensure_inbound() {
 	managed_conflict_check "$inbound" "$expected_remarks" "$port"
 
 	if [[ -n "$id" ]]; then
-		desired_components=$(build_inbound_components_json "$kind" "$desired" "$inbound")
-		current_components=$(current_inbound_components_json "$inbound")
-		if json_equal "$current_components" "$desired_components"; then
-			log INFO "$kind inbound already exists id=$id port=$port."
-		elif plan_or_apply "$kind inbound updated id=$id port=$port"; then
-			mapfile -d '' -t args < <(inbound_components_payload "$desired_components")
-			xui_update_inbound "$id" "${args[@]}" || die "Failed to update $kind inbound."
-			http_success_json || die "$kind inbound update failed: $(http_body)"
-			RESTART_XRAY_REQUIRED=1
-		fi
+		# Существующий управляемый inbound сохраняется, чтобы не менять действующие ключи и клиентов.
+		log INFO "$kind inbound already exists id=$id port=$port; preserving existing configuration."
 		ENSURE_INBOUND_ID=$id
 	else
 		desired_components=$(build_inbound_components_json "$kind" "$desired")
@@ -555,59 +588,61 @@ ensure_inbound() {
 	fi
 }
 
-client_settings_json() {
-	local inbound=$1 client_id=$2 email=$3 sub_id=$4 flow=$5
-	local existing stale_vision_xtls_email
-	existing=$(jq -c '.settings | fromjson? // {}' <<<"$inbound")
-	stale_vision_xtls_email="${CLIENT_EMAIL_VISION_XTLS:-${CLIENT_EMAIL_PREFIX:-autogen}-vision-xtls}"
-	jq -c --arg id "$client_id" --arg email "$email" --arg sid "$sub_id" --arg flow "$flow" --arg staleVisionXtlsEmail "$stale_vision_xtls_email" '
-      .clients = ((.clients // []) | map(select(.email != $email and .email != $staleVisionXtlsEmail)) + [{
-        id:$id, flow:$flow, email:$email, limitIp:0, totalGB:0, expiryTime:0,
-        enable:true, tgId:"", subId:$sid, comment:"", reset:0
-      }])
-    ' <<<"$existing"
-}
+# Создает либо синхронизирует одного общего клиента для Vision и XHTTP inbound.
+ensure_shared_client() {
+	local vision_id=$1 xhttp_id=$2 desired=$3 clients email sub_id flow current client_id client target_ids missing_ids attach_payload changed=0
+	email=$(jq -r '.clients.shared.email' <<<"$desired")
+	sub_id=$(jq -r '.clients.shared.subId' <<<"$desired")
+	flow=$(jq -r '.clients.shared.flow' <<<"$desired")
+	target_ids=$(jq -nc --argjson vision "$vision_id" --argjson xhttp "$xhttp_id" '[$vision, $xhttp]')
+	clients=$(clients_json)
+	current=$(jq -c --arg email "$email" '.[]? | select(.email == $email)' <<<"$clients" | head -n1)
 
-ensure_client() {
-	local kind=$1 inbound_id=$2 desired=$3 inbounds inbound email sub_id flow existing_client client_id settings current_client current_flow current_email_count components args
-	[[ -n "$inbound_id" ]] || {
-		log INFO "$kind client skipped in plan mode because inbound id is not available."
-		return 0
-	}
-	inbounds=$(inbounds_json)
-	inbound=$(jq -c --arg id "$inbound_id" '.[] | select((.id|tostring)==$id)' <<<"$inbounds" | head -n1)
-	email=$(jq -r ".clients.$kind.email" <<<"$desired")
-	sub_id=$(jq -r ".clients.$kind.subId" <<<"$desired")
-	flow=$(jq -r ".clients.$kind.flow" <<<"$desired")
-	existing_client=$(find_client_id "$inbound" "$email" "$sub_id")
-	client_id=${existing_client:-$(new_uuid)}
-	settings=$(client_settings_json "$inbound" "$client_id" "$email" "$sub_id" "$flow")
-	if [[ -n "$existing_client" ]]; then
-		current_client=$(jq -c --arg id "$client_id" '(.settings | fromjson? // {} | .clients // [])[] | select(.id == $id)' <<<"$inbound" | head -n1)
-		current_flow=$(jq -r '.flow // ""' <<<"$current_client")
-		current_email_count=$(jq -r --arg email "$email" '[(.settings | fromjson? // {} | .clients // [])[] | select(.email == $email)] | length' <<<"$inbound")
-		if [[ "$current_flow" == "$flow" && "$current_email_count" == "1" ]]; then
-			log INFO "$kind client already exists email=$email."
+	if [[ -z "$current" ]]; then
+		# Новый API создает клиента сразу с двумя привязками одной мутацией.
+		client_id=$(new_uuid)
+		client=$(vless_client_api_json "$client_id" "$email" "$sub_id" "$flow")
+		if [[ "$MODE" == "plan" ]]; then
+			record_change "PLAN: shared client created email=$email inbounds=$vision_id,$xhttp_id"
 			return 0
 		fi
-		if plan_or_apply "$kind client updated email=$email"; then
-			components=$(current_inbound_components_json "$inbound" | jq -c --argjson settings "$settings" '.settings = $settings')
-			mapfile -d '' -t args < <(inbound_components_payload "$components")
-			xui_update_inbound "$inbound_id" "${args[@]}" || die "Failed to update $kind client."
-			http_success_json || die "$kind client update failed: $(http_body)"
+		record_change "APPLY: shared client created email=$email inbounds=$vision_id,$xhttp_id"
+		xui_add_client "$(vless_client_create_payload_json "$target_ids" "$client")" || die "Failed to add shared client."
+		http_success_json || die "shared client add failed: $(api_error_summary)"
+		RESTART_XRAY_REQUIRED=1
+		return 0
+	fi
+
+	client_id=$(jq -r '.uuid // .id // empty' <<<"$current")
+	[[ -n "$client_id" ]] || die "Existing shared client email=$email has no VLESS identifier."
+	client=$(vless_client_api_json "$client_id" "$email" "$sub_id" "$flow")
+	if ! jq -e --arg sid "$sub_id" --arg flow "$flow" '(.subId // "") == $sid and (.flow // "") == $flow' <<<"$current" >/dev/null; then
+		if plan_or_apply "shared client updated email=$email"; then
+			xui_update_client "$email" "$client" || die "Failed to update shared client."
+			http_success_json || die "shared client update failed: $(api_error_summary)"
 			RESTART_XRAY_REQUIRED=1
 		fi
-	else
-		if plan_or_apply "$kind client created email=$email"; then
-			components=$(current_inbound_components_json "$inbound" | jq -c --argjson settings "$settings" '.settings = $settings')
-			mapfile -d '' -t args < <(inbound_components_payload "$components")
-			xui_update_inbound "$inbound_id" "${args[@]}" || die "Failed to add $kind client."
-			http_success_json || die "$kind client add failed: $(http_body)"
+		changed=1
+	fi
+
+	missing_ids=$(jq -c --argjson target "$target_ids" '$target - (.inboundIds // [])' <<<"$current")
+	if [[ "$(jq 'length' <<<"$missing_ids")" != "0" ]]; then
+		# Уже существующему клиенту добавляются только еще отсутствующие inbound.
+		attach_payload=$(jq -nc --argjson inboundIds "$missing_ids" '{inboundIds:$inboundIds}')
+		if plan_or_apply "shared client attached email=$email inbounds=$(jq -r 'join(\",\")' <<<"$missing_ids")"; then
+			xui_attach_client "$email" "$attach_payload" || die "Failed to attach shared client."
+			http_success_json || die "shared client attach failed: $(api_error_summary)"
 			RESTART_XRAY_REQUIRED=1
 		fi
+		changed=1
+	fi
+
+	if ((changed == 0)); then
+		log INFO "shared client already attached email=$email inbounds=$vision_id,$xhttp_id."
 	fi
 }
 
+# Выбирает локальный AdGuard либо запасной список защищенных DNS-резолверов.
 available_dns_servers() {
 	local servers='[]'
 	if command -v nc >/dev/null 2>&1 && nc -z -w2 adguard 53 2>/dev/null; then
@@ -649,14 +684,9 @@ available_dns_servers() {
 	printf '%s' "$servers"
 }
 
-endpoint_available() {
-	local host=$1 port=$2
-	command -v nc >/dev/null 2>&1 || return 1
-	nc -z -w2 "$host" "$port" >/dev/null 2>&1
-}
-
+# Сверяет и применяет управляемый шаблон Xray с доступными DNS, WARP и TOR.
 apply_managed_xray() {
-	local raw obj current updated dns_servers tmp_file warp_socks_available=false tor_available=false tor_endpoints='[]' warp_console_ob=
+	local raw obj current updated dns_servers tmp_file warp_endpoints='[]' tor_available=false tor_endpoints='[]' warp_console_ob=
 	if [[ "$XRAY_MANAGED_DNS" != "true" && "$XRAY_MANAGED_TOR" != "true" && "$XRAY_MANAGED_WARP" != "true" ]]; then
 		cleanup_managed_xray_artifacts
 		return 0
@@ -674,30 +704,24 @@ apply_managed_xray() {
 		log INFO "Console WARP outbound is disabled; managed WARP balancer will use external SOCKS outbounds only."
 	fi
 	if [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
-		if endpoint_available warp 1080; then
-			warp_socks_available=true
+		if warp_proxy_available "$USQUE_HOST" "$USQUE_PORT"; then
+			warp_endpoints=$(jq -c --arg tag "usque" --arg host "$USQUE_HOST" --argjson port "$USQUE_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$warp_endpoints")
 		else
-			log WARN "warp:1080 is unavailable; keeping warp-docker in WARP balancer desired state."
+			log INFO "$USQUE_HOST:$USQUE_PORT did not confirm warp=on; excluding usque from Xray managed state."
 		fi
 	fi
+	# Старые артефакты сначала удаляются, затем состояние собирается только из доступных endpoint.
 	updated=$(json_remove_managed_xray_artifacts "$current")
 	if [[ "$XRAY_MANAGED_TOR" == "true" ]]; then
-		tor_available=true
-		tor_endpoints=$(jq -c --arg tag "tor-proxy" --arg host "$TOR_PROXY_HOST" --argjson port "$TOR_PROXY_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$tor_endpoints")
-		tor_endpoints=$(jq -c --arg tag "torproxy" --arg host "$TOR_PROXY_ALT_HOST" --argjson port "$TOR_PROXY_ALT_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$tor_endpoints")
-		if endpoint_available "$TOR_PROXY_HOST" "$TOR_PROXY_PORT"; then
-			log DEBUG "$TOR_PROXY_HOST:$TOR_PROXY_PORT is available."
+		if tor_proxy_available "$TOR_PROXY_HOST" "$TOR_PROXY_PORT"; then
+			tor_available=true
+			tor_endpoints=$(jq -c --arg tag "tor-proxy" --arg host "$TOR_PROXY_HOST" --argjson port "$TOR_PROXY_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$tor_endpoints")
 		else
-			log WARN "$TOR_PROXY_HOST:$TOR_PROXY_PORT is unavailable; keeping it in TOR balancer desired state."
-		fi
-		if endpoint_available "$TOR_PROXY_ALT_HOST" "$TOR_PROXY_ALT_PORT"; then
-			log DEBUG "$TOR_PROXY_ALT_HOST:$TOR_PROXY_ALT_PORT is available."
-		else
-			log WARN "$TOR_PROXY_ALT_HOST:$TOR_PROXY_ALT_PORT is unavailable; keeping it in TOR balancer desired state."
+			log INFO "$TOR_PROXY_HOST:$TOR_PROXY_PORT did not confirm IsTor=true; excluding tor-proxy from Xray managed state."
 		fi
 	fi
 	dns_servers=$(available_dns_servers)
-	updated=$(json_apply_managed_xray_state "$updated" "$dns_servers" "$XRAY_MANAGED_WARP" "$tor_available" "$XRAY_MANAGED_DNS" "$warp_socks_available" "$WEBDOMAIN" "$tor_endpoints" "$warp_console_ob")
+	updated=$(json_apply_managed_xray_state "$updated" "$dns_servers" "$XRAY_MANAGED_WARP" "$tor_available" "$XRAY_MANAGED_DNS" "$warp_endpoints" "$WEBDOMAIN" "$tor_endpoints" "$warp_console_ob")
 
 	if json_equal "$current" "$updated"; then
 		log INFO "Xray settings already match managed desired state."
@@ -705,15 +729,18 @@ apply_managed_xray() {
 	fi
 
 	if plan_or_apply "xray settings updated"; then
+		# Панель принимает именно содержимое xraySetting, а не внешний объект ответа API.
 		obj=$(jq -c '.xraySetting | .xrayTemplateConfig = (.xrayTemplateConfig // {})' <<<"$updated")
 		tmp_file="$TMP_ROOT/xraysetting.json"
 		printf '%s' "$obj" >"$tmp_file"
 		xui_update_xray_settings "$tmp_file" || die "Failed to update Xray settings."
 		http_success_json || die "Xray update failed: $(http_body)"
 		RESTART_PANEL_REQUIRED=1
+		RESTART_XRAY_REQUIRED=1
 	fi
 }
 
+# Удаляет ранее управляемые Xray-артефакты, если интеграции полностью выключены.
 cleanup_managed_xray_artifacts() {
 	local raw current updated obj tmp_file
 	xui_get_xray_settings || {
@@ -745,6 +772,7 @@ cleanup_managed_xray_artifacts() {
 	fi
 }
 
+# Ожидает появления TCP listener после перезапуска управляемого Xray.
 wait_tcp_port() {
 	local host=$1 port=$2 timeout=${3:-30} elapsed=0 label
 	label=${4:-"$host:$port"}
@@ -761,6 +789,7 @@ wait_tcp_port() {
 	return 1
 }
 
+# Проверяет, что оба создаваемых inbound снова слушают после рестарта.
 wait_managed_xray_ports() {
 	local timeout=${XRAY_RESTART_PORT_TIMEOUT:-30} failed=0
 	wait_tcp_port 127.0.0.1 "$PORT_LOCAL_VISION" "$timeout" "Vision inbound ${PORT_LOCAL_VISION}" || failed=1
@@ -768,17 +797,20 @@ wait_managed_xray_ports() {
 	return "$failed"
 }
 
+# Выполняет требуемые рестарты и проверяет возврат управляемых портов.
 restart_if_needed() {
 	local restart_sent=0
 	if [[ "$MODE" != "apply" ]]; then
 		log INFO "Restart skipped in MODE=$MODE."
 		return 0
 	fi
+	# Xray перезапускается первым, пока текущий endpoint панели еще доступен.
+	if ((RESTART_XRAY_REQUIRED == 1)); then
+		xui_restart_xray || log WARN "Xray restart request failed: $(http_body)"
+		restart_sent=1
+	fi
 	if ((RESTART_PANEL_REQUIRED == 1)); then
 		xui_restart_panel || log WARN "Panel restart request failed: $(http_body)"
-		restart_sent=1
-	elif ((RESTART_XRAY_REQUIRED == 1)); then
-		xui_restart_xray || log WARN "Xray restart request failed: $(http_body)"
 		restart_sent=1
 	fi
 	if ((restart_sent == 1)); then
@@ -787,6 +819,7 @@ restart_if_needed() {
 	fi
 }
 
+# Запускает полный цикл панели и Xray в выбранном режиме.
 main() {
 	local desired vision_id xhttp_id
 	TMP_ROOT=$(mktemp -d)
@@ -801,6 +834,7 @@ main() {
 		return 0
 	fi
 
+	# Панель может сменить адрес или учетные данные, поэтому вход повторяется после настройки.
 	resolve_panel_base || die "Could not resolve and login to 3x-ui panel."
 	detect_country_flag || true
 	desired=$(build_desired_state)
@@ -814,8 +848,7 @@ main() {
 	vision_id=$ENSURE_INBOUND_ID
 	ensure_inbound xhttp "$desired"
 	xhttp_id=$ENSURE_INBOUND_ID
-	ensure_client vision "$vision_id" "$desired"
-	ensure_client xhttp "$xhttp_id" "$desired"
+	ensure_shared_client "$vision_id" "$xhttp_id" "$desired"
 	apply_managed_xray
 	restart_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"

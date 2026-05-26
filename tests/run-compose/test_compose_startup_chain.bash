@@ -35,33 +35,50 @@ require_tool yq
 
 assert_has_healthcheck "$COMPOSE_DIR/13-homepage.yml" homepage
 assert_has_healthcheck "$COMPOSE_DIR/14-lampac.yml" lampac
-assert_has_healthcheck "$COMPOSE_DIR/08-warp.yml" warp
 assert_has_healthcheck "$COMPOSE_DIR/09-usque.yml" usque
+assert_has_healthcheck "$COMPOSE_DIR/11-tor-proxy.yml" tor-proxy
+[[ ! -e "$COMPOSE_DIR/08-warp.yml" ]] ||
+	fail "retired warp compose fragment must be absent"
 adguard_healthcheck=$(compose_value '.services.adguard.healthcheck.test | join(" ")' "$COMPOSE_DIR/10-adguard.yml")
 case "$adguard_healthcheck" in
 	*127.0.0.1*80*) ;;
 	*) fail "adguard healthcheck must verify local HTTP readiness instead of external DNS; got '$adguard_healthcheck'" ;;
 esac
 
-torproxy_start_period=$(compose_value '.services.torproxy.healthcheck.start_period // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
-[[ "$torproxy_start_period" == "5m" ]] ||
-	fail "torproxy healthcheck start_period must allow slow first Tor bootstrap; got '${torproxy_start_period:-<missing>}'"
+legacy_torproxy=$(compose_value '.services | has("torproxy")' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$legacy_torproxy" == "false" ]] ||
+	fail "retired torproxy service must be absent"
 
-torproxy_retries=$(compose_value '.services.torproxy.healthcheck.retries // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
-[[ "$torproxy_retries" == "10" ]] ||
-	fail "torproxy healthcheck retries must tolerate slow first Tor bootstrap; got '${torproxy_retries:-<missing>}'"
+tor_image=$(compose_value '.services."tor-proxy".image // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$tor_image" == "torotin/tor-proxy:latest" ]] ||
+	fail "tor-proxy must use torotin/tor-proxy:latest; got '${tor_image:-<missing>}'"
 
-for dependency in crowdsec crowdsec-firewall-bouncer caddy dozzle adguard 3x-ui homepage warp usque torproxy tor-proxy; do
+tor_start_period=$(compose_value '.services."tor-proxy".healthcheck.start_period // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$tor_start_period" == "3m" ]] ||
+	fail "tor-proxy healthcheck start_period must allow bridge bootstrap; got '${tor_start_period:-<missing>}'"
+
+tor_public_ip=$(compose_value '.services."tor-proxy".networks."traefik-proxy".ipv4_address // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+tor_dns_ip=$(compose_value '.services."tor-proxy".networks."dns-net".ipv4_address // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$tor_public_ip" == "172.18.0.11" && "$tor_dns_ip" == "172.19.0.11" ]] ||
+	fail "tor-proxy must join both existing networks with reserved addresses"
+
+for dependency in crowdsec crowdsec-firewall-bouncer caddy dozzle adguard 3x-ui homepage usque tor-proxy; do
 	assert_depends_on_healthy "$COMPOSE_DIR/06-traefik.yml" traefik "$dependency"
 done
+traefik_requires_legacy_torproxy=$(compose_value '.services.traefik.depends_on | has("torproxy")' "$COMPOSE_DIR/06-traefik.yml")
+[[ "$traefik_requires_legacy_torproxy" == "false" ]] ||
+	fail "traefik must not require retired torproxy service"
+traefik_requires_warp=$(compose_value '.services.traefik.depends_on | has("warp")' "$COMPOSE_DIR/06-traefik.yml")
+[[ "$traefik_requires_warp" == "false" ]] ||
+	fail "traefik must not require retired warp service"
+assert_depends_on_healthy "$COMPOSE_DIR/12-3x-ui.yml" 3x-ui usque
+xui_requires_warp=$(compose_value '.services."3x-ui".depends_on | has("warp")' "$COMPOSE_DIR/12-3x-ui.yml")
+[[ "$xui_requires_warp" == "false" ]] ||
+	fail "3x-ui must not require retired warp service"
 
 traefik_requires_lampac=$(compose_value '.services.traefik.depends_on | has("lampac")' "$COMPOSE_DIR/06-traefik.yml")
 [[ "$traefik_requires_lampac" == "false" ]] ||
 	fail "traefik must not require optional lampac because 14-lampac.yml may be absent"
-
-warp_start_period=$(compose_value '.services.warp.healthcheck.start_period // ""' "$COMPOSE_DIR/08-warp.yml")
-[[ "$warp_start_period" == "60s" ]] ||
-	fail "warp healthcheck start_period must tolerate slow WARP bootstrap; got '${warp_start_period:-<missing>}'"
 
 usque_start_period=$(compose_value '.services.usque.healthcheck.start_period // ""' "$COMPOSE_DIR/09-usque.yml")
 [[ "$usque_start_period" == "60s" ]] ||
