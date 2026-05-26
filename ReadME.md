@@ -1,8 +1,8 @@
 # 3x-ui_pro_Docker
 
-[![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 
-`3x-ui_pro_Docker` — готовый Docker Compose стек для развертывания прокси-инфраструктуры вокруг Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Lampac, WARP/usque и TOR helper-сервисов.
+`3x-ui_pro_Docker` — готовый Docker Compose стек для развертывания прокси-инфраструктуры вокруг Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Lampac, usque (WARP) и TOR helper-сервисов.
 
 Репозиторий содержит сам стек, installer CLI/wizard, шаблоны окружения и тесты для безопасной локальной разработки. Собственные образы проекта собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
 
@@ -36,6 +36,8 @@ sudo script/install.sh doctor
 Перед batch-запуском задайте обязательные значения. `SSH_PBK` необязателен: если ключ задан, SSH будет настроен на public key auth; если не задан, будет включен password auth.
 
 ```bash
+set -e
+
 cd /srv
 git clone https://github.com/Torotin/3x-ui_pro_Docker.git
 cd 3x-ui_pro_Docker
@@ -48,7 +50,10 @@ export USER_SSH=deployer
 export PASS_SSH='change-me'
 export USER_WEB=admin
 export PASS_WEB='change-me'
-export SSH_PBK='ssh-ed25519 ... [optional]'
+export PORT_REMOTE_SSH=22022
+
+# Optional: public key for USER_SSH. If unset, installer keeps password auth.
+export SSH_PBK='ssh-ed25519 ...'
 
 sudo -E script/install.sh doctor
 sudo -E script/install.sh run apt --apply --yes
@@ -59,6 +64,9 @@ sudo -E script/install.sh run firewall ssh network --apply --yes
 sudo -E script/install.sh run compose
 sudo -E script/install.sh run final
 sudo -E script/install.sh doctor
+
+# For detailed successful checks:
+sudo -E script/install.sh doctor --verbose
 ```
 
 Installer хранится отдельно от Docker-стека:
@@ -133,19 +141,23 @@ Wizard при старте автоматически проверяет обн�
 
 ## Что разворачивается
 
-- **Traefik** — edge router, TLS termination, ACME, HTTP/TCP/UDP маршрутизация.
+- **Traefik** — HTTP router для ACME на `80/tcp` и внутреннего HTTPS `websecure :4443`.
 - **3x-ui + Xray** — панель и runtime-автоматизация Xray desired state.
 - **AdGuard Home** — DNS/DoH и web-панель.
 - **CrowdSec** — анализ логов и bouncer-интеграция.
 - **Caddy** — fallback/error backend и вспомогательная статика.
 - **Homepage** — dashboard со ссылками на сервисы.
-- **Lampac** — медиасервис за Traefik.
-- **WARP/usque/TOR** — proxy helper-сервисы для маршрутизации.
+- **Lampac** — публичный browser front/fallback за цепочкой Xray → Traefik.
+- **usque (WARP)/TOR** — proxy helper-сервисы для маршрутизации.
 - **Dockcheck/logrotate** — эксплуатационные сервисы для обновлений и логов.
 
 Compose fragments находятся в `docker-proxy/compose.d`. Host paths в них задаются относительно каталога `compose.d`, чтобы стек не зависел от хардкода `/opt/docker-proxy`.
 
-Traefik намеренно ожидает `service_healthy` для backend-сервисов: это делает старт строже, зато финальный `doctor` и healthcheck-и отражают реальную готовность всего стека. Reality-first TCP router для 3x-ui использует `HostSNI(*)` с низким priority; non-Reality TLS трафик возвращается из Xray в Traefik fallback.
+Clean install использует staged-модель публичных портов: `80/tcp` публикует только Traefik для ACME HTTP-01 и безопасного redirect, `443/tcp` публикует 3x-ui/Xray REALITY, а Traefik `websecure :4443` остаётся только внутри Docker network. Browser HTTPS идёт по цепочке `client -> Xray 443/tcp -> REALITY self-steal/fallback -> Traefik :4443 -> Host router -> Lampac/admin service`.
+
+Traefik dashboard, 3x-ui, AdGuard, Dozzle, Homepage и Lampac admin не имеют прямых published ports и не используют отдельные поддомены. Доступ к админкам публикуется только как HTTPS path-routes на основном `${WEBDOMAIN}` в формате `https://${WEBDOMAIN}/${SUMMARY_URL_*}` и защищается BasicAuth, CrowdSec middleware, rate-limit и security/noindex headers. Root-domain Lampac front и frontend API `/reqinfo` и `/testaccsdb` не защищаются BasicAuth, но sensitive paths Lampac (`/admin`, `/adminpanel`, `/stats`, `/weblog`) закрываются admin middleware.
+
+Не открывайте наружу `4443`, `9118`, panel ports, metrics ports или CrowdSec ports. `443/udp` должен оставаться свободным до отдельного явно принятого UDP-stage; Traefik HTTP/3 и UDP entrypoints отключены.
 
 ## Безопасность и destructive actions
 

@@ -73,12 +73,32 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(
             [
                 {
-                    "url": "https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat",
-                    "file": "zxc-rv-adlist.dat",
+                    "url": "https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat",
+                    "file": "geosite_refilter.dat",
+                },
+                {
+                    "url": "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat",
+                    "file": "geosite_v2fly.dat",
+                },
+                {
+                    "url": "https://github.com/jameszeroX/zkeen-domains/releases/latest/download/zkeen.dat",
+                    "file": "geosite_zkeen.dat",
                 },
                 {
                     "url": "https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat",
-                    "file": "zkeenip.dat",
+                    "file": "geoip_zkeenip.dat",
+                },
+                {
+                    "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+                    "file": "geoip_v2fly.dat",
+                },
+                {
+                    "url": "https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat",
+                    "file": "geoip_refilter.dat",
+                },
+                {
+                    "url": "https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat",
+                    "file": "adlist.dat",
                 },
             ],
             result[0]["geodata"]["assets"],

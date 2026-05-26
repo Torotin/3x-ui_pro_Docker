@@ -1,5 +1,13 @@
 http:
   middlewares:
+    admin-security-headers:
+      headers:
+        customResponseHeaders:
+          X-Robots-Tag: "noindex, nofollow"
+        stsSeconds: 31536000
+        browserXssFilter: true
+        contentTypeNosniff: true
+
     bouncer:
       plugin:
         bouncer:

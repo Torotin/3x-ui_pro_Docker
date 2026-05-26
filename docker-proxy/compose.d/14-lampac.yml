@@ -9,8 +9,6 @@ services:
         ipv4_address: 172.18.0.14
       dns-net:
         ipv4_address: 172.19.0.14
-    ports:
-      - 9118:9118
     restart: unless-stopped
     shm_size: 1024mb
     logging:
@@ -57,38 +55,55 @@ services:
       - traefik.http.routers.lampac-proxy.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(proxy|proxy-dash|proxyimg|cub|tmdb)`)
       - traefik.http.routers.lampac-proxy.entrypoints=websecure
       - traefik.http.routers.lampac-proxy.tls=true
+      - traefik.http.routers.lampac-proxy.tls.certresolver=le
       - traefik.http.routers.lampac-proxy.service=lampac
       - traefik.http.routers.lampac-proxy.middlewares=lampac-headers
       - traefik.http.routers.lampac-proxy.priority=30
 
-      # API маршруты
-      - traefik.http.routers.lampac-api.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(lite|sisi|version|extensions|rch|api|stats|testaccsdb|reqinfo|externalids|lifeevents)`)
+      # API маршруты, необходимые публичному Lampac frontend без BasicAuth.
+      - traefik.http.routers.lampac-api.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(lite|sisi|online|version|rch|api|reqinfo|externalids|lifeevents|testaccsdb)`)
       - traefik.http.routers.lampac-api.entrypoints=websecure
       - traefik.http.routers.lampac-api.tls=true
+      - traefik.http.routers.lampac-api.tls.certresolver=le
       - traefik.http.routers.lampac-api.service=lampac
       - traefik.http.routers.lampac-api.middlewares=lampac-headers
       - traefik.http.routers.lampac-api.priority=40
 
+      # Sensitive Lampac admin/diagnostic paths require web admin protection.
+      # /reqinfo and /testaccsdb are intentionally public: the Lampac browser
+      # frontend and shared_passwd registration flow call them without auth.
+      - traefik.http.routers.lampac-sensitive.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog)`)
+      - traefik.http.routers.lampac-sensitive.entrypoints=websecure
+      - traefik.http.routers.lampac-sensitive.tls=true
+      - traefik.http.routers.lampac-sensitive.tls.certresolver=le
+      - traefik.http.routers.lampac-sensitive.service=lampac
+      - traefik.http.routers.lampac-sensitive.middlewares=lampac-admin-chain
+      - traefik.http.routers.lampac-sensitive.priority=90
+
+      # Lampac renders its own login pages. These paths must reach Lampac before
+      # Traefik BasicAuth on the broader admin/weblog prefixes.
+      - traefik.http.routers.lampac-auth-pages.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(adminpanel|weblog)/auth$$`)
+      - traefik.http.routers.lampac-auth-pages.entrypoints=websecure
+      - traefik.http.routers.lampac-auth-pages.tls=true
+      - traefik.http.routers.lampac-auth-pages.tls.certresolver=le
+      - traefik.http.routers.lampac-auth-pages.service=lampac
+      - traefik.http.routers.lampac-auth-pages.middlewares=lampac-headers
+      - traefik.http.routers.lampac-auth-pages.priority=95
+
       # Плагины (JS файлы)
-      - traefik.http.routers.lampac-plugins.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/.+\.js$`)
+      - traefik.http.routers.lampac-plugins.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/.+\.js$$`)
       - traefik.http.routers.lampac-plugins.entrypoints=websecure
       - traefik.http.routers.lampac-plugins.tls=true
+      - traefik.http.routers.lampac-plugins.tls.certresolver=le
       - traefik.http.routers.lampac-plugins.service=lampac
       - traefik.http.routers.lampac-plugins.middlewares=lampac-headers
       - traefik.http.routers.lampac-plugins.priority=50
-
-      # Админка
-      - traefik.http.routers.lampac-admin.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel)`)
-      - traefik.http.routers.lampac-admin.entrypoints=websecure
-      - traefik.http.routers.lampac-admin.tls=true
-      - traefik.http.routers.lampac-admin.service=lampac
-      - traefik.http.routers.lampac-admin.middlewares=lampac-headers
-      - traefik.http.routers.lampac-admin.priority=60
 
       # WebSocket для RCH
       - traefik.http.routers.lampac-ws.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(nws|ws)`)
       - traefik.http.routers.lampac-ws.entrypoints=websecure
       - traefik.http.routers.lampac-ws.tls=true
+      - traefik.http.routers.lampac-ws.tls.certresolver=le
       - traefik.http.routers.lampac-ws.service=lampac
       - traefik.http.routers.lampac-ws.middlewares=lampac-headers
       - traefik.http.routers.lampac-ws.priority=70
@@ -97,12 +112,29 @@ services:
       - traefik.http.routers.lampac-static-js.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/js`)
       - traefik.http.routers.lampac-static-js.entrypoints=websecure
       - traefik.http.routers.lampac-static-js.tls=true
+      - traefik.http.routers.lampac-static-js.tls.certresolver=le
       - traefik.http.routers.lampac-static-js.service=lampac
       - traefik.http.routers.lampac-static-js.middlewares=lampac-headers
       - traefik.http.routers.lampac-static-js.priority=80
+
+      # Unknown SNI/Host and direct-IP browser fallback. Every path is rewritten
+      # to Lampac root so unknown-host /admin cannot expose Lampac admin.
+      - traefik.http.routers.lampac-unknown-host.rule=!Host(`${WEBDOMAIN}`)
+      - traefik.http.routers.lampac-unknown-host.entrypoints=websecure
+      - traefik.http.routers.lampac-unknown-host.tls=true
+      - traefik.http.routers.lampac-unknown-host.service=lampac
+      - traefik.http.routers.lampac-unknown-host.middlewares=lampac-unknown-root,lampac-headers
+      - traefik.http.routers.lampac-unknown-host.priority=1
+      - traefik.http.middlewares.lampac-unknown-root.replacepath.path=/
 
       # Заголовки безопасности
       - traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
       - traefik.http.middlewares.lampac-headers.headers.stsSeconds=31536000
       - traefik.http.middlewares.lampac-headers.headers.browserXssFilter=true
       - traefik.http.middlewares.lampac-headers.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.lampac-admin-auth.basicauth.users=${HT_PASS_ENCODED}
+      - traefik.http.middlewares.lampac-admin-auth.basicauth.realm=Lampac
+      - traefik.http.middlewares.lampac-admin-rate.ratelimit.average=50
+      - traefik.http.middlewares.lampac-admin-rate.ratelimit.burst=100
+      - traefik.http.middlewares.lampac-admin-noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow
+      - traefik.http.middlewares.lampac-admin-chain.chain.middlewares=bouncer@file,lampac-admin-auth,lampac-admin-rate,lampac-admin-noindex,lampac-headers

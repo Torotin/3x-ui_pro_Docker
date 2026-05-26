@@ -10,12 +10,32 @@ from urllib.request import Request, urlopen
 
 DEFAULT_ASSETS = [
     {
-        "url": "https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat",
-        "file": "zxc-rv-adlist.dat",
+        "url": "https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat",
+        "file": "geosite_refilter.dat",
+    },
+    {
+        "url": "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat",
+        "file": "geosite_v2fly.dat",
+    },
+    {
+        "url": "https://github.com/jameszeroX/zkeen-domains/releases/latest/download/zkeen.dat",
+        "file": "geosite_zkeen.dat",
     },
     {
         "url": "https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat",
-        "file": "zkeenip.dat",
+        "file": "geoip_zkeenip.dat",
+    },
+    {
+        "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+        "file": "geoip_v2fly.dat",
+    },
+    {
+        "url": "https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat",
+        "file": "geoip_refilter.dat",
+    },
+    {
+        "url": "https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat",
+        "file": "adlist.dat",
     },
 ]
 
@@ -68,7 +88,7 @@ def build_geodata(env):
         assets = DEFAULT_ASSETS
 
     return {
-        "cron": env.get("SUB_JSON_GEODATA_CRON") or "0 4 * * *",
+        "cron": env.get("SUB_JSON_GEODATA_CRON") or "0 6 * * *",
         "outbound": env.get("SUB_JSON_GEODATA_OUTBOUND") or "proxy",
         "assets": copy.deepcopy(assets),
     }

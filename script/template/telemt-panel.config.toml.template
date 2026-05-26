@@ -1,0 +1,22 @@
+listen = "0.0.0.0:${PORT_LOCAL_TELEMT_PANEL}"
+base_path = "/${URI_TELEMT_PANEL}"
+data_dir = "/var/lib/telemt-panel"
+
+[telemt]
+url = "http://telemt:${PORT_LOCAL_TELEMT_API}"
+auth_header = "${TELEMT_API_AUTH_HEADER}"
+config_path = "/etc/telemt/config.toml"
+
+[telemt.auto_update]
+enabled = false
+
+[panel]
+github_repo = "amirotin/telemt_panel"
+
+[panel.auto_update]
+enabled = false
+
+[auth]
+username = "${USER_WEB}"
+password_hash = "${TELEMT_PANEL_PASSWORD_HASH_RAW}"
+jwt_secret = "${TELEMT_PANEL_JWT_SECRET}"

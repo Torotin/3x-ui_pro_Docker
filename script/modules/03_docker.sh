@@ -13,9 +13,12 @@ install_docker_command() {
 	fi
 	install_docker_stop_services
 	install_docker_purge_data_dirs
+	install_docker_remove_legacy_compose
 	install_docker_install_packages
 	install_docker_configure_daemon
 	run_cmd docker.service.enable systemctl enable docker
+	run_cmd docker.service.reset_failed systemctl reset-failed docker docker.socket || true
+	run_cmd docker.socket.start systemctl start docker.socket || true
 	run_cmd docker.service.restart systemctl restart docker
 	install_docker_networks
 }
@@ -86,6 +89,10 @@ install_docker_install_packages() {
 	run_cmd docker.install.packages env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
+install_docker_remove_legacy_compose() {
+	run_cmd docker.legacy-compose.remove env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-compose || true
+}
+
 install_docker_stop_services() {
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		run_cmd docker.service.stop systemctl stop docker containerd
@@ -150,7 +157,7 @@ install_docker_purge_data_dirs() {
 
 install_docker_remove_engine() {
 	install_docker_stop_services
-	run_cmd docker.remove.packages env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
+	run_cmd docker.remove.packages env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-compose docker-ce-rootless-extras
 	install_docker_purge_data_dirs
 }
 
@@ -208,18 +215,75 @@ install_compose_command() {
 	local lock_file="$INSTALL_STATE_DIR/docker-proxy-compose.lock"
 	local compose_dir="$INSTALL_ROOT/compose.d"
 	local compose_env="$compose_dir/.env"
+	local compose_env_unset=(-u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP)
 	install_project_files
+	install_docker_maintenance_timer
 	if [[ ! -f "$compose_env" ]]; then
 		install_env_command
 	fi
 	install_docker_networks
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd compose.validate env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+		run_cmd compose.validate env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
 		return 0
 	fi
 	[[ -x "$runner" ]] || die "compose runner not found or not executable: $runner"
-	run_cmd compose.validate env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
-	run_cmd compose.up env "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
+	run_cmd compose.validate env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+	run_cmd compose.up env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
+}
+
+install_docker_maintenance_timer() {
+	local service_file="${INSTALL_DOCKER_MAINTENANCE_SERVICE:-/etc/systemd/system/docker-proxy-maintenance.service}"
+	local timer_file="${INSTALL_DOCKER_MAINTENANCE_TIMER:-/etc/systemd/system/docker-proxy-maintenance.timer}"
+	local maintenance_script="$INSTALL_ROOT/compose.d/docker-maintenance.sh"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.maintenance.service.write printf '%s\n' "$service_file"
+		run_cmd docker.maintenance.timer.write printf '%s\n' "$timer_file"
+		run_cmd docker.maintenance.reload systemctl daemon-reload
+		run_cmd docker.maintenance.enable systemctl enable --now "$(basename "$timer_file")"
+		return 0
+	fi
+	[[ -x "$maintenance_script" ]] || die "Docker maintenance script not found or not executable: $maintenance_script"
+	[[ -f "$service_file" ]] && backup_file "$service_file"
+	[[ -f "$timer_file" ]] && backup_file "$timer_file"
+	run_cmd docker.maintenance.dir install -d -m 0755 "$(dirname "$service_file")"
+	local service_tmp timer_tmp
+	service_tmp=$(mktemp)
+	timer_tmp=$(mktemp)
+	cat >"$service_tmp" <<SERVICE
+[Unit]
+Description=Prune unused Docker artifacts for docker-proxy
+Documentation=file://$maintenance_script
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=DOCKER_MAINTENANCE_IMAGE_UNTIL=168h
+Environment=DOCKER_MAINTENANCE_CONTAINER_UNTIL=168h
+Environment=DOCKER_MAINTENANCE_BUILDER_UNTIL=168h
+ExecStart=$maintenance_script prune
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+SERVICE
+	cat >"$timer_tmp" <<'TIMER'
+[Unit]
+Description=Daily Docker maintenance for docker-proxy
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+Unit=docker-proxy-maintenance.service
+
+[Install]
+WantedBy=timers.target
+TIMER
+	run_cmd docker.maintenance.service.write install -m 0644 "$service_tmp" "$service_file"
+	run_cmd docker.maintenance.timer.write install -m 0644 "$timer_tmp" "$timer_file"
+	rm -f "$service_tmp" "$timer_tmp"
+	run_cmd docker.maintenance.reload systemctl daemon-reload
+	run_cmd docker.maintenance.enable systemctl enable --now "$(basename "$timer_file")"
 }
 
 install_project_files() {

@@ -2,15 +2,11 @@
 # For configuration options and examples, please see:
 # https://gethomepage.dev/configs/settings/
 
-providers:
-  openweathermap: openweathermapapikey
-  weatherapi: weatherapiapikey
-
 title: "Server Dashboard"
 
 description: HomeServ Homepage
 background:
-  image: https://images.wallpaperscraft.com/image/single/cat_night_lights_74375_2560x1600.jpg
+  image: https://images.wallpaperscraft.com/image/single/keyboard_laptop_gradient_203739_3840x2160.jpg
   blur: sm
   saturate: 50
   brightness: 50
@@ -25,7 +21,7 @@ maxGroupColumns: 8
 maxBookmarkGroupColumns: 6
 disableCollapse: false
 groupsInitiallyCollapsed: false
-useEqualHeights: false
+useEqualHeights: true
 headerStyle: boxed
 base: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_HOMEPAGE}}"
 language: en
@@ -44,3 +40,20 @@ showStats: true
 statusStyle: "dot"
 # instanceName: public
 hideErrors: true
+layout:
+  Admin:
+    style: row
+    columns: 5
+    useEqualHeights: true
+  Public:
+    style: row
+    columns: 4
+    useEqualHeights: true
+  Network & Security:
+    style: row
+    columns: 4
+    useEqualHeights: true
+  Maintenance:
+    style: row
+    columns: 3
+    useEqualHeights: true

@@ -23,3 +23,7 @@ volumes:
       type: tmpfs
       device: tmpfs
       o: size=1g,uid=1000,gid=1000,mode=0750,noatime,nosuid,nodev,noexec,nr_inodes=200000
+  tor-proxy-data:
+    driver: local
+  tor-proxy-state:
+    driver: local
