@@ -35,6 +35,14 @@ ENV_ARGS=()
 COMPOSE_ARGS=()
 COMPOSE_BASE_ARGS=()
 COMPOSE_FILES=()
+COMPOSE_ENV_UNSET=(
+	HT_PASS_ENCODED
+	ADGUARD_ADMIN_HASH
+	URI_SUB_PATH
+	URI_JSON_PATH
+	URI_CLASH_PATH
+	URI_VLESS_XHTTP
+)
 
 log() {
 	printf '[%s] [run-compose] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2
@@ -50,6 +58,7 @@ Usage:
   run-compose.sh rebuild [SERVICE...]     Pull, remove, and force recreate.
   run-compose.sh logs SERVICE [ARGS...]   Follow docker logs.
   run-compose.sh clean-unhealthy          Show logs and remove unhealthy containers.
+  run-compose.sh maintenance [report|prune]
   run-compose.sh down [ARGS...]           Pass through docker compose down.
 
 Environment:
@@ -100,10 +109,11 @@ collect_compose_files() {
 pick_compose_command() {
 	if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
 		COMPOSE_CMD=(docker compose)
-	elif command -v docker-compose >/dev/null 2>&1; then
-		COMPOSE_CMD=(docker-compose)
 	else
-		log "ERROR: Не найден docker compose или docker-compose в PATH"
+		log "ERROR: Docker Compose v2 plugin is required: install docker-compose-plugin and use 'docker compose'"
+		if command -v docker-compose >/dev/null 2>&1; then
+			log "ERROR: legacy docker-compose is not supported"
+		fi
 		exit 1
 	fi
 }
@@ -145,7 +155,11 @@ build_base_args() {
 }
 
 run_compose() {
-	"${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"
+	local env_args=() name
+	for name in "${COMPOSE_ENV_UNSET[@]}"; do
+		env_args+=(-u "$name")
+	done
+	env "${env_args[@]}" "${COMPOSE_CMD[@]}" "${COMPOSE_BASE_ARGS[@]}" "$@"
 }
 
 compose_config_output() {
@@ -355,6 +369,15 @@ run_logs() {
 	exec docker logs -f "$@"
 }
 
+run_maintenance() {
+	local script="$ACTIVE_COMPOSE_DIR/docker-maintenance.sh"
+	if [[ ! -x "$script" ]]; then
+		log "ERROR: maintenance script not found or not executable: $script"
+		exit 1
+	fi
+	"$script" "$@"
+}
+
 list_files() {
 	printf '%s\n' "${COMPOSE_FILES[@]}"
 }
@@ -362,7 +385,7 @@ list_files() {
 acquire_lock() {
 	local cmd=${1:-}
 	case "$cmd" in
-		help|--help|-h|list-files|logs|validate|config|ps) return ;;
+		help|--help|-h|list-files|logs|maintenance|validate|config|ps) return ;;
 	esac
 	command -v flock >/dev/null 2>&1 || {
 		log "WARN: flock недоступен, продолжаем без lock"
@@ -411,6 +434,14 @@ main() {
 		logs)
 			shift
 			run_logs "$@"
+			return
+			;;
+		maintenance|prune|gc)
+			shift
+			if [[ "${1:-}" == "" ]]; then
+				set -- prune
+			fi
+			run_maintenance "$@"
 			return
 			;;
 	esac

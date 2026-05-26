@@ -37,7 +37,7 @@ make_fixture() {
 	export PASS_SSH=secret
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
-	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG
+	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -55,13 +55,23 @@ test_doctor_is_mock_only_and_reports_supported_os() {
 	run_installer doctor
 	assert_contains "doctor: checking installer, dependencies and stack status" "$tmpdir/stdout" "doctor must describe expanded checks"
 	assert_contains "OK: OS is Debian/Ubuntu compatible" "$tmpdir/stdout" "doctor must report supported OS"
+	assert_contains "OK: commands:" "$tmpdir/stdout" "doctor must summarize command checks by default"
 	assert_contains "WARN: stack checks skipped in mock mode" "$tmpdir/stdout" "doctor must skip stack checks in mock mode"
 	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor must report success on Ubuntu fixture"
+	assert_not_contains "OK: command available: bash" "$tmpdir/stdout" "doctor must not spam individual successful commands by default"
 	assert_contains "doctor.command command -v apt-get" "$INSTALL_COMMAND_LOG" "doctor must check required commands through runner in mock mode"
 	assert_contains "doctor.command command -v docker" "$INSTALL_COMMAND_LOG" "doctor must check Docker command through runner in mock mode"
 	assert_not_contains "apt-get install" "$INSTALL_COMMAND_LOG" "doctor must not install apt packages"
 	assert_not_contains "systemctl restart" "$INSTALL_COMMAND_LOG" "doctor must not restart services"
 	assert_not_contains "/etc/" "$INSTALL_COMMAND_LOG" "doctor must not mutate /etc"
+}
+
+test_doctor_verbose_keeps_detailed_success_output() {
+	make_fixture
+	run_installer doctor --verbose
+	assert_contains "OK: command available: bash" "$tmpdir/stdout" "doctor --verbose must show individual successful command checks"
+	assert_contains "OK: path exists:" "$tmpdir/stdout" "doctor --verbose must show individual successful path checks"
+	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor --verbose must still report success"
 }
 
 test_exit_resets_script_and_project_permissions() {
@@ -81,6 +91,14 @@ test_run_dispatches_named_steps_without_eval() {
 	assert_not_contains "eval" "$INSTALL_COMMAND_LOG" "dispatcher must not use eval"
 }
 
+test_compose_installs_docker_maintenance_timer() {
+	make_fixture
+	run_installer run compose
+	assert_contains "docker.maintenance.service.write" "$INSTALL_COMMAND_LOG" "compose install must write Docker maintenance service"
+	assert_contains "docker.maintenance.timer.write" "$INSTALL_COMMAND_LOG" "compose install must write Docker maintenance timer"
+	assert_contains "docker.maintenance.enable systemctl enable --now docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must enable maintenance timer"
+}
+
 test_env_reports_permission_problem_before_backup() {
 	make_fixture
 	export INSTALL_MOCK=0
@@ -96,20 +114,31 @@ test_env_reports_permission_problem_before_backup() {
 
 test_env_preserves_existing_state_defaults() {
 	make_fixture
-	unset WEBDOMAIN USER_SSH CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED
+	unset WEBDOMAIN USER_SSH CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 	cat >"$INSTALL_STATE_DIR/install.env" <<'ENV'
 WEBDOMAIN=state.example.test
 USER_SSH="state-user"
 CROWDSEC_API_KEY_FIREWALL=state-firewall-key
-HT_PASS_ENCODED="user:$$2y$$hash"
 ENV
 	run_installer run env
 	assert_contains "WEBDOMAIN=state.example.test" "$INSTALL_STATE_DIR/install.env" "env must preserve existing domain when no override is provided"
 	assert_contains 'USER_SSH="state-user"' "$INSTALL_STATE_DIR/install.env" "env must preserve existing SSH user when no override is provided"
 	assert_contains "CROWDSEC_API_KEY_FIREWALL=state-firewall-key" "$INSTALL_STATE_DIR/install.env" "env must preserve existing crowdsec key when no override is provided"
+}
+
+test_state_loader_preserves_literal_dollars() {
+	make_fixture
+	unset HT_PASS_ENCODED ADGUARD_ADMIN_HASH
+	cat >"$INSTALL_STATE_DIR/install.env" <<'ENV'
+HT_PASS_ENCODED="user:$$2y$$hash"
+ENV
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	install_load_state_env
 	assert_contains 'HT_PASS_ENCODED="user:$$2y$$hash"' "$INSTALL_STATE_DIR/install.env" "env loader must preserve literal dollar signs"
-	assert_contains 'ADGUARD_ADMIN_HASH="$2y$hash"' "$INSTALL_STATE_DIR/install.env" "env loader must derive AdGuard hash from escaped htpasswd without single quotes"
-	assert_not_contains "ADGUARD_ADMIN_HASH=" "$INSTALL_ROOT/compose.d/.env" "compose env must not contain raw bcrypt hash with dollar signs"
+	[[ "$HT_PASS_ENCODED" == 'user:$$2y$$hash' ]] || fail "state loader must not shell-expand dollar signs: $HT_PASS_ENCODED"
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	generate_adguard_hash_from_htpasswd
+	[[ "$ADGUARD_ADMIN_HASH" == '$2y$hash' ]] || fail "AdGuard hash must unescape doubled dollars: $ADGUARD_ADMIN_HASH"
 }
 
 test_env_prints_rendered_paths() {
@@ -152,6 +181,89 @@ BASH
 	PATH="$tmpdir/bin:$PATH" generate_htpasswd_if_needed
 	[[ "$HT_PASS_ENCODED" == 'admin:$$2y$$05$$abc' ]] || fail "HT_PASS_ENCODED mismatch: $HT_PASS_ENCODED"
 	[[ "$ADGUARD_ADMIN_HASH" == '$2y$05$abc' ]] || fail "ADGUARD_ADMIN_HASH mismatch: $ADGUARD_ADMIN_HASH"
+}
+
+test_env_writes_escaped_htpasswd_to_compose_env_for_labels() {
+	make_fixture
+	run_installer run env
+	assert_contains 'HT_PASS_ENCODED="admin:$$2y$$05$$mockhash"' "$INSTALL_STATE_DIR/install.env" "install state must keep shell-safe escaped bcrypt dollars"
+	assert_contains 'HT_PASS_ENCODED="admin:$$2y$$05$$mockhash"' "$INSTALL_ROOT/compose.d/.env" "compose env must keep escaped bcrypt dollars so Docker Compose emits raw Docker labels"
+}
+
+test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state() {
+	make_fixture
+	cat >"$INSTALL_STATE_DIR/install.env" <<'ENV'
+WEBDOMAIN=example.test
+USER_WEB=admin
+PASS_WEB=secret
+USER_SSH=deployer
+PASS_SSH=secret
+SSH_PBK=ssh-ed25519-mock
+PORT_REMOTE_SSH=22022
+TELEMT_STUN_SERVERS_JSON='["stun1.l.google.com:19302", "stun2.l.google.com:19302"]'
+TELEMT_HTTP_IP_DETECT_URLS_JSON='["https://api.ipify.org", "https://ifconfig.me/ip"]'
+ENV
+	run_installer run env
+	assert_contains 'TELEMT_STUN_SERVERS_JSON="[\"stun1.l.google.com:19302\", \"stun2.l.google.com:19302\"]"' "$INSTALL_ROOT/compose.d/.env" "compose env must store dotenv-safe Telemt STUN list"
+	assert_contains 'stun_servers = ["stun1.l.google.com:19302", "stun2.l.google.com:19302"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render STUN servers as TOML array"
+	assert_contains 'http_ip_detect_urls = ["https://api.ipify.org", "https://ifconfig.me/ip"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render HTTP IP detect URLs as TOML array"
+	assert_not_contains "http_ip_detect_urls = '[" "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must not render HTTP IP detect URLs as TOML string"
+}
+
+test_env_regenerates_stale_htpasswd_when_password_changes() {
+	make_fixture
+	mkdir -p "$tmpdir/bin"
+	cat >"$tmpdir/bin/htpasswd" <<'BASH'
+#!/usr/bin/env bash
+if [[ "$1" == "-nBb" ]]; then
+	printf '%s:$2y$05$new\n' "$2"
+	exit 0
+fi
+if [[ "$1" == "-vb" ]]; then
+	if grep -Fq '$2y$05$new' "$2" && [[ "$4" == "new-secret" ]]; then
+		exit 0
+	fi
+	exit 1
+fi
+exit 2
+BASH
+	chmod +x "$tmpdir/bin/htpasswd"
+	export HT_PASS_ENCODED='admin:$$2y$$05$$old'
+	export ADGUARD_ADMIN_HASH='$2y$05$old'
+	export PASS_WEB='new-secret'
+	export INSTALL_MOCK=0
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	PATH="$tmpdir/bin:$PATH" generate_htpasswd_if_needed
+	[[ "$HT_PASS_ENCODED" == 'admin:$$2y$$05$$new' ]] || fail "stale HT_PASS_ENCODED must be regenerated: $HT_PASS_ENCODED"
+	[[ "$ADGUARD_ADMIN_HASH" == '$2y$05$new' ]] || fail "stale ADGUARD_ADMIN_HASH must be regenerated: $ADGUARD_ADMIN_HASH"
+}
+
+test_env_regenerates_existing_hash_when_verify_is_unsupported() {
+	make_fixture
+	mkdir -p "$tmpdir/bin"
+	cat >"$tmpdir/bin/htpasswd" <<'BASH'
+#!/usr/bin/env bash
+if [[ "$1" == "-nBb" ]]; then
+	printf '%s:$2y$05$new\n' "$2"
+	exit 0
+fi
+if [[ "$1" == "-vb" ]]; then
+	printf 'usage: htpasswd [-nBb] user password\n' >&2
+	exit 1
+fi
+exit 2
+BASH
+	chmod +x "$tmpdir/bin/htpasswd"
+	export HT_PASS_ENCODED='admin:$$2y$$05$$old'
+	export ADGUARD_ADMIN_HASH='$2y$05$old'
+	export PASS_WEB='new-secret'
+	export INSTALL_MOCK=0
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	PATH="$tmpdir/bin:$PATH" generate_htpasswd_if_needed
+	[[ "$HT_PASS_ENCODED" == 'admin:$$2y$$05$$new' ]] || fail "existing hash must be regenerated when verification is unsupported: $HT_PASS_ENCODED"
+	[[ "$ADGUARD_ADMIN_HASH" == '$2y$05$new' ]] || fail "AdGuard hash must follow regenerated htpasswd hash: $ADGUARD_ADMIN_HASH"
 }
 
 test_adguard_update_pass_uses_precomputed_hash() {
@@ -237,12 +349,15 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "docker.daemon.json.validate printf python3\\ -m\\ json.tool\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker install must log daemon.json validation in mock mode"
 	assert_contains "docker.service.enable systemctl enable docker" "$INSTALL_COMMAND_LOG" "docker install must enable Docker service"
 	assert_not_contains "docker.service.enable systemctl enable --now docker" "$INSTALL_COMMAND_LOG" "docker install must not start service before daemon restart"
+	assert_contains "docker.service.reset_failed systemctl reset-failed docker docker.socket" "$INSTALL_COMMAND_LOG" "docker install must clear failed service/socket state before restart"
+	assert_contains "docker.socket.start systemctl start docker.socket" "$INSTALL_COMMAND_LOG" "docker install must start socket before dockerd fd activation restart"
 	assert_contains "docker.service.restart systemctl restart docker" "$INSTALL_COMMAND_LOG" "docker install must restart Docker after daemon config"
 	run_installer run firewall --apply --yes
 	run_installer run ssh --apply --yes
 	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "explicit firewall command must be routed through runner"
 	assert_contains "ufw default allow routed" "$INSTALL_COMMAND_LOG" "firewall must allow Docker bridge routed traffic"
 	assert_contains "ufw allow 22022/tcp" "$INSTALL_COMMAND_LOG" "firewall must preserve configured SSH port"
+	assert_not_contains "ufw allow 443/udp" "$INSTALL_COMMAND_LOG" "firewall must keep UDP 443 closed before accepted UDP stage"
 	assert_contains "ssh.apply bash -c" "$INSTALL_COMMAND_LOG" "ssh apply must render config through shell redirection"
 	assert_contains "ssh.detect" "$INSTALL_COMMAND_LOG" "ssh apply must detect the active SSH systemd unit"
 	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload SSH before restart fallback"
@@ -310,7 +425,10 @@ test_docker_install_handles_missing_docker_binary() {
 	assert_contains "Docker command not found; installing Docker engine" "$tmpdir/stdout" "docker install must explain fresh install path"
 	assert_not_contains "docker.containers.stop" "$INSTALL_COMMAND_LOG" "fresh install must not call docker before it exists"
 	assert_contains "docker.repo.update" "$INSTALL_COMMAND_LOG" "fresh install must update Docker repo before package install"
+	assert_contains "docker.legacy-compose.remove" "$INSTALL_COMMAND_LOG" "docker install must remove legacy docker-compose package"
+	assert_contains "apt-get remove -y docker-compose" "$INSTALL_COMMAND_LOG" "docker install must not leave Compose v1 package installed"
 	assert_contains "docker.install.packages" "$INSTALL_COMMAND_LOG" "fresh install must install Docker packages"
+	assert_contains "docker-compose-plugin" "$INSTALL_COMMAND_LOG" "docker install must install Compose v2 plugin"
 	assert_contains "docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker data purge must use rm -rf --"
 }
 
@@ -624,6 +742,18 @@ test_user_configures_ssh_sudo_groups_and_aliases() {
 	assert_contains "user.home.chown chown -R deployer:deployer /home/deployer" "$INSTALL_COMMAND_LOG" "user step must restore home ownership"
 }
 
+test_user_sudoers_content_uses_portable_defaults() {
+	make_fixture
+	# shellcheck source=script/modules/05_user.sh
+	. "$ROOT_DIR/script/modules/05_user.sh"
+	USER_SSH=deployer install_user_sudoers_content >"$tmpdir/sudoers"
+	assert_contains "deployer ALL=(ALL) NOPASSWD:ALL" "$tmpdir/sudoers" "sudoers must grant expected passwordless sudo"
+	assert_not_contains "log_output" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible log_output"
+	assert_not_contains "logfile" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible logfile"
+	assert_not_contains "tty_tickets" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible tty_tickets"
+	assert_not_contains "requiretty" "$tmpdir/sudoers" "sudoers must not use sudo-rs incompatible requiretty"
+}
+
 test_compose_uses_installer_state_lock() {
 	make_fixture
 	run_installer run compose
@@ -633,6 +763,7 @@ test_compose_uses_installer_state_lock() {
 	assert_contains "COMPOSE_DIR=$INSTALL_ROOT/compose.d" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose directory"
 	assert_contains "ENV_FILE=$INSTALL_ROOT/compose.d/.env" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose env file"
 	assert_contains "LOCK_FILE=$INSTALL_STATE_DIR/docker-proxy-compose.lock" "$INSTALL_COMMAND_LOG" "compose step must avoid shared /tmp lock file"
+	assert_contains "compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP" "$INSTALL_COMMAND_LOG" "compose validation must not inherit transformed values from installer environment"
 }
 
 test_final_summary_prints_details() {
@@ -664,13 +795,20 @@ OS
 }
 
 test_doctor_is_mock_only_and_reports_supported_os
+test_doctor_verbose_keeps_detailed_success_output
 test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
+test_compose_installs_docker_maintenance_timer
 test_env_reports_permission_problem_before_backup
 test_env_preserves_existing_state_defaults
+test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
+test_env_writes_escaped_htpasswd_to_compose_env_for_labels
+test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state
+test_env_regenerates_stale_htpasswd_when_password_changes
+test_env_regenerates_existing_hash_when_verify_is_unsupported
 test_adguard_update_pass_uses_precomputed_hash
 test_adguard_update_pass_updates_yaml_without_yq
 test_state_loader_keeps_explicit_values_over_state
@@ -710,6 +848,7 @@ test_wizard_confirms_apply_steps
 test_wizard_prompts_for_missing_user
 test_user_loads_rendered_state_env
 test_user_configures_ssh_sudo_groups_and_aliases
+test_user_sudoers_content_uses_portable_defaults
 test_compose_uses_installer_state_lock
 test_final_summary_prints_details
 test_doctor_rejects_unsupported_os

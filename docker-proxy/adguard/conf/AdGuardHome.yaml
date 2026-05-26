@@ -216,8 +216,6 @@ filtering:
       answer: 172.19.0.6
     - domain: dozzle
       answer: 172.19.0.7
-    - domain: warp
-      answer: 172.19.0.8
     - domain: tor-proxy
       answer: 172.19.0.11
     - domain: 3x-ui

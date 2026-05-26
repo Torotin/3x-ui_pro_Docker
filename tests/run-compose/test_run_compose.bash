@@ -48,12 +48,16 @@ services:
   disabled:
     image: disabled:latest
 YAML
+	cp "$ROOT_DIR/docker-proxy/compose.d/docker-maintenance.sh" "$tmpdir/compose.d/docker-maintenance.sh"
+	chmod +x "$tmpdir/compose.d/docker-maintenance.sh"
 	: >"$tmpdir/compose.d/.env"
 	cat >"$tmpdir/bin/docker" <<'BASH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${DOCKER_LOG:?}"
 if [[ "${1:-}" == "compose" ]]; then
+	printf 'env HT_PASS_ENCODED=%s URI_SUB_PATH=%s URI_JSON_PATH=%s URI_CLASH_PATH=%s URI_VLESS_XHTTP=%s\n' \
+		"${HT_PASS_ENCODED-}" "${URI_SUB_PATH-}" "${URI_JSON_PATH-}" "${URI_CLASH_PATH-}" "${URI_VLESS_XHTTP-}" >>"${DOCKER_LOG:?}"
 	shift
 	case "$*" in
 		*version*) echo "Docker Compose version v2.0.0"; exit 0 ;;
@@ -135,6 +139,42 @@ test_up_is_safe_by_default() {
 	assert_not_contains "rm --stop --force" "$tmpdir/docker.log" "safe up must not remove containers"
 }
 
+test_compose_invocation_sanitizes_transformed_environment() {
+	make_fixture
+	HT_PASS_ENCODED='admin:$$2y$$05$$bad' \
+		URI_SUB_PATH=noslash-sub \
+		URI_JSON_PATH=noslash-json \
+		URI_CLASH_PATH=noslash-clash \
+		URI_VLESS_XHTTP=noslash-xhttp \
+		run_runner validate
+	assert_contains "env HT_PASS_ENCODED= URI_SUB_PATH= URI_JSON_PATH= URI_CLASH_PATH= URI_VLESS_XHTTP=" "$tmpdir/docker.log" "run-compose must let --env-file provide transformed variables"
+}
+
+test_legacy_docker_compose_is_rejected() {
+	make_fixture
+	cat >"$tmpdir/bin/docker" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker %s\n' "$*" >>"${DOCKER_LOG:?}"
+if [[ "${1:-}" == "compose" ]]; then
+	exit 1
+fi
+exit 0
+BASH
+	cat >"$tmpdir/bin/docker-compose" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker-compose %s\n' "$*" >>"${DOCKER_LOG:?}"
+exit 0
+BASH
+	chmod +x "$tmpdir/bin/docker" "$tmpdir/bin/docker-compose"
+	if run_runner validate >/tmp/run-compose-legacy.out 2>&1; then
+		fail "run-compose must reject legacy docker-compose fallback"
+	fi
+	assert_contains "Docker Compose v2 plugin is required" /tmp/run-compose-legacy.out "missing compose v2 must explain required dependency"
+	assert_not_contains "docker-compose" "$tmpdir/docker.log" "run-compose must not execute legacy docker-compose"
+}
+
 test_lock_file_is_compose_local_and_world_writable() {
 	make_fixture
 	run_runner up
@@ -195,6 +235,17 @@ test_list_files_does_not_require_env_file() {
 	fi
 }
 
+test_maintenance_prune_keeps_networks_and_volumes() {
+	make_fixture
+	run_runner maintenance prune >/tmp/run-compose-maintenance.out 2>&1
+	assert_contains "container prune --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune stopped containers"
+	assert_contains "builder prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune build cache"
+	assert_contains "image prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune unused images"
+	assert_not_contains "system prune" "$tmpdir/docker.log" "maintenance must not use docker system prune because it removes unused external networks"
+	assert_not_contains "network prune" "$tmpdir/docker.log" "maintenance must not prune Docker networks"
+	assert_not_contains "volume prune" "$tmpdir/docker.log" "maintenance must not prune Docker volumes"
+}
+
 test_up_reports_foreign_container_name_conflict() {
 	make_fixture
 	cat >"$tmpdir/bin/docker" <<'BASH'
@@ -245,12 +296,15 @@ test_restart_uses_no_deps_by_default
 test_restart_can_include_dependencies
 test_restart_logs_is_explicit
 test_up_is_safe_by_default
+test_compose_invocation_sanitizes_transformed_environment
+test_legacy_docker_compose_is_rejected
 test_lock_file_is_compose_local_and_world_writable
 test_default_env_and_lock_follow_active_compose_dir
 test_rebuild_is_destructive_explicitly
 test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files
 test_list_files_does_not_require_env_file
+test_maintenance_prune_keeps_networks_and_volumes
 test_up_reports_foreign_container_name_conflict
 test_compose_fragments_do_not_hardcode_project_root
 printf 'test_run_compose.bash: OK\n'

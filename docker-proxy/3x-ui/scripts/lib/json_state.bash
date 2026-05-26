@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# Добавляет либо заменяет Xray outbound по уникальному тегу.
 json_upsert_outbound_by_tag() {
 	local current=$1 outbound=$2
 	jq -c --argjson ob "$outbound" '
@@ -14,6 +15,7 @@ json_upsert_outbound_by_tag() {
     ' <<<"$current"
 }
 
+# Добавляет либо заменяет правило маршрутизации по ключу, определяющему владельца.
 json_upsert_routing_rule_by_key() {
 	local current=$1 key=$2 value=$3 rule=$4
 	jq -c --arg key "$key" --arg value "$value" --argjson rule "$rule" '
@@ -29,6 +31,7 @@ json_upsert_routing_rule_by_key() {
     ' <<<"$current"
 }
 
+# Добавляет либо заменяет балансировщик маршрутизации по его тегу.
 json_upsert_balancer_by_tag() {
 	local current=$1 balancer=$2
 	jq -c --argjson bal "$balancer" '
@@ -44,6 +47,7 @@ json_upsert_balancer_by_tag() {
     ' <<<"$current"
 }
 
+# Строит burstObservatory для проверки доступности управляемых outbound.
 json_burst_observatory_for_selectors() {
 	local selectors=$1
 	jq -nc --argjson selectors "$selectors" '{
@@ -59,10 +63,12 @@ json_burst_observatory_for_selectors() {
     }'
 }
 
+# Перечисляет outbound, за которыми текущий runtime считает себя ответственным.
 json_managed_observatory_selectors() {
-	jq -nc '["tor-proxy","torproxy","warp","warp-docker","usque"]'
+	jq -nc '["tor-proxy","torproxy","warp","usque"]'
 }
 
+# Удаляет управляемые selectors из observatory, сохраняя сторонние записи.
 json_remove_managed_subject_selectors() {
 	local current=$1 selectors
 	selectors=$(json_managed_observatory_selectors)
@@ -86,6 +92,7 @@ json_remove_managed_subject_selectors() {
     ' <<<"$current"
 }
 
+# Заменяет управляемые DNS-серверы, не сбрасывая остальные параметры DNS.
 json_replace_dns_servers() {
 	local current=$1 servers=$2
 	jq -c --argjson servers "$servers" '
@@ -96,9 +103,10 @@ json_replace_dns_servers() {
 	' <<<"$current"
 }
 
+# Возвращает набор доменов, который должен направляться через WARP.
 json_warp_managed_domains() {
-	local webdomain=${1:-}
-	jq -nc --arg webdomain "$webdomain" '
+	: "${1:-}"
+	jq -nc '
       [
         "domain:habr.com",
         "domain:easebar.com",
@@ -118,7 +126,6 @@ json_warp_managed_domains() {
         "ext:geosite_RU.dat:myoffice-ru",
         "ext:geosite_RU.dat:tbank-ru",
         "ext:geosite_RU.dat:tld-ru",
-        "ext:geosite_RU.dat:ucoz-ru",
         "ext:geosite_RU.dat:private",
         "ext:geosite_RU.dat:yandex",
         "ext:geosite_RU.dat:steam",
@@ -138,20 +145,42 @@ json_warp_managed_domains() {
         "regexp:^([\\w\\-\\.]+\\.)xn--90ae$",
         "regexp:^([\\w\\-\\.]+\\.)xn--l1acc$",
         "regexp:^([\\w\\-\\.]+\\.)xn--d1alf$"
-      ] + (if ($webdomain // "") != "" then ["domain:" + $webdomain] else [] end)
+      ]
     '
 }
 
+# Вставляет правила WARP после API-правила, сохраняя порядок чужих правил.
+json_replace_warp_routing_rules() {
+	local current=$1 webdomain=$2 warp_rule=$3
+	jq -c --arg webdomain "$webdomain" --argjson warp_rule "$warp_rule" '
+      def is_api_rule:
+        ((.outboundTag // "") == "api") or (((.inboundTag // []) | index("api")) != null);
+      ([if ($webdomain // "") != "" then {type:"field",balancerTag:"warp-balancer",domain:["domain:" + $webdomain]} else empty end] + [$warp_rule]) as $managed_rules |
+      .xraySetting.routing = (.xraySetting.routing // {}) |
+      .xraySetting.routing.rules = (.xraySetting.routing.rules // []) |
+      .xraySetting.routing.rules = (
+        (.xraySetting.routing.rules | map(select((.balancerTag // "") != "warp-balancer"))) as $rules |
+        ($rules | map(is_api_rule) | index(true)) as $api_index |
+        if $api_index == null then
+          $managed_rules + $rules
+        else
+          $rules[0:($api_index + 1)] + $managed_rules + $rules[($api_index + 1):]
+        end
+      )
+    ' <<<"$current"
+}
+
+# Накладывает доступные WARP/TOR/DNS интеграции на очищенное состояние Xray.
 json_apply_managed_xray_state() {
-	local current=$1 dns_servers=$2 warp_enabled=$3 tor_enabled=$4 dns_enabled=$5 warp_socks_available=$6 webdomain=$7 tor_endpoints=${8:-'[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]'} warp_console_ob=${9:-}
-	local updated=$current tor_ob tor_rule tor_balancer tor_selectors warp_ob usque_ob warp_rule warp_balancer selectors warp_domains endpoint_count index tag host port observatory_selectors='[]' burst_observatory
-	: "$warp_socks_available"
+	local current=$1 dns_servers=$2 warp_enabled=$3 tor_enabled=$4 dns_enabled=$5 warp_endpoints=${6:-'[]'} webdomain=$7 tor_endpoints=${8:-'[]'} warp_console_ob=${9:-}
+	local updated=$current tor_ob tor_rule tor_balancer tor_selectors warp_ob warp_rule warp_balancer selectors warp_domains endpoint_count index tag host port observatory_selectors='[]' burst_observatory
 	if [[ "$dns_enabled" == "true" ]]; then
 		updated=$(json_replace_dns_servers "$updated" "$dns_servers")
 	fi
 	if [[ "$tor_enabled" == "true" ]]; then
 		tor_selectors='[]'
 		endpoint_count=$(jq 'length' <<<"$tor_endpoints")
+		# Outbound создаются только для endpoint, предварительно подтвержденных проверкой TOR.
 		for ((index = 0; index < endpoint_count; index++)); do
 			tag=$(jq -r ".[$index].tag" <<<"$tor_endpoints")
 			host=$(jq -r ".[$index].host" <<<"$tor_endpoints")
@@ -174,22 +203,27 @@ json_apply_managed_xray_state() {
 			updated=$(json_upsert_outbound_by_tag "$updated" "$warp_console_ob")
 			selectors=$(jq -c '. + ["warp"]' <<<"$selectors")
 		fi
-		warp_ob=$(jq -nc '{tag:"warp-docker",protocol:"socks",settings:{servers:[{address:"warp",port:1080}]}}')
-		updated=$(json_upsert_outbound_by_tag "$updated" "$warp_ob")
-		selectors=$(jq -c '. + ["warp-docker"]' <<<"$selectors")
-		usque_ob=$(jq -nc '{tag:"usque",protocol:"socks",settings:{servers:[{address:"usque",port:1080}]}}')
-		updated=$(json_upsert_outbound_by_tag "$updated" "$usque_ob")
-		selectors=$(jq -c '. + ["usque"]' <<<"$selectors")
+		endpoint_count=$(jq 'length' <<<"$warp_endpoints")
+		# SOCKS outbound включаются в балансировщик только после подтверждения WARP.
+		for ((index = 0; index < endpoint_count; index++)); do
+			tag=$(jq -r ".[$index].tag" <<<"$warp_endpoints")
+			host=$(jq -r ".[$index].host" <<<"$warp_endpoints")
+			port=$(jq -r ".[$index].port" <<<"$warp_endpoints")
+			warp_ob=$(jq -nc --arg tag "$tag" --arg host "$host" --argjson port "$port" '{tag:$tag,protocol:"socks",settings:{servers:[{address:$host,port:$port}]}}')
+			updated=$(json_upsert_outbound_by_tag "$updated" "$warp_ob")
+			selectors=$(jq -c --arg tag "$tag" '. + [$tag]' <<<"$selectors")
+		done
 		if [[ "$(jq 'length' <<<"$selectors")" -gt 0 ]]; then
 			warp_domains=$(json_warp_managed_domains "$webdomain")
 			warp_rule=$(jq -nc --argjson dom "$warp_domains" '{type:"field",balancerTag:"warp-balancer",domain:$dom}')
 			warp_balancer=$(jq -nc --argjson selector "$selectors" '{tag:"warp-balancer",fallbackTag:"blocked",selector:$selector,strategy:{type:"leastPing"}}')
-			updated=$(json_upsert_routing_rule_by_key "$updated" balancerTag warp-balancer "$warp_rule")
+			updated=$(json_replace_warp_routing_rules "$updated" "$webdomain" "$warp_rule")
 			updated=$(json_upsert_balancer_by_tag "$updated" "$warp_balancer")
 			observatory_selectors=$(jq -c --argjson selectors "$selectors" '. + $selectors | unique' <<<"$observatory_selectors")
 		fi
 	fi
 	if [[ "$(jq 'length' <<<"$observatory_selectors")" -gt 0 ]]; then
+		# Общий observatory объединяет управляемые и оставленные пользователем selectors.
 		burst_observatory=$(json_burst_observatory_for_selectors "$observatory_selectors")
 		updated=$(jq -c --argjson burst "$burst_observatory" '
           .xraySetting.observatory = null |
@@ -207,11 +241,12 @@ json_apply_managed_xray_state() {
 	printf '%s' "$updated"
 }
 
+# Удаляет созданные runtime артефакты WARP/TOR перед пересборкой состояния.
 json_remove_managed_xray_artifacts() {
 	local current=$1
 	current=$(json_remove_managed_subject_selectors "$current")
 	jq -c '
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | ($tag != "warp-docker" and $tag != "tor-proxy")))) |
+      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | ((($tag | startswith("warp-")) | not) and $tag != "tor-proxy")))) |
       .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") != "warp" and (.tag // "") != "usque"))) |
       .xraySetting.routing = (.xraySetting.routing // {}) |
       .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") != "torproxy"))) |
@@ -220,6 +255,7 @@ json_remove_managed_xray_artifacts() {
     ' <<<"$current"
 }
 
+# Сравнивает JSON-документы независимо от порядка их ключей.
 json_equal() {
 	local left=$1 right=$2
 	diff -u <(jq -S . <<<"$left") <(jq -S . <<<"$right") >/dev/null

@@ -1,57 +1,52 @@
 services:
-  torproxy:
-    container_name: torproxy
-    image: dperson/torproxy
+  tor-proxy:
+    image: torotin/tor-proxy:latest
+    container_name: tor-proxy
+    hostname: tor-proxy
     restart: unless-stopped
-    # ports:
-    ## SOCKS
-    #   - 127.0.0.1:9150:9150/tcp
-    ## DNS
-    #   - 127.0.0.1:8853:8853/tcp
-    healthcheck:
-      test: >
-        curl --fail --silent --socks5-hostname torproxy:9050 https://check.torproject.org/api/ip
-        | grep '"IsTor":true'
-      interval: 30s
-      timeout: 30s
-      retries: 10
-      start_period: 5m
+    cpus: 0.75
+    mem_limit: 512m
+    environment:
+      TZ: Europe/Moscow
+      TOR_BRIDGES_ENABLED: "true"
+      TOR_BRIDGE_TRANSPORT: "auto"
+      TOR_BRIDGES_MAX_PER_TRANSPORT: "10"
+      TOR_MAX_CLIENT_CIRCUITS_PENDING: "4"
+      # На сервере без рабочего native IPv6 задайте false явно.
+      TOR_IPV6_AVAILABLE: "false"
+      TOR_BRIDGES_OBFS4_URL: https://raw.githubusercontent.com/scriptzteam/Tor-Bridges-Collector/refs/heads/main/bridges-obfs4
+      TOR_BRIDGES_OBFS4_IPV6_URL: https://raw.githubusercontent.com/scriptzteam/Tor-Bridges-Collector/refs/heads/main/bridges-obfs4-ipv6
+      TOR_BRIDGES_WEBTUNNEL_URL: https://raw.githubusercontent.com/scriptzteam/Tor-Bridges-Collector/refs/heads/main/bridges-webtunnel
+      TOR_BRIDGES_SNOWFLAKE_URL: https://gitlab.torproject.org/tpo/applications/tor-browser-build/-/raw/main/projects/tor-expert-bundle/pt_config.json
+      TOR_BOOTSTRAP_DNS_ENABLED: "true"
+      TOR_BOOTSTRAP_DNS_UPSTREAMS: >-
+        https://dns.adguard-dns.com/dns-query
+        https://dns.quad9.net/dns-query
+        quic://dns.adguard-dns.com
+      TOR_BOOTSTRAP_DNS_BOOTSTRAPS: "94.140.14.14:53 94.140.15.15:53"
+      TOR_BOOTSTRAP_DNS_PLAIN_FALLBACK: "true"
+      TOR_BOOTSTRAP_DNS_FALLBACKS: ""
+      TOR_UPDATE_ON_START: "true"
+      TOR_PROXY_LOGIN: ""
+      TOR_PROXY_PASSWORD: ""
+    volumes:
+      - tor-proxy-data:/var/lib/tor
+      - tor-proxy-state:/var/lib/tor-proxy
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.11
-      # dns-net:
-      #   ipv4_address: 172.19.0.11
-    security_opt:
-      - no-new-privileges=true
-
-  tor-proxy:
-    image: ghcr.io/shahradelahi/torproxy
-    container_name: tor-proxy
-    restart: unless-stopped
-    networks:
-        dns-net:
-          ipv4_address: 172.19.0.11
+      dns-net:
+        ipv4_address: 172.19.0.11
     healthcheck:
-      test: >
-        curl --fail --silent --socks5-hostname 127.0.0.1:1080 https://check.torproject.org/api/ip
-        | grep '"IsTor":true'
-      interval: 30s
-      timeout: 30s
+      test: ["CMD", "/usr/local/bin/tor-proxy-healthcheck"]
+      interval: 1m
+      timeout: 20s
       retries: 3
-      start_period: 30s
-    # volumes:
-    #   - persist-data:/var/lib/tor
+      start_period: 3m
+    # Требуется только для доступа с самого host.
+    # Для других контейнеров используйте tor-proxy:53/1080/8080.
     # ports:
-    #   - "1080:1080"
-    #   - "8080:8080"
-    #   - "8338:8338"
-    #  - "53:53/udp"
-    #  - "53:53/tcp"
-    # command:
-      # - -L="http://:8080"
-      # - -L="socks5://username:secure-password@:1080"
-      # - -L="ss://aes-256-cfb:secure-password@:8338"
-
-# volumes:
-#   persist-data:
-#     driver: local
+    #   - "127.0.0.1:53:53/tcp"
+    #   - "127.0.0.1:53:53/udp"
+    #   - "127.0.0.1:1080:1080/tcp"
+    #   - "127.0.0.1:8080:8080/tcp"

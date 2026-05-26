@@ -70,7 +70,7 @@ PLAN
 	fi
 	if ((purge_firewall)); then
 		cat <<'PLAN'
-- Delete installer-known UFW allow rules for configured PORT_REMOTE_* values, 80/tcp, 443/tcp, 443/udp.
+- Delete installer-known UFW allow rules for configured PORT_REMOTE_* values, 80/tcp, and 443/tcp.
 PLAN
 	fi
 	if ((purge_ssh)); then
@@ -150,7 +150,7 @@ uninstall_purge_firewall() {
 		fi
 	done
 	local rule
-	for rule in 80/tcp 443/tcp 443/udp; do
+	for rule in 80/tcp 443/tcp; do
 		if ! run_cmd firewall.purge ufw delete allow "$rule"; then
 			log WARN "could not delete UFW rule: $rule"
 		fi

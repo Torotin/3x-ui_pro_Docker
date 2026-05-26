@@ -16,6 +16,7 @@ services:
       HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD: ${URI_TRAEFIK_DASHBOARD}
       HOMEPAGE_VAR_URI_DOZZLE: ${URI_DOZZLE}
       HOMEPAGE_VAR_URI_ADGUARD_PANEL: ${URI_ADGUARD_PANEL}
+      HOMEPAGE_VAR_URI_TELEMT_PANEL: ${URI_TELEMT_PANEL}
       HOMEPAGE_VAR_URI_HOMEPAGE: ${URI_HOMEPAGE}
       HOMEPAGE_VAR_USER_WEB: ${USER_WEB}
       HOMEPAGE_VAR_PASS_WEB: ${PASS_WEB}
@@ -23,12 +24,18 @@ services:
     volumes:
       - ../homepage/logs:/logs
       - ../homepage:/app/config
+      # TODO: Replace the direct Docker socket mount with a read-only socket proxy
+      # limited to the API endpoints Homepage needs for container status/stats.
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.13
       dns-net:
         ipv4_address: 172.19.0.13
+    extra_hosts:
+      # Let server-side Homepage widgets call the Traefik websecure entrypoint
+      # by the public hostname while staying on the internal Docker network.
+      - "${WEBDOMAIN}:172.18.0.6"
     security_opt:
       - no-new-privileges=true
     healthcheck:
@@ -54,10 +61,12 @@ services:
       - traefik.http.middlewares.homepage-strip.stripPrefix.prefixes=/${URI_HOMEPAGE}
       - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
       - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
-      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_HOMEPAGE}/$1
+      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_HOMEPAGE}/$$1
       - traefik.http.middlewares.homepage-compress.compress=true
-      - traefik.http.middlewares.homepage-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-strip,homepage-rewrite,homepage-compress
-      - traefik.http.middlewares.homepage-static-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rewrite,homepage-compress
+      - traefik.http.middlewares.homepage-rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.homepage-rate-limit.ratelimit.burst=100
+      - traefik.http.middlewares.homepage-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rate-limit,admin-security-headers@file,homepage-strip,homepage-rewrite,homepage-compress
+      - traefik.http.middlewares.homepage-static-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rate-limit,admin-security-headers@file,homepage-rewrite,homepage-compress
 
       # ---------- Роутеры ----------
       - traefik.http.routers.homepage-router.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_HOMEPAGE}`)
@@ -67,7 +76,7 @@ services:
       - traefik.http.routers.homepage-router.tls.certresolver=le
       - traefik.http.routers.homepage-router.priority=950
 
-      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`) || PathPrefix(`/favicon`) || PathPrefix(`/apple-touch-icon`) || PathPrefix(`/site.webmanifest`) || PathPrefix(`/homepage.ico`) || PathPrefix(`/safari-pinned-tab`) || PathPrefix(`/android-chrome`))
+      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`) || PathPrefix(`/favicon`) || PathPrefix(`/apple-touch-icon`) || PathPrefix(`/site.webmanifest`) || PathPrefix(`/homepage.ico`) || PathPrefix(`/safari-pinned-tab`) || PathPrefix(`/android-chrome`))
       - traefik.http.routers.homepage-static.entrypoints=websecure
       - traefik.http.routers.homepage-static.middlewares=homepage-static-chain
       - traefik.http.routers.homepage-static.service=homepage-svc

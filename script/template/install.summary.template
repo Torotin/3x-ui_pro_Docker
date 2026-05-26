@@ -29,13 +29,17 @@ Service URLs:
   AdGuard DoH      : ${SUMMARY_URL_ADGUARD_DOH}
   Dozzle Logs      : ${SUMMARY_URL_DOZZLE}
   Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
+  Telemt Panel     : ${SUMMARY_URL_TELEMT_PANEL}
 
 Local service endpoints:
-  Traefik HTTPS    : 127.0.0.1:${SUMMARY_PORT_LOCAL_TRAEFIK}
+  Traefik HTTPS    : internal Docker websecure :${SUMMARY_PORT_LOCAL_TRAEFIK} (not public)
   3X-UI panel      : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_PANEL}
   3X-UI subscribe  : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE}
   XHTTP            : 127.0.0.1:${SUMMARY_PORT_LOCAL_XHTTP}
   Vision           : 127.0.0.1:${SUMMARY_PORT_LOCAL_VISION}
+  Telemt proxy     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PROXY} (not public)
+  Telemt API       : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_API} (not public)
+  Telemt panel     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PANEL} (Traefik routed)
   Dozzle           : 127.0.0.1:${SUMMARY_PORT_LOCAL_DOZZLE}
   Caddy fallback   : 127.0.0.1:${SUMMARY_PORT_LOCAL_CADDYWEB}
   CrowdSec API     : 127.0.0.1:${SUMMARY_PORT_LOCAL_CROWDSEC_API}

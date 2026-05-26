@@ -57,28 +57,29 @@ services:
 
       # Перезапись Location для редиректов — направляем в Caddy
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^https?://(${WEBDOMAIN})(/.*)?$
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=$2
+      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^https?://(${WEBDOMAIN})(/.*)?$$
+      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=$$2
       - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.header=Location
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.regex=^//(${WEBDOMAIN})(/.*)?$
-      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.replacement=$2
+      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.regex=^//(${WEBDOMAIN})(/.*)?$$
+      - traefik.http.middlewares.redirect-to-caddy.plugin.traefik-plugin-rewrite-headers.rewrites.1.replacement=$$2
 
       # Цепочки middleware
       # Статические файлы — compress
       - traefik.http.middlewares.static-chain.chain.middlewares=compress
 
-      # Основная цепочка для catch-all — error pages + редиректы
+      # Основная цепочка для внутренних error pages
       - traefik.http.middlewares.caddy-chain.chain.middlewares=bouncer@file,error-pages,redirect-to-caddy,compress
 
       # ---------- Routers ----------
 
-      # Общий catch-all роутер — передаём всё в Caddy
-      - traefik.http.routers.caddy-catchall.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/`)
-      - traefik.http.routers.caddy-catchall.entrypoints=websecure
-      - traefik.http.routers.caddy-catchall.middlewares=caddy-chain
-      - traefik.http.routers.caddy-catchall.tls.certresolver=le
-      - traefik.http.routers.caddy-catchall.priority=-1
-      - traefik.http.routers.caddy-catchall.service=caddy-error
+      # Public fallback front when optional Lampac compose fragment is absent.
+      # This router is intentionally unauthenticated and lower priority than Lampac.
+      - traefik.http.routers.caddy-fallback.rule=Host(`${WEBDOMAIN}`)
+      - traefik.http.routers.caddy-fallback.entrypoints=websecure
+      - traefik.http.routers.caddy-fallback.middlewares=static-chain
+      - traefik.http.routers.caddy-fallback.tls.certresolver=le
+      - traefik.http.routers.caddy-fallback.priority=1
+      - traefik.http.routers.caddy-fallback.service=caddy-error
 
       # Кастомная страница для JSON-подписок
       # - traefik.http.routers.caddy-jsonpage.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)

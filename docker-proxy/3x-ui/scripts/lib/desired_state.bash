@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
+# Преобразует двухбуквенный код страны в emoji-флаг для подписи inbound.
 country_code_to_flag() {
 	local code=${1:-}
 	[[ "$code" =~ ^[A-Za-z][A-Za-z]$ ]] || return 1
 	jq -nr --arg code "$code" '$code | ascii_upcase | explode | map(. + 127397) | implode'
 }
 
+# Извлекает флаг из ответа выбранного источника в соответствии с его форматом.
 country_flag_value() {
 	local mode=$1 value=${2:-} code
 	case "$mode" in
@@ -25,6 +27,7 @@ country_flag_value() {
 	esac
 }
 
+# Печатает приоритетный список источников определения страны по публичному IP.
 country_flag_sources() {
 	cat <<'EOF'
 http://1.1.1.1/cdn-cgi/trace||trace_loc
@@ -38,6 +41,30 @@ http://ip-api.com/json/|.countryCode|iso2
 EOF
 }
 
+# Получает диагностический URL через заданный SOCKS5 proxy.
+socks_proxy_get() {
+	local host=$1 port=$2 url=$3
+	curl --fail --silent \
+		--max-time "${EXTERNAL_PROXY_PROBE_TIMEOUT:-10}" \
+		--socks5-hostname "$host:$port" \
+		"$url"
+}
+
+# Подтверждает, что SOCKS endpoint действительно выводит трафик через WARP.
+warp_proxy_available() {
+	local host=$1 port=$2 trace
+	trace=$(socks_proxy_get "$host" "$port" "${WARP_PROXY_PROBE_URL:-https://www.cloudflare.com/cdn-cgi/trace}") || return 1
+	grep -qx 'warp=on' <<<"$trace"
+}
+
+# Подтверждает, что SOCKS endpoint действительно выводит трафик через TOR.
+tor_proxy_available() {
+	local host=$1 port=$2 result
+	result=$(socks_proxy_get "$host" "$port" "${TOR_PROXY_PROBE_URL:-https://check.torproject.org/api/ip}") || return 1
+	jq -e '.IsTor == true' <<<"$result" >/dev/null
+}
+
+# Возвращает устойчивый суффикс имени для управляемого VLESS inbound.
 inbound_remark_slug() {
 	case "$1" in
 	vision) printf '%s' vless-tcp-reality ;;
@@ -46,18 +73,21 @@ inbound_remark_slug() {
 	esac
 }
 
+# Строит отображаемое имя inbound с флагом обнаруженной страны.
 inbound_remark() {
 	local kind=$1 flag=${EMOJI_FLAG:-⚠} slug
 	slug=$(inbound_remark_slug "$kind") || return 1
 	printf '%s %s' "$flag" "$slug"
 }
 
+# Строит старое имя управляемого inbound для бесшовного распознавания миграции.
 legacy_managed_inbound_remark() {
 	local kind=$1 slug
 	slug=$(inbound_remark_slug "$kind") || return 1
 	printf 'managed:%s' "$slug"
 }
 
+# Формирует набор допустимых имен управляемого inbound: нового и прежнего.
 managed_inbound_remarks_json() {
 	local kind=$1 desired=$2 desired_remark legacy_remark
 	desired_remark=$(jq -r ".inbounds.$kind.remark" <<<"$desired")
@@ -65,14 +95,15 @@ managed_inbound_remarks_json() {
 	jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" '[$desired, $legacy] | unique'
 }
 
+# Собирает декларативное желаемое состояние панели, inbound и общего клиента.
 build_desired_state() {
 	local prefix=${CLIENT_EMAIL_PREFIX:-autogen}
-	local vision_email=${CLIENT_EMAIL_VISION:-"$prefix-vision"}
-	local xhttp_email=${CLIENT_EMAIL_XHTTP:-"$prefix-xhttp"}
+	local shared_email=${CLIENT_EMAIL_SHARED:-"$prefix"}
 	local sub_id=${CLIENT_SUB_ID:-}
 	local vision_remark xhttp_remark
 	if [[ -z "$sub_id" ]]; then
-		sub_id=$(printf '%s:%s:%s' "${WEBDOMAIN:-localhost}" "$vision_email" "$xhttp_email" | sha256sum | cut -c1-16)
+		# Стабильный subId производен от домена и общей метки клиента.
+		sub_id=$(printf '%s:%s' "${WEBDOMAIN:-localhost}" "$shared_email" | sha256sum | cut -c1-16)
 	fi
 	vision_remark=$(inbound_remark vision)
 	xhttp_remark=$(inbound_remark xhttp)
@@ -86,8 +117,7 @@ build_desired_state() {
 		--arg xhttpPort "${PORT_LOCAL_XHTTP:-8443}" \
 		--arg xhttpPath "${URI_VLESS_XHTTP:-/xhttp}" \
 		--arg domain "${WEBDOMAIN:-}" \
-		--arg visionEmail "$vision_email" \
-		--arg xhttpEmail "$xhttp_email" \
+		--arg sharedEmail "$shared_email" \
 		--arg subId "$sub_id" \
 		--arg visionRemark "$vision_remark" \
 		--arg xhttpRemark "$xhttp_remark" \
@@ -103,8 +133,7 @@ build_desired_state() {
             xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath}
           },
           clients: {
-            vision: {email: $visionEmail, subId: $subId, flow: "xtls-rprx-vision-udp443"},
-            xhttp: {email: $xhttpEmail, subId: $subId, flow: ""}
+            shared: {email: $sharedEmail, subId: $subId, flow: "xtls-rprx-vision"}
           },
           integrations: {
             warp: {enabled: true},
@@ -119,6 +148,7 @@ build_desired_state() {
         }'
 }
 
+# Перечисляет настройки панели, которыми разрешено управлять из окружения.
 desired_panel_keys() {
 	printf '%s\n' \
 		webListen webDomain webPort webCertFile webKeyFile webBasePath \
@@ -138,17 +168,25 @@ desired_panel_keys() {
 		ldapDefaultTotalGB ldapDefaultExpiryDays ldapDefaultLimitIP
 }
 
+# Печатает штатный набор внешних geo-файлов для регистрации через API.
 custom_geo_default_resources() {
 	cat <<'EOF'
-geosite|zxc-rv-adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
-geoip|zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat
+geosite|geosite_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat
+geosite|geosite_v2fly|https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
+geosite|geosite_zkeen|https://github.com/jameszeroX/zkeen-domains/releases/latest/download/zkeen.dat
+geoip|geoip_zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat
+geoip|geoip_v2fly|https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+geoip|geoip_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat
+geosite|adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
 EOF
 }
 
+# Преобразует строки geo-ресурсов в JSON-массив, игнорируя пустые и неверные записи.
 custom_geo_resources_json() {
 	local input=${CUSTOM_GEO_RESOURCES:-} entry typ alias url out='[]'
 	[[ -n "$input" ]] || input=$(custom_geo_default_resources)
 
+	# Формат допускает комментарии и пробелы в пользовательском env-списке.
 	while IFS= read -r entry || [[ -n "$entry" ]]; do
 		entry=${entry#"${entry%%[![:space:]]*}"}
 		entry=${entry%"${entry##*[![:space:]]}"}
@@ -167,6 +205,7 @@ custom_geo_resources_json() {
 	printf '%s' "$out"
 }
 
+# Извлекает три reserved-байта WireGuard из идентификатора клиента WARP.
 warp_reserved_json_from_config() {
 	local config=$1 client_id decoded bytes
 	client_id=$(jq -r '.client_id // .config.client_id // .config.config.client_id // empty' <<<"$config")
@@ -178,6 +217,7 @@ warp_reserved_json_from_config() {
 	jq -nc --argjson b1 "${bytes[0]}" --argjson b2 "${bytes[1]}" --argjson b3 "${bytes[2]}" '[$b1,$b2,$b3]'
 }
 
+# Создает WireGuard outbound Xray из конфигурации, полученной от WARP API.
 warp_outbound_from_config() {
 	local config=$1 private_key=$2 reserved_json=${3:-'[10,14,188]'}
 	local v4 v6 peer_pub endpoint ep_v4 config_reserved
@@ -186,6 +226,7 @@ warp_outbound_from_config() {
 	peer_pub=$(jq -r '.peers[0].public_key // .config.peers[0].public_key // empty' <<<"$config")
 	config_reserved=$(warp_reserved_json_from_config "$config" || true)
 	[[ -n "$config_reserved" ]] && reserved_json=$config_reserved
+	# Предпочитается hostname endpoint: он остается совместимым с конфигурацией панели.
 	endpoint=$(jq -r '.peers[0].endpoint.host // .config.peers[0].endpoint.host // empty' <<<"$config")
 	if [[ -z "$endpoint" ]]; then
 		endpoint=${WARP_ENDPOINT_HOST:-engage.cloudflareclient.com:2408}
@@ -227,6 +268,7 @@ warp_outbound_from_config() {
         }'
 }
 
+# Возвращает существующему WARP outbound канонический hostname endpoint.
 normalize_warp_outbound_endpoint() {
 	local outbound=$1 endpoint=${WARP_ENDPOINT_HOST:-engage.cloudflareclient.com:2408}
 	jq -c --arg ep "$endpoint" '
@@ -238,11 +280,13 @@ normalize_warp_outbound_endpoint() {
     ' <<<"$outbound"
 }
 
+# Читает JSON-поле API, которое панель может вернуть объектом либо JSON-строкой.
 json_field_object() {
 	local object=$1 field=$2
 	jq -c --arg field "$field" '.[$field] | fromjson? // . // {}' <<<"$object"
 }
 
+# Формирует VLESS settings, сохраняя клиентов и обязательные параметры Vision/XHTTP.
 build_vless_settings_json() {
 	local kind=$1 current=${2:-} existing='{}' clients='[]' dec enc label fallback_dest
 	if [[ -n "$current" && "$current" != "null" ]]; then
@@ -253,6 +297,7 @@ build_vless_settings_json() {
 		label=$(jq -r '.selectedAuth // empty' <<<"$existing")
 	fi
 	if [[ -z "${dec:-}" || -z "${enc:-}" ]]; then
+		# Параметры шифрования запрашиваются только когда их нет в существующем inbound.
 		get_vless_auth || true
 		dec=${dec:-${VLESS_DEC:-none}}
 		enc=${enc:-${VLESS_ENC:-none}}
@@ -263,7 +308,7 @@ build_vless_settings_json() {
 		enc=none
 		label=
 	fi
-	fallback_dest="${VISION_FALLBACK_HOST:-traefik}:${VISION_FALLBACK_PORT:-4443}"
+	fallback_dest="${VISION_FALLBACK_HOST:-telemt}:${VISION_FALLBACK_PORT:-${PORT_LOCAL_TELEMT_PROXY:-9443}}"
 	jq -nc \
 		--arg kind "$kind" \
 		--arg dec "$dec" \
@@ -281,6 +326,25 @@ build_vless_settings_json() {
       '
 }
 
+# Формирует клиентский объект в контракте API 3x-ui 3.1.
+vless_client_api_json() {
+	local client_id=$1 email=$2 sub_id=$3 flow=$4
+	jq -nc --arg id "$client_id" --arg email "$email" --arg sid "$sub_id" --arg flow "$flow" '{
+      id:$id, flow:$flow, email:$email, limitIp:0, totalGB:0, expiryTime:0,
+      enable:true, tgId:0, subId:$sid, comment:"", reset:0
+    }'
+}
+
+# Оборачивает клиента списком inbound для операции создания и привязки.
+vless_client_create_payload_json() {
+	local inbound_ids=$1 client=$2
+	jq -nc --argjson inboundIds "$inbound_ids" --argjson client "$client" '{
+      client:$client,
+      inboundIds:$inboundIds
+    }'
+}
+
+# Строит общие socket options для создаваемых Xray inbound.
 build_sockopt_json() {
 	local accept_proxy=${1:-false} domain_strategy=${2:-AsIs} tproxy=${3:-off}
 	jq -nc --argjson acceptProxyProtocol "$accept_proxy" --arg domainStrategy "$domain_strategy" --arg tproxy "$tproxy" '{
@@ -303,6 +367,7 @@ build_sockopt_json() {
     }'
 }
 
+# Строит список внешнего proxy для маскирующего соединения, если задан домен.
 build_external_proxy_json() {
 	local host=$1 force_tls=${2:-same}
 	if [[ -z "$host" ]]; then
@@ -312,8 +377,9 @@ build_external_proxy_json() {
 	fi
 }
 
+# Строит streamSettings для TCP/REALITY Vision с ключами и fallback-назначением.
 build_vision_stream_json() {
-	local target=$1 sni=$2 private_key=$3 public_key=$4 short_ids=${5:-'[""]'} sockopt=${6:-'{}'} mldsa_seed=${7:-} mldsa_verify=${8:-}
+	local target=$1 sni=$2 private_key=$3 public_key=$4 short_ids=${5:-'[""]'} sockopt=${6:-'{}'} mldsa_seed=${7:-} mldsa_verify=${8:-} target_xver=${9:-0}
 	local external_proxy
 	external_proxy=$(build_external_proxy_json "$sni")
 	jq -nc \
@@ -325,13 +391,14 @@ build_vision_stream_json() {
 		--arg mldsaVerify "$mldsa_verify" \
 		--argjson shortIds "$short_ids" \
 		--argjson sockopt "$sockopt" \
+		--argjson targetXver "$target_xver" \
 		--argjson externalProxy "$external_proxy" '{
           network:"tcp",
           security:"reality",
           externalProxy:$externalProxy,
           realitySettings:{
-            show:true,
-            xver:0,
+            show:false,
+            xver:$targetXver,
             target:$target,
             serverNames:[$sni],
             privateKey:$privateKey,
@@ -353,6 +420,7 @@ build_vision_stream_json() {
         }'
 }
 
+# Строит streamSettings для XHTTP backend, TLS которого завершается в Traefik.
 build_xhttp_stream_json() {
 	local path=$1 host=$2 sockopt external_proxy
 	sockopt=$(build_sockopt_json false UseIP tproxy)
@@ -366,13 +434,9 @@ build_xhttp_stream_json() {
         path:$path,
         host:$host,
         headers:{
-          Server:"nginx",
-          "Content-Type":"text/html; charset=UTF-8",
-          "Cache-Control":"no-cache",
-          Connection:"keep-alive",
-          "Access-Control-Allow-Origin":("https://" + $host),
-          "Access-Control-Allow-Methods":"GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers":"Content-Type"
+          "Cache-Control":"no-store",
+          "Access-Control-Allow-Origin":"*",
+          "Access-Control-Allow-Methods":"GET, POST"
         },
         scMaxBufferedPosts:50,
         scMaxEachPostBytes:"5000000",
