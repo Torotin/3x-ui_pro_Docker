@@ -97,6 +97,11 @@ assert_true(
     traefik_homepage_widget.get("username") == "{{HOMEPAGE_VAR_USER_WEB}}" and traefik_homepage_widget.get("password") == "{{HOMEPAGE_VAR_PASS_WEB}}",
     "Homepage Traefik widget must authenticate through the existing web credentials",
 )
+telemt_homepage_card = find_homepage_service("Admin", "Telemt Panel")
+assert_true(
+    telemt_homepage_card.get("container") == "telemt",
+    "Homepage Telemt card must follow the bundled panel container",
+)
 
 xui_compose = load_yaml("docker-proxy/compose.d/12-3x-ui.yml")
 xui_service = xui_compose["services"]["3x-ui"]
@@ -123,16 +128,35 @@ assert_true(xui_labels.get("traefik.http.routers.3xui-api.tls.certresolver", "")
 assert_true(api_priority > panel_priority, "3x-ui Bearer API router must outrank the BasicAuth panel router")
 
 telemt_compose = load_yaml("docker-proxy/compose.d/15-telemt.yml")
+assert_true("telemt-panel" not in telemt_compose["services"], "Telemt panel must run inside the single telemt container")
 telemt_service = telemt_compose["services"]["telemt"]
 telemt_ports = [str(port) for port in (telemt_service.get("ports") or [])]
 telemt_expose = [str(port) for port in (telemt_service.get("expose") or [])]
 assert_true(not telemt_ports, f"Telemt must not publish host ports, got {telemt_ports}")
-assert_true("${PORT_LOCAL_TELEMT_PROXY:-9443}" in telemt_expose, "Telemt must expose only the internal MTProxy port")
-
-telemt_panel = telemt_compose["services"]["telemt-panel"]
-telemt_panel_ports = [str(port) for port in (telemt_panel.get("ports") or [])]
-assert_true(not telemt_panel_ports, f"Telemt panel must not publish host ports, got {telemt_panel_ports}")
-telemt_labels = labels_for(telemt_panel)
+assert_true(
+    telemt_service.get("image") == "${TELEMT_STACK_IMAGE:-torotin/telemt-stack:latest}",
+    "Telemt must use the AutoDockerBuilder stack image with an env override",
+)
+assert_true("build" not in telemt_service, "Telemt stack must not build a local panel image")
+assert_true(telemt_service.get("init") is True, "Telemt stack must use an init process for its bundled children")
+assert_true("${DOCKER_SOCKET_GID:-0}" in [str(group) for group in (telemt_service.get("group_add") or [])], "Telemt stack must join the Docker socket group for panel Logs UI")
+assert_true(
+    set(telemt_expose) == {
+        "${PORT_LOCAL_TELEMT_PROXY:-9443}",
+        "${PORT_LOCAL_TELEMT_API:-9091}",
+        "${PORT_LOCAL_TELEMT_METRICS:-9090}",
+        "${PORT_LOCAL_TELEMT_PANEL:-8080}",
+    },
+    f"Telemt must expose only its four internal endpoints, got {telemt_expose}",
+)
+telemt_volumes = [str(volume) for volume in (telemt_service.get("volumes") or [])]
+assert_true("../telemt-panel/config:/etc/telemt-panel:ro" in telemt_volumes, "Bundled panel must receive its rendered config")
+assert_true("../telemt-panel/data:/var/lib/telemt-panel:rw" in telemt_volumes, "Bundled panel must retain persistent data")
+assert_true("/var/run/docker.sock:/var/run/docker.sock:ro" in telemt_volumes, "Bundled panel Logs UI must receive read-only Docker socket access")
+telemt_healthcheck = " ".join(str(part) for part in ((telemt_service.get("healthcheck") or {}).get("test") or []))
+assert_true("/usr/local/bin/telemt healthcheck /etc/telemt/config.toml --mode liveness" in telemt_healthcheck, "Telemt stack healthcheck must verify Telemt liveness")
+assert_true("curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/${URI_TELEMT_PANEL}/" in telemt_healthcheck, "Telemt stack healthcheck must verify bundled panel readiness")
+telemt_labels = labels_for(telemt_service)
 telemt_panel_rule = telemt_labels.get("traefik.http.routers.telemt-panel.rule", "")
 telemt_panel_middlewares = telemt_labels.get("traefik.http.routers.telemt-panel.middlewares", "")
 assert_true("Host(`${WEBDOMAIN}`)" in telemt_panel_rule and "PathPrefix(`/${URI_TELEMT_PANEL}`)" in telemt_panel_rule, "Telemt panel must be routed by WEBDOMAIN path")
@@ -157,9 +181,17 @@ assert_true('inline_conntrack_control = false' in telemt_template and 'mode = "t
 assert_true('mask_shape_hardening = ${TELEMT_MASK_SHAPE_HARDENING}' in telemt_template, "Telemt balanced tuning must expose mask hardening")
 assert_true('[[upstreams]]' in telemt_template and 'type = "direct"' in telemt_template, "Telemt must explicitly define direct upstream")
 
+telemt_panel_template = (root / "script/template/telemt-panel.config.toml.template").read_text(encoding="utf-8")
+assert_true('container_name = "telemt"' in telemt_panel_template, "Bundled panel Logs UI must target the telemt Docker container")
+assert_true('binary_path = "/usr/local/bin/telemt"' in telemt_panel_template, "Bundled panel must use the image-provided Telemt binary")
+assert_true('binary_path = "/usr/local/bin/telemt-panel"' in telemt_panel_template, "Bundled panel must record the image-provided panel binary")
+
 install_env_template = (root / "script/template/install.env.template").read_text(encoding="utf-8")
 docker_env_template = (root / "script/template/docker.env.template").read_text(encoding="utf-8")
 for env_template_name, env_template in [("install.env.template", install_env_template), ("docker.env.template", docker_env_template)]:
+    assert_true("TELEMT_STACK_IMAGE=${TELEMT_STACK_IMAGE}" in env_template, f"{env_template_name} must persist the telemt-stack image override")
+    assert_true("DOCKER_SOCKET_GID=${DOCKER_SOCKET_GID}" in env_template, f"{env_template_name} must persist the Docker socket group id")
+    assert_true("TELEMT_PANEL_VERSION=" not in env_template, f"{env_template_name} must not persist the retired panel build version")
     assert_true("TELEMT_TUNING_PROFILE=${TELEMT_TUNING_PROFILE}" in env_template, f"{env_template_name} must persist TELEMT_TUNING_PROFILE")
     assert_true("TELEMT_MIDDLE_PROXY_POOL_SIZE=${TELEMT_MIDDLE_PROXY_POOL_SIZE}" in env_template, f"{env_template_name} must persist ME pool size")
     assert_true('TELEMT_STUN_SERVERS_JSON="${TELEMT_STUN_SERVERS_JSON_ENV}"' in env_template, f"{env_template_name} must persist STUN server list as dotenv-safe quoted JSON")
@@ -242,7 +274,7 @@ admin_cases = [
     ("12-3x-ui.yml", "3x-ui", "traefik.http.routers.3xui-panel.middlewares"),
     ("13-homepage.yml", "homepage", "traefik.http.routers.homepage-router.middlewares"),
     ("14-lampac.yml", "lampac", "traefik.http.routers.lampac-sensitive.middlewares"),
-    ("15-telemt.yml", "telemt-panel", "traefik.http.routers.telemt-panel.middlewares"),
+    ("15-telemt.yml", "telemt", "traefik.http.routers.telemt-panel.middlewares"),
 ]
 admin_domains = [
     "TRAEFIK_ADMIN_DOMAIN",
@@ -302,7 +334,7 @@ for file_name, service_name, key in [
     ("12-3x-ui.yml", "3x-ui", "traefik.http.routers.3xui-panel.rule"),
     ("13-homepage.yml", "homepage", "traefik.http.routers.homepage-router.rule"),
     ("14-lampac.yml", "lampac", "traefik.http.routers.lampac-sensitive.rule"),
-    ("15-telemt.yml", "telemt-panel", "traefik.http.routers.telemt-panel.rule"),
+    ("15-telemt.yml", "telemt", "traefik.http.routers.telemt-panel.rule"),
 ]:
     service_labels = labels_for(load_yaml(f"docker-proxy/compose.d/{file_name}")["services"][service_name])
     rule = service_labels.get(key, "")

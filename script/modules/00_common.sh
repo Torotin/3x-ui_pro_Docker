@@ -408,7 +408,7 @@ install_doctor_check_containers() {
 		containers+=(lampac)
 	fi
 	if [[ -f "$INSTALL_ROOT/compose.d/15-telemt.yml" || -f "$INSTALL_ROOT/compose.d/15-telemt.yaml" ]]; then
-		containers+=(telemt telemt-panel)
+		containers+=(telemt)
 	fi
 	for name in "${containers[@]}"; do
 		((checked++))

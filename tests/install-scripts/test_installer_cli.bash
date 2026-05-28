@@ -74,6 +74,11 @@ test_doctor_verbose_keeps_detailed_success_output() {
 	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor --verbose must still report success"
 }
 
+test_doctor_inventory_uses_bundled_telemt_panel_healthcheck() {
+	assert_contains 'containers+=(telemt)' "$ROOT_DIR/script/modules/00_common.sh" "doctor must check the bundled Telemt container"
+	assert_not_contains 'containers+=(telemt telemt-panel)' "$ROOT_DIR/script/modules/00_common.sh" "doctor must not expect a retired standalone panel container"
+}
+
 test_exit_resets_script_and_project_permissions() {
 	make_fixture
 	run_installer doctor
@@ -94,9 +99,12 @@ test_run_dispatches_named_steps_without_eval() {
 test_compose_installs_docker_maintenance_timer() {
 	make_fixture
 	run_installer run compose
+	assert_contains "docker.maintenance.script.chmod chmod +x $INSTALL_ROOT/compose.d/docker-maintenance.sh" "$INSTALL_COMMAND_LOG" "compose install must ensure maintenance script is executable"
 	assert_contains "docker.maintenance.service.write" "$INSTALL_COMMAND_LOG" "compose install must write Docker maintenance service"
 	assert_contains "docker.maintenance.timer.write" "$INSTALL_COMMAND_LOG" "compose install must write Docker maintenance timer"
-	assert_contains "docker.maintenance.enable systemctl enable --now docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must enable maintenance timer"
+	assert_contains "docker.maintenance.enable systemctl enable docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must enable maintenance timer"
+	assert_contains "docker.maintenance.start systemctl start docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must start maintenance timer"
+	assert_contains "docker.maintenance.list systemctl list-timers --all docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must list maintenance timer"
 }
 
 test_env_reports_permission_problem_before_backup() {
@@ -119,11 +127,17 @@ test_env_preserves_existing_state_defaults() {
 WEBDOMAIN=state.example.test
 USER_SSH="state-user"
 CROWDSEC_API_KEY_FIREWALL=state-firewall-key
+TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin
+DOCKER_SOCKET_GID=12345
 ENV
 	run_installer run env
 	assert_contains "WEBDOMAIN=state.example.test" "$INSTALL_STATE_DIR/install.env" "env must preserve existing domain when no override is provided"
 	assert_contains 'USER_SSH="state-user"' "$INSTALL_STATE_DIR/install.env" "env must preserve existing SSH user when no override is provided"
 	assert_contains "CROWDSEC_API_KEY_FIREWALL=state-firewall-key" "$INSTALL_STATE_DIR/install.env" "env must preserve existing crowdsec key when no override is provided"
+	assert_contains "TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin" "$INSTALL_STATE_DIR/install.env" "env must preserve an explicit telemt-stack image"
+	assert_contains "TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin" "$INSTALL_ROOT/compose.d/.env" "compose env must receive an explicit telemt-stack image"
+	assert_contains "DOCKER_SOCKET_GID=12345" "$INSTALL_STATE_DIR/install.env" "env must preserve an explicit Docker socket group id"
+	assert_contains "DOCKER_SOCKET_GID=12345" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Docker socket group id"
 }
 
 test_state_loader_preserves_literal_dollars() {
@@ -202,8 +216,12 @@ SSH_PBK=ssh-ed25519-mock
 PORT_REMOTE_SSH=22022
 TELEMT_STUN_SERVERS_JSON='["stun1.l.google.com:19302", "stun2.l.google.com:19302"]'
 TELEMT_HTTP_IP_DETECT_URLS_JSON='["https://api.ipify.org", "https://ifconfig.me/ip"]'
+TELEMT_PANEL_VERSION=v-retired
 ENV
 	run_installer run env
+	assert_contains 'TELEMT_STACK_IMAGE=torotin/telemt-stack:latest' "$INSTALL_ROOT/compose.d/.env" "compose env must default to AutoDockerBuilder telemt-stack image"
+	assert_contains 'DOCKER_SOCKET_GID=' "$INSTALL_ROOT/compose.d/.env" "compose env must render a Docker socket group id for Telemt panel logs"
+	assert_not_contains 'TELEMT_PANEL_VERSION=' "$INSTALL_ROOT/compose.d/.env" "compose env must drop the retired standalone panel build version"
 	assert_contains 'TELEMT_STUN_SERVERS_JSON="[\"stun1.l.google.com:19302\", \"stun2.l.google.com:19302\"]"' "$INSTALL_ROOT/compose.d/.env" "compose env must store dotenv-safe Telemt STUN list"
 	assert_contains 'stun_servers = ["stun1.l.google.com:19302", "stun2.l.google.com:19302"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render STUN servers as TOML array"
 	assert_contains 'http_ip_detect_urls = ["https://api.ipify.org", "https://ifconfig.me/ip"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render HTTP IP detect URLs as TOML array"
@@ -352,6 +370,9 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "docker.service.reset_failed systemctl reset-failed docker docker.socket" "$INSTALL_COMMAND_LOG" "docker install must clear failed service/socket state before restart"
 	assert_contains "docker.socket.start systemctl start docker.socket" "$INSTALL_COMMAND_LOG" "docker install must start socket before dockerd fd activation restart"
 	assert_contains "docker.service.restart systemctl restart docker" "$INSTALL_COMMAND_LOG" "docker install must restart Docker after daemon config"
+	assert_contains "docker.validate.info timeout --kill-after=10s 30s docker info" "$INSTALL_COMMAND_LOG" "docker install must run timeout-wrapped docker info validation"
+	assert_contains "docker.validate.df docker system df" "$INSTALL_COMMAND_LOG" "docker install must report docker disk usage"
+	assert_contains "docker.validate.driver_status timeout --kill-after=10s 30s docker info --format \\{\\{json\\ .DriverStatus\\}\\}" "$INSTALL_COMMAND_LOG" "docker install must inspect overlay2 driver status"
 	run_installer run firewall --apply --yes
 	run_installer run ssh --apply --yes
 	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "explicit firewall command must be routed through runner"
@@ -449,8 +470,34 @@ test_docker_repo_and_daemon_config_are_safe() {
 	assert_not_contains "docker.repo.update apt-get update -y" "$INSTALL_COMMAND_LOG" "docker repo update must not use unsupported -y"
 	assert_contains "docker.daemon.backup printf backup\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker daemon mock backup must not copy a missing host file"
 	assert_contains "docker.daemon.json.validate printf python3\\ -m\\ json.tool\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker daemon mock validation must log validation target without reading it"
+	assert_contains '"live-restore": true' "$INSTALL_COMMAND_LOG" "docker daemon config must enable live restore"
+	assert_contains '"storage-driver": "overlay2"' "$INSTALL_COMMAND_LOG" "docker daemon config must force overlay2"
+	assert_contains '"compress": "true"' "$INSTALL_COMMAND_LOG" "docker daemon logs must be compressed"
+	assert_contains '"mode": "non-blocking"' "$INSTALL_COMMAND_LOG" "docker daemon logs must be non-blocking"
+	assert_contains '"max-buffer-size": "4m"' "$INSTALL_COMMAND_LOG" "docker daemon logs must cap non-blocking buffer"
+	assert_not_contains '"containerd-snapshotter": true' "$INSTALL_COMMAND_LOG" "docker daemon must not enable containerd snapshotter with explicit overlay2 by default"
+	assert_not_contains "overlay2.size=20G" "$INSTALL_COMMAND_LOG" "overlay2 size limit must be opt-in and quota-gated"
 	assert_not_contains "fixed-cidr-v6" "$INSTALL_COMMAND_LOG" "docker daemon config must allow disabling IPv6"
 	assert_not_contains "docker.network.remove docker network rm docker-proxy_default" "$INSTALL_COMMAND_LOG" "docker network creation must not auto-delete compose default network"
+}
+
+test_docker_containerd_snapshotter_is_explicit_opt_in() {
+	make_fixture
+	export DOCKER_ENABLE_CONTAINERD_SNAPSHOTTER=1
+	run_installer run docker --destroy-docker-data
+	assert_contains '"storage-driver": "overlay2"' "$INSTALL_COMMAND_LOG" "docker daemon must keep explicit overlay2 when snapshotter opt-in is requested"
+	assert_contains '"containerd-snapshotter": true' "$INSTALL_COMMAND_LOG" "containerd snapshotter must be available only via explicit opt-in"
+	assert_contains "docker.validate.driver_status" "$INSTALL_COMMAND_LOG" "docker validation must catch overlayfs migration after daemon restart"
+}
+
+test_docker_installs_journald_policy() {
+	make_fixture
+	run_installer run docker --destroy-docker-data
+	assert_contains "docker.journald.dir install -d -m 0755 /etc/systemd/journald.conf.d" "$INSTALL_COMMAND_LOG" "docker install must create journald drop-in directory"
+	assert_contains "docker.journald.write" "$INSTALL_COMMAND_LOG" "docker install must write journald policy"
+	assert_contains "SystemMaxUse=200M" "$INSTALL_COMMAND_LOG" "journald policy must cap persistent journal"
+	assert_contains "RuntimeKeepFree=200M" "$INSTALL_COMMAND_LOG" "journald policy must keep runtime free space"
+	assert_contains "docker.journald.restart systemctl try-restart systemd-journald" "$INSTALL_COMMAND_LOG" "docker install must apply journald policy"
 }
 
 test_uninstall_plan_is_non_destructive() {
@@ -493,6 +540,9 @@ ENV
 test_uninstall_can_remove_docker_engine_with_explicit_flag() {
 	make_fixture
 	run_installer uninstall --apply --yes --purge-docker-engine
+	assert_contains "docker.maintenance.disable systemctl disable --now docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "docker engine purge must disable maintenance timer"
+	assert_contains "docker.maintenance.service.remove rm -f /etc/systemd/system/docker-proxy-maintenance.service" "$INSTALL_COMMAND_LOG" "docker engine purge must remove maintenance service"
+	assert_contains "docker.maintenance.timer.remove rm -f /etc/systemd/system/docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "docker engine purge must remove maintenance timer"
 	assert_contains "docker.remove.packages" "$INSTALL_COMMAND_LOG" "docker engine purge must remove packages"
 	assert_contains "docker.data.remove" "$INSTALL_COMMAND_LOG" "docker engine purge must remove Docker data dirs"
 }
@@ -796,6 +846,7 @@ OS
 
 test_doctor_is_mock_only_and_reports_supported_os
 test_doctor_verbose_keeps_detailed_success_output
+test_doctor_inventory_uses_bundled_telemt_panel_healthcheck
 test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
 test_compose_installs_docker_maintenance_timer
@@ -820,6 +871,9 @@ test_ssh_restarts_when_listener_check_fails_after_reload
 test_ssh_listener_mock_uses_realistic_address_pattern
 test_docker_install_handles_missing_docker_binary
 test_network_apply_uses_runner
+test_docker_repo_and_daemon_config_are_safe
+test_docker_containerd_snapshotter_is_explicit_opt_in
+test_docker_installs_journald_policy
 test_uninstall_plan_is_non_destructive
 test_uninstall_apply_requires_confirmation
 test_uninstall_apply_uses_mock_runner_and_explicit_purge_flags

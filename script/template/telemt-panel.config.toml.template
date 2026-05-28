@@ -3,15 +3,18 @@ base_path = "/${URI_TELEMT_PANEL}"
 data_dir = "/var/lib/telemt-panel"
 
 [telemt]
-url = "http://telemt:${PORT_LOCAL_TELEMT_API}"
+url = "http://127.0.0.1:${PORT_LOCAL_TELEMT_API}"
 auth_header = "${TELEMT_API_AUTH_HEADER}"
+binary_path = "/usr/local/bin/telemt"
 config_path = "/etc/telemt/config.toml"
+container_name = "telemt"
 
 [telemt.auto_update]
 enabled = false
 
 [panel]
 github_repo = "amirotin/telemt_panel"
+binary_path = "/usr/local/bin/telemt-panel"
 
 [panel.auto_update]
 enabled = false
