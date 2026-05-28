@@ -240,10 +240,13 @@ test_maintenance_prune_keeps_networks_and_volumes() {
 	run_runner maintenance prune >/tmp/run-compose-maintenance.out 2>&1
 	assert_contains "container prune --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune stopped containers"
 	assert_contains "builder prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune build cache"
+	assert_contains "buildx prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune buildx cache"
 	assert_contains "image prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune unused images"
+	assert_contains "network prune --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune unused networks"
 	assert_not_contains "system prune" "$tmpdir/docker.log" "maintenance must not use docker system prune because it removes unused external networks"
-	assert_not_contains "network prune" "$tmpdir/docker.log" "maintenance must not prune Docker networks"
 	assert_not_contains "volume prune" "$tmpdir/docker.log" "maintenance must not prune Docker volumes"
+	assert_not_contains "io.containerd.content.v1.content" "$ROOT_DIR/docker-proxy/compose.d/docker-maintenance.sh" "maintenance must not delete containerd content blobs by filesystem path"
+	assert_not_contains "/var/lib/containerd/io.containerd.content" "$ROOT_DIR/docker-proxy/compose.d/docker-maintenance.sh" "maintenance must not touch containerd content store by filesystem path"
 }
 
 test_up_reports_foreign_container_name_conflict() {

@@ -16,10 +16,12 @@ install_docker_command() {
 	install_docker_remove_legacy_compose
 	install_docker_install_packages
 	install_docker_configure_daemon
+	install_docker_journald_policy
 	run_cmd docker.service.enable systemctl enable docker
 	run_cmd docker.service.reset_failed systemctl reset-failed docker docker.socket || true
 	run_cmd docker.socket.start systemctl start docker.socket || true
 	run_cmd docker.service.restart systemctl restart docker
+	install_docker_validate
 	install_docker_networks
 }
 
@@ -126,29 +128,142 @@ install_docker_configure_daemon() {
 
 install_docker_daemon_json() {
 	local ipv6_subnet="${DOCKER_IPV6_SUBNET:-fd00:dead:aaaa::/64}"
+	local storage_opts=""
+	local features_block=""
+	if install_docker_overlay2_size_limit_enabled; then
+		storage_opts='  "storage-opts": [
+    "overlay2.size=20G"
+  ],'
+	fi
+	if install_docker_containerd_snapshotter_enabled; then
+		features_block='  "features": {
+    "containerd-snapshotter": true
+  },'
+	fi
 	if [[ "${DOCKER_ENABLE_IPV6:-1}" == "1" ]]; then
 		cat <<JSON
 {
-  "ipv6": true,
+  "live-restore": true,
+  "storage-driver": "overlay2",
+${storage_opts:+$storage_opts
+}${features_block:+$features_block
+}  "ipv6": true,
   "fixed-cidr-v6": "$ipv6_subnet",
   "log-driver": "json-file",
   "log-opts": {
     "max-size": "10m",
-    "max-file": "3"
+    "max-file": "3",
+    "compress": "true",
+    "mode": "non-blocking",
+    "max-buffer-size": "4m"
   }
 }
 JSON
 	else
 		cat <<JSON
 {
-  "log-driver": "json-file",
+  "live-restore": true,
+  "storage-driver": "overlay2",
+${storage_opts:+$storage_opts
+}${features_block:+$features_block
+}  "log-driver": "json-file",
   "log-opts": {
     "max-size": "10m",
-    "max-file": "3"
+    "max-file": "3",
+    "compress": "true",
+    "mode": "non-blocking",
+    "max-buffer-size": "4m"
   }
 }
 JSON
 	fi
+}
+
+install_docker_containerd_snapshotter_enabled() {
+	# Docker 29 with containerd-snapshotter reports/uses "overlayfs" as the
+	# storage driver, which is incompatible with the required explicit overlay2
+	# daemon policy. Keep this feature opt-in only for operators who knowingly
+	# adjust the storage-driver policy for their Docker Engine version.
+	[[ "${DOCKER_ENABLE_CONTAINERD_SNAPSHOTTER:-0}" == "1" ]]
+}
+
+install_docker_overlay2_size_limit_enabled() {
+	[[ "${DOCKER_ENABLE_OVERLAY2_SIZE_LIMIT:-0}" == "1" ]] || return 1
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		[[ "${INSTALL_MOCK_DOCKER_QUOTA_SUPPORTED:-0}" == "1" ]]
+		return
+	fi
+	install_docker_backing_fs_supports_project_quota
+}
+
+install_docker_backing_fs_supports_project_quota() {
+	local docker_root=/var/lib/docker source fstype options
+	read -r source fstype options < <(findmnt -n -T "$docker_root" -o SOURCE,FSTYPE,OPTIONS 2>/dev/null || true)
+	[[ -n "${source:-}" && -n "${fstype:-}" ]] || return 1
+	case "$fstype" in
+	ext2 | ext3 | ext4)
+		command -v tune2fs >/dev/null 2>&1 || return 1
+		local features
+		features=$(tune2fs -l "$source" 2>/dev/null | awk -F: 'tolower($1) ~ /filesystem features/ {print tolower($2)}')
+		grep -Eq '(^|[[:space:]])project($|[[:space:]])' <<<"$features" && grep -Eq '(^|[[:space:]])quota($|[[:space:]])' <<<"$features"
+		;;
+	xfs)
+		grep -Eq '(^|,)(pquota|prjquota)(,|$)' <<<"$options"
+		;;
+	*) return 1 ;;
+	esac
+}
+
+install_docker_journald_policy() {
+	local conf_file="${INSTALL_DOCKER_JOURNALD_CONFIG:-/etc/systemd/journald.conf.d/docker-proxy.conf}"
+	local conf
+	conf=$(cat <<'CONF'
+[Journal]
+SystemMaxUse=200M
+SystemKeepFree=500M
+RuntimeMaxUse=100M
+RuntimeKeepFree=200M
+MaxRetentionSec=7day
+Compress=yes
+CONF
+)
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.journald.dir install -d -m 0755 "$(dirname "$conf_file")"
+		run_cmd docker.journald.write printf '%s\n' "$conf"
+		run_cmd docker.journald.restart systemctl try-restart systemd-journald
+		return 0
+	fi
+	[[ -f "$conf_file" ]] && backup_file "$conf_file"
+	run_cmd docker.journald.dir install -d -m 0755 "$(dirname "$conf_file")"
+	local tmp
+	tmp=$(mktemp)
+	printf '%s\n' "$conf" >"$tmp"
+	run_cmd docker.journald.write install -m 0644 "$tmp" "$conf_file"
+	rm -f "$tmp"
+	run_cmd docker.journald.restart systemctl try-restart systemd-journald || run_cmd docker.journald.restart.fallback systemctl restart systemd-journald
+}
+
+install_docker_validate() {
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.validate.info timeout --kill-after=10s 30s docker info
+		run_cmd docker.validate.df docker system df
+		run_cmd docker.validate.driver_status timeout --kill-after=10s 30s docker info --format '{{json .DriverStatus}}'
+		return 0
+	fi
+	local logging_driver storage_driver live_restore driver_status driver_status_text
+	logging_driver=$(timeout --kill-after=10s 30s docker info --format '{{.LoggingDriver}}' 2>/dev/null || true)
+	storage_driver=$(timeout --kill-after=10s 30s docker info --format '{{.Driver}}' 2>/dev/null || true)
+	live_restore=$(timeout --kill-after=10s 30s docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null || true)
+	run_cmd docker.validate.info timeout --kill-after=10s 30s docker info
+	run_cmd docker.validate.df docker system df
+	driver_status=$(run_cmd docker.validate.driver_status timeout --kill-after=10s 30s docker info --format '{{json .DriverStatus}}' 2>/dev/null || true)
+	driver_status_text=$(timeout --kill-after=10s 30s docker info --format '{{.DriverStatus}}' 2>/dev/null || true)
+	[[ "$logging_driver" == "json-file" ]] || die "Docker validation failed: Logging Driver is $logging_driver, expected json-file"
+	[[ "$storage_driver" == "overlay2" ]] || die "Docker validation failed: Storage Driver is $storage_driver, expected overlay2"
+	[[ "$live_restore" == "true" ]] || die "Docker validation failed: Live Restore is $live_restore, expected true"
+	grep -Eqi 'Backing Filesystem[^[:alnum:]]+(extfs|xfs)' <<<"$driver_status $driver_status_text" || die "Docker validation failed: Backing Filesystem must be extfs or xfs"
+	grep -Eqi 'Supports d_type[^[:alnum:]]+true' <<<"$driver_status $driver_status_text" || die "Docker validation failed: Supports d_type must be true"
+	grep -Eqi 'Native Overlay Diff[^[:alnum:]]+true' <<<"$driver_status $driver_status_text" || die "Docker validation failed: Native Overlay Diff must be true"
 }
 
 install_docker_purge_data_dirs() {
@@ -156,9 +271,26 @@ install_docker_purge_data_dirs() {
 }
 
 install_docker_remove_engine() {
+	install_docker_remove_maintenance_timer
 	install_docker_stop_services
 	run_cmd docker.remove.packages env DEBIAN_FRONTEND=noninteractive apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-compose docker-ce-rootless-extras
 	install_docker_purge_data_dirs
+}
+
+install_docker_remove_maintenance_timer() {
+	local service_file="${INSTALL_DOCKER_MAINTENANCE_SERVICE:-/etc/systemd/system/docker-proxy-maintenance.service}"
+	local timer_file="${INSTALL_DOCKER_MAINTENANCE_TIMER:-/etc/systemd/system/docker-proxy-maintenance.timer}"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.maintenance.disable systemctl disable --now "$(basename "$timer_file")"
+		run_cmd docker.maintenance.service.remove rm -f "$service_file"
+		run_cmd docker.maintenance.timer.remove rm -f "$timer_file"
+		run_cmd docker.maintenance.reload systemctl daemon-reload
+		return 0
+	fi
+	run_cmd docker.maintenance.disable systemctl disable --now "$(basename "$timer_file")" || true
+	run_cmd docker.maintenance.service.remove rm -f "$service_file"
+	run_cmd docker.maintenance.timer.remove rm -f "$timer_file"
+	run_cmd docker.maintenance.reload systemctl daemon-reload
 }
 
 install_docker_wipe() {
@@ -217,6 +349,7 @@ install_compose_command() {
 	local compose_env="$compose_dir/.env"
 	local compose_env_unset=(-u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP)
 	install_project_files
+	install_docker_maintenance_script
 	install_docker_maintenance_timer
 	if [[ ! -f "$compose_env" ]]; then
 		install_env_command
@@ -231,15 +364,31 @@ install_compose_command() {
 	run_cmd compose.up env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
 }
 
+install_docker_maintenance_script() {
+	local maintenance_script="$INSTALL_ROOT/compose.d/docker-maintenance.sh"
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.maintenance.script.chmod chmod +x "$maintenance_script"
+		return 0
+	fi
+	[[ -f "$maintenance_script" ]] || die "Docker maintenance script not found: $maintenance_script"
+	run_cmd docker.maintenance.script.chmod chmod +x "$maintenance_script"
+	[[ -x "$maintenance_script" ]] || die "Docker maintenance script not executable: $maintenance_script"
+}
+
 install_docker_maintenance_timer() {
 	local service_file="${INSTALL_DOCKER_MAINTENANCE_SERVICE:-/etc/systemd/system/docker-proxy-maintenance.service}"
 	local timer_file="${INSTALL_DOCKER_MAINTENANCE_TIMER:-/etc/systemd/system/docker-proxy-maintenance.timer}"
 	local maintenance_script="$INSTALL_ROOT/compose.d/docker-maintenance.sh"
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.maintenance.service.write printf '%s\n' "$(install_docker_maintenance_service_unit "$maintenance_script")"
+		run_cmd docker.maintenance.timer.write printf '%s\n' "$(install_docker_maintenance_timer_unit)"
 		run_cmd docker.maintenance.service.write printf '%s\n' "$service_file"
 		run_cmd docker.maintenance.timer.write printf '%s\n' "$timer_file"
 		run_cmd docker.maintenance.reload systemctl daemon-reload
-		run_cmd docker.maintenance.enable systemctl enable --now "$(basename "$timer_file")"
+		run_cmd docker.maintenance.enable systemctl enable "$(basename "$timer_file")"
+		run_cmd docker.maintenance.start systemctl start "$(basename "$timer_file")"
+		run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")"
+		printf 'Docker maintenance timer installed and active\n'
 		return 0
 	fi
 	[[ -x "$maintenance_script" ]] || die "Docker maintenance script not found or not executable: $maintenance_script"
@@ -249,41 +398,70 @@ install_docker_maintenance_timer() {
 	local service_tmp timer_tmp
 	service_tmp=$(mktemp)
 	timer_tmp=$(mktemp)
-	cat >"$service_tmp" <<SERVICE
+	install_docker_maintenance_service_unit "$maintenance_script" >"$service_tmp"
+	install_docker_maintenance_timer_unit >"$timer_tmp"
+	run_cmd docker.maintenance.service.write install -m 0644 "$service_tmp" "$service_file"
+	run_cmd docker.maintenance.timer.write install -m 0644 "$timer_tmp" "$timer_file"
+	rm -f "$service_tmp" "$timer_tmp"
+	run_cmd docker.maintenance.reload systemctl daemon-reload
+	run_cmd docker.maintenance.enable systemctl enable "$(basename "$timer_file")"
+	run_cmd docker.maintenance.start systemctl start "$(basename "$timer_file")"
+	run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")"
+	printf 'Docker maintenance timer installed and active\n'
+}
+
+install_docker_maintenance_service_unit() {
+	local maintenance_script=$1
+	cat <<SERVICE
 [Unit]
-Description=Prune unused Docker artifacts for docker-proxy
+Description=Docker maintenance and containerd cleanup
 Documentation=file://$maintenance_script
+After=docker.service containerd.service
 Requires=docker.service
-After=docker.service
+RequiresMountsFor=/var/lib/docker /var/lib/containerd
 
 [Service]
 Type=oneshot
-Environment=DOCKER_MAINTENANCE_IMAGE_UNTIL=168h
-Environment=DOCKER_MAINTENANCE_CONTAINER_UNTIL=168h
-Environment=DOCKER_MAINTENANCE_BUILDER_UNTIL=168h
-ExecStart=$maintenance_script prune
-Nice=10
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LC_ALL=C
+ExecStartPre=/usr/bin/test -x $maintenance_script
+ExecStart=$maintenance_script
+Nice=19
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
+TimeoutStartSec=15min
+TimeoutStopSec=5min
+OOMScoreAdjust=500
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/run /tmp /var/tmp /var/log /var/lib/docker /var/lib/containerd /var/lib/apt /var/cache/apt /run/log/journal /var/log/journal
 SERVICE
-	cat >"$timer_tmp" <<'TIMER'
+}
+
+install_docker_maintenance_timer_unit() {
+	cat <<'TIMER'
 [Unit]
 Description=Daily Docker maintenance for docker-proxy
 
 [Timer]
 OnCalendar=daily
-RandomizedDelaySec=1h
+RandomizedDelaySec=45m
+AccuracySec=15m
 Persistent=true
 Unit=docker-proxy-maintenance.service
 
 [Install]
 WantedBy=timers.target
 TIMER
-	run_cmd docker.maintenance.service.write install -m 0644 "$service_tmp" "$service_file"
-	run_cmd docker.maintenance.timer.write install -m 0644 "$timer_tmp" "$timer_file"
-	rm -f "$service_tmp" "$timer_tmp"
-	run_cmd docker.maintenance.reload systemctl daemon-reload
-	run_cmd docker.maintenance.enable systemctl enable --now "$(basename "$timer_file")"
 }
 
 install_project_files() {

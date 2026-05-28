@@ -147,15 +147,18 @@ Wizard при старте автоматически проверяет обн�
 - **CrowdSec** — анализ логов и bouncer-интеграция.
 - **Caddy** — fallback/error backend и вспомогательная статика.
 - **Homepage** — dashboard со ссылками на сервисы.
+- **Telemt** — MTProxy и встроенная web-панель из образа `torotin/telemt-stack`, собранного в AutoDockerBuilder.
 - **Lampac** — публичный browser front/fallback за цепочкой Xray → Traefik.
 - **usque (WARP)/TOR** — proxy helper-сервисы для маршрутизации.
 - **Dockcheck/logrotate** — эксплуатационные сервисы для обновлений и логов.
 
 Compose fragments находятся в `docker-proxy/compose.d`. Host paths в них задаются относительно каталога `compose.d`, чтобы стек не зависел от хардкода `/opt/docker-proxy`.
 
-Clean install использует staged-модель публичных портов: `80/tcp` публикует только Traefik для ACME HTTP-01 и безопасного redirect, `443/tcp` публикует 3x-ui/Xray REALITY, а Traefik `websecure :4443` остаётся только внутри Docker network. Browser HTTPS идёт по цепочке `client -> Xray 443/tcp -> REALITY self-steal/fallback -> Traefik :4443 -> Host router -> Lampac/admin service`.
+Clean install использует staged-модель публичных портов: `80/tcp` публикует только Traefik для ACME HTTP-01 и безопасного redirect, `443/tcp` публикует 3x-ui/Xray REALITY, а Traefik `websecure :4443` остаётся только внутри Docker network. Browser HTTPS идёт по цепочке `client -> Xray 443/tcp -> Telemt -> Traefik :4443 -> Host router -> Lampac/admin service`; MTProxy traffic обрабатывается Telemt на том же внутреннем fallback-пути.
 
-Traefik dashboard, 3x-ui, AdGuard, Dozzle, Homepage и Lampac admin не имеют прямых published ports и не используют отдельные поддомены. Доступ к админкам публикуется только как HTTPS path-routes на основном `${WEBDOMAIN}` в формате `https://${WEBDOMAIN}/${SUMMARY_URL_*}` и защищается BasicAuth, CrowdSec middleware, rate-limit и security/noindex headers. Root-domain Lampac front и frontend API `/reqinfo` и `/testaccsdb` не защищаются BasicAuth, но sensitive paths Lampac (`/admin`, `/adminpanel`, `/stats`, `/weblog`) закрываются admin middleware.
+Traefik dashboard, 3x-ui, AdGuard, Dozzle, Homepage, Telemt panel и Lampac admin не имеют прямых published ports и не используют отдельные поддомены. Доступ к админкам публикуется только как HTTPS path-routes на основном `${WEBDOMAIN}` в формате `https://${WEBDOMAIN}/${SUMMARY_URL_*}` и защищается BasicAuth, CrowdSec middleware, rate-limit и security/noindex headers. Root-domain Lampac front и frontend API `/reqinfo` и `/testaccsdb` не защищаются BasicAuth, но sensitive paths Lampac (`/admin`, `/adminpanel`, `/stats`, `/weblog`) закрываются admin middleware.
+
+Telemt и Telemt panel работают в одном контейнере `telemt`. Образ можно переопределить переменной `TELEMT_STACK_IMAGE`, по умолчанию используется `torotin/telemt-stack:latest`. Для страницы логов Telemt panel контейнеру передаётся read-only mount `/var/run/docker.sock`, контейнер добавляется в группу `${DOCKER_SOCKET_GID}`, и в panel config задаётся `container_name = "telemt"`; это даёт панели доступ к Docker Engine API для чтения логов контейнера. При обновлении существующей установки с отдельного контейнера `telemt-panel` после синхронизации Compose выполните `sudo -E "$INSTALL_ROOT/compose.d/run-compose.sh" down --remove-orphans` перед следующим `up`, чтобы устаревшие Traefik labels не остались активны одновременно с новым контейнером.
 
 Не открывайте наружу `4443`, `9118`, panel ports, metrics ports или CrowdSec ports. `443/udp` должен оставаться свободным до отдельного явно принятого UDP-stage; Traefik HTTP/3 и UDP entrypoints отключены.
 
