@@ -56,8 +56,8 @@ YAML
 set -euo pipefail
 printf '%s\n' "$*" >>"${DOCKER_LOG:?}"
 if [[ "${1:-}" == "compose" ]]; then
-	printf 'env HT_PASS_ENCODED=%s URI_SUB_PATH=%s URI_JSON_PATH=%s URI_CLASH_PATH=%s URI_VLESS_XHTTP=%s\n' \
-		"${HT_PASS_ENCODED-}" "${URI_SUB_PATH-}" "${URI_JSON_PATH-}" "${URI_CLASH_PATH-}" "${URI_VLESS_XHTTP-}" >>"${DOCKER_LOG:?}"
+	printf 'env HT_PASS_ENCODED=%s URI_SUB_PATH=%s URI_JSON_PATH=%s URI_CLASH_PATH=%s URI_VLESS_XHTTP=%s URI_VLESS_GRPC=%s\n' \
+		"${HT_PASS_ENCODED-}" "${URI_SUB_PATH-}" "${URI_JSON_PATH-}" "${URI_CLASH_PATH-}" "${URI_VLESS_XHTTP-}" "${URI_VLESS_GRPC-}" >>"${DOCKER_LOG:?}"
 	shift
 	case "$*" in
 		*version*) echo "Docker Compose version v2.0.0"; exit 0 ;;
@@ -146,8 +146,9 @@ test_compose_invocation_sanitizes_transformed_environment() {
 		URI_JSON_PATH=noslash-json \
 		URI_CLASH_PATH=noslash-clash \
 		URI_VLESS_XHTTP=noslash-xhttp \
+		URI_VLESS_GRPC=noslash-grpc \
 		run_runner validate
-	assert_contains "env HT_PASS_ENCODED= URI_SUB_PATH= URI_JSON_PATH= URI_CLASH_PATH= URI_VLESS_XHTTP=" "$tmpdir/docker.log" "run-compose must let --env-file provide transformed variables"
+	assert_contains "env HT_PASS_ENCODED= URI_SUB_PATH= URI_JSON_PATH= URI_CLASH_PATH= URI_VLESS_XHTTP= URI_VLESS_GRPC=" "$tmpdir/docker.log" "run-compose must let --env-file provide transformed variables"
 }
 
 test_legacy_docker_compose_is_rejected() {

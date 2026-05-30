@@ -14,6 +14,11 @@ CHANGE_COUNT=0
 RESTART_PANEL_REQUIRED=0
 RESTART_XRAY_REQUIRED=0
 ENSURE_INBOUND_ID=
+ENSURE_SHARED_CLIENT_ID=
+# shellcheck disable=SC2034 # set by inbound runtime and read during per-inbound client synchronization
+ENSURE_SHARED_CLIENT_PASSWORD=
+# shellcheck disable=SC2034 # set by inbound runtime and read by Hysteria sync after shared client reconciliation
+ENSURE_SHARED_CLIENT_AUTH=
 
 # shellcheck source=../lib/log.bash
 . "$LIB_DIR/log.bash"
@@ -44,7 +49,7 @@ trap cleanup EXIT
 
 # Запускает полный цикл панели и Xray в выбранном режиме.
 main() {
-	local desired vision_id xhttp_id
+	local desired vision_id xhttp_id grpc_id="" hysteria2_id=""
 	TMP_ROOT=$(mktemp -d)
 	http_init "$TMP_ROOT"
 	load_runtime_env "$SCRIPT_DIR"
@@ -67,11 +72,27 @@ main() {
 	ensure_custom_geo_resources
 	update_builtin_geofiles_if_enabled
 
+	ensure_xray_tls_certificate "$(jq -r '.tls.certFile' <<<"$desired")" "$(jq -r '.tls.keyFile' <<<"$desired")"
 	ensure_inbound vision "$desired"
 	vision_id=$ENSURE_INBOUND_ID
 	ensure_inbound xhttp "$desired"
 	xhttp_id=$ENSURE_INBOUND_ID
-	ensure_shared_client "$vision_id" "$xhttp_id" "$desired"
+	if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
+		ensure_inbound grpc "$desired"
+		grpc_id=$ENSURE_INBOUND_ID
+	fi
+	if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
+		ensure_inbound hysteria2 "$desired"
+		hysteria2_id=$ENSURE_INBOUND_ID
+	fi
+	ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"
+	if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
+		ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"
+	fi
+	if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
+		ensure_hysteria2_client "$hysteria2_id" "$desired"
+	fi
+	repair_shared_client_after_inbound_sync "$desired"
 	apply_managed_xray
 	restart_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"

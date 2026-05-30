@@ -1,4 +1,9 @@
 http:
+  serversTransports:
+    grpc3xui-transport:
+      serverName: '{{ env "WEBDOMAIN" }}'
+      insecureSkipVerify: true
+
   middlewares:
     admin-security-headers:
       headers:

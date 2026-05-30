@@ -37,6 +37,8 @@ Local service endpoints:
   3X-UI subscribe  : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE}
   XHTTP            : 127.0.0.1:${SUMMARY_PORT_LOCAL_XHTTP}
   Vision           : 127.0.0.1:${SUMMARY_PORT_LOCAL_VISION}
+  gRPC TLS         : 127.0.0.1:${SUMMARY_PORT_LOCAL_GRPC}
+  Hysteria2        : 0.0.0.0:${SUMMARY_PORT_LOCAL_HYSTERIA}/udp
   Telemt proxy     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PROXY} (not public)
   Telemt API       : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_API} (not public)
   Telemt panel     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PANEL} (Traefik routed)

@@ -49,8 +49,18 @@ traefik_compose = load_yaml("docker-proxy/compose.d/06-traefik.yml")
 traefik_service = traefik_compose["services"]["traefik"]
 traefik_ports = [str(port) for port in (traefik_service.get("ports") or [])]
 assert_true(traefik_ports == ["80:80"], f"Traefik must publish only 80:80, got {traefik_ports}")
-file_middlewares = (load_yaml("docker-proxy/traefik/dynamic/crowdsec.yml").get("http") or {}).get("middlewares") or {}
+file_http = load_yaml("docker-proxy/traefik/dynamic/crowdsec.yml").get("http") or {}
+file_middlewares = file_http.get("middlewares") or {}
+file_transports = file_http.get("serversTransports") or {}
 assert_true("admin-security-headers" in file_middlewares, "admin-security-headers must be defined by the file provider")
+assert_true(
+    (file_transports.get("grpc3xui-transport") or {}).get("insecureSkipVerify") is True,
+    "VLESS gRPC serversTransport must be defined by the file provider",
+)
+assert_true(
+    (file_transports.get("grpc3xui-transport") or {}).get("serverName") == '{{ env "WEBDOMAIN" }}',
+    "VLESS gRPC serversTransport must use the managed domain as upstream SNI",
+)
 
 traefik_static = load_yaml("docker-proxy/traefik/traefik.yml")
 entrypoints = traefik_static.get("entryPoints") or {}
@@ -106,7 +116,15 @@ assert_true(
 xui_compose = load_yaml("docker-proxy/compose.d/12-3x-ui.yml")
 xui_service = xui_compose["services"]["3x-ui"]
 xui_ports = [str(port) for port in (xui_service.get("ports") or [])]
-assert_true(xui_ports == ["443:${PORT_LOCAL_VISION:-443}/tcp"], f"3x-ui must publish only Xray 443/tcp, got {xui_ports}")
+assert_true(
+    xui_ports == ["443:${PORT_LOCAL_VISION:-443}/tcp", "443:${PORT_LOCAL_HYSTERIA:-443}/udp"],
+    f"3x-ui must publish Xray 443/tcp and accepted Hysteria2 443/udp, got {xui_ports}",
+)
+xui_volumes = [str(volume) for volume in (xui_service.get("volumes") or [])]
+assert_true(
+    "../traefik/pem:/etc/traefik/pem:ro" in xui_volumes,
+    "3x-ui must mount exported Traefik PEM certificates read-only",
+)
 xui_labels = labels_for(xui_service)
 for key, value in xui_labels.items():
     assert_true("traefik.tcp." not in key, f"3x-ui Traefik TCP label must be removed: {key}")
@@ -126,6 +144,24 @@ assert_true(xui_labels.get("traefik.http.routers.3xui-api.service", "") == "3xui
 assert_true(xui_labels.get("traefik.http.routers.3xui-api.entrypoints", "") == "websecure", "3x-ui API router must use websecure")
 assert_true(xui_labels.get("traefik.http.routers.3xui-api.tls.certresolver", "") == "le", "3x-ui API router must use TLS certificate resolver")
 assert_true(api_priority > panel_priority, "3x-ui Bearer API router must outrank the BasicAuth panel router")
+assert_true(
+    xui_labels.get("traefik.http.services.grpc3xui-svc.loadbalancer.server.port") == "${PORT_LOCAL_GRPC}",
+    "VLESS gRPC Traefik service must target the managed gRPC backend port",
+)
+assert_true(
+    xui_labels.get("traefik.http.services.grpc3xui-svc.loadbalancer.server.scheme") == "https",
+    "VLESS gRPC Traefik service must use HTTPS upstream to Xray",
+)
+assert_true(
+    xui_labels.get("traefik.http.services.grpc3xui-svc.loadbalancer.serverstransport") == "grpc3xui-transport@file",
+    "VLESS gRPC service must use the file-provider serversTransport",
+)
+grpc_rule = xui_labels.get("traefik.http.routers.grpc3xui.rule", "")
+assert_true(
+    grpc_rule == "Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_GRPC}`)",
+    "VLESS gRPC router must use the generated gRPC path",
+)
+assert_true(xui_labels.get("traefik.http.routers.grpc3xui.service") == "grpc3xui-svc", "VLESS gRPC router must use grpc3xui-svc")
 
 telemt_compose = load_yaml("docker-proxy/compose.d/15-telemt.yml")
 assert_true("telemt-panel" not in telemt_compose["services"], "Telemt panel must run inside the single telemt container")
@@ -197,6 +233,13 @@ for env_template_name, env_template in [("install.env.template", install_env_tem
     assert_true('TELEMT_STUN_SERVERS_JSON="${TELEMT_STUN_SERVERS_JSON_ENV}"' in env_template, f"{env_template_name} must persist STUN server list as dotenv-safe quoted JSON")
     assert_true("TELEMT_MASK_RELAY_TIMEOUT_MS=${TELEMT_MASK_RELAY_TIMEOUT_MS}" in env_template, f"{env_template_name} must persist mask relay timeout")
     assert_true("TELEMT_MAX_CONNECTIONS=${TELEMT_MAX_CONNECTIONS}" in env_template, f"{env_template_name} must persist max_connections")
+    assert_true("URI_VLESS_GRPC=" in env_template, f"{env_template_name} must persist VLESS gRPC path")
+    assert_true("PORT_LOCAL_GRPC=${PORT_LOCAL_GRPC}" in env_template, f"{env_template_name} must persist VLESS gRPC backend port")
+    assert_true("PORT_LOCAL_HYSTERIA=${PORT_LOCAL_HYSTERIA}" in env_template, f"{env_template_name} must persist Hysteria2 UDP port")
+    assert_true("ENABLE_VLESS_GRPC=${ENABLE_VLESS_GRPC}" in env_template, f"{env_template_name} must persist VLESS gRPC enable flag")
+    assert_true("ENABLE_HYSTERIA2=${ENABLE_HYSTERIA2}" in env_template, f"{env_template_name} must persist Hysteria2 enable flag")
+    assert_true("XRAY_TLS_CERT_FILE=${XRAY_TLS_CERT_FILE}" in env_template, f"{env_template_name} must persist Xray TLS cert path")
+    assert_true("XRAY_TLS_KEY_FILE=${XRAY_TLS_KEY_FILE}" in env_template, f"{env_template_name} must persist Xray TLS key path")
 
 lampac_compose = load_yaml("docker-proxy/compose.d/14-lampac.yml")
 lampac_service = lampac_compose["services"]["lampac"]
@@ -347,7 +390,11 @@ for compose_path in sorted((root / "docker-proxy/compose.d").glob("*.yml")):
     for service_name, service in (data.get("services") or {}).items():
         ports = [str(port) for port in (service.get("ports") or [])]
         for port in ports:
-            assert_true("/udp" not in port or not port.startswith("443:"), f"443/udp must be unused before an accepted UDP stage: {compose_path}:{service_name}:{port}")
+            if port.startswith("443:") and "/udp" in port:
+                assert_true(
+                    compose_path.name == "12-3x-ui.yml" and service_name == "3x-ui" and port == "443:${PORT_LOCAL_HYSTERIA:-443}/udp",
+                    f"443/udp must belong only to accepted Hysteria2 stage: {compose_path}:{service_name}:{port}",
+                )
 
 print("stage tcp clean architecture assertions OK")
 PY

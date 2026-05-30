@@ -347,7 +347,7 @@ install_compose_command() {
 	local lock_file="$INSTALL_STATE_DIR/docker-proxy-compose.lock"
 	local compose_dir="$INSTALL_ROOT/compose.d"
 	local compose_env="$compose_dir/.env"
-	local compose_env_unset=(-u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP)
+	local compose_env_unset=(-u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP -u URI_VLESS_GRPC)
 	install_project_files
 	install_docker_maintenance_script
 	install_docker_maintenance_timer
