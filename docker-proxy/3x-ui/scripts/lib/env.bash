@@ -45,7 +45,7 @@ init_defaults() {
 	: "${REALITY_TARGET_XVER:=1}"
 	: "${URI_VLESS_XHTTP:=}"
 	: "${URI_CLASH_PATH:=}"
-	: "${CLIENT_EMAIL_PREFIX:=autogen}"
+	: "${CLIENT_EMAIL_PREFIX:=${WEBDOMAIN:+${WEBDOMAIN}-}autogen}"
 	: "${CLIENT_EMAIL_SHARED:=$CLIENT_EMAIL_PREFIX}"
 	: "${CLIENT_EMAIL_VISION:=${CLIENT_EMAIL_PREFIX}-vision}"
 	: "${CLIENT_EMAIL_XHTTP:=${CLIENT_EMAIL_PREFIX}-xhttp}"
@@ -63,6 +63,12 @@ init_defaults() {
 	: "${USQUE_PORT:=1080}"
 	: "${EXTERNAL_PROXY_PROBE_TIMEOUT:=10}"
 	: "${WARP_PROXY_PROBE_URL:=https://www.cloudflare.com/cdn-cgi/trace}"
+	if [[ "${XRAY_TLS_CERT_FILE:-}" == "/etc/x-ui/xray-managed.crt" || -z "${XRAY_TLS_CERT_FILE:-}" ]]; then
+		XRAY_TLS_CERT_FILE="/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem"
+	fi
+	if [[ "${XRAY_TLS_KEY_FILE:-}" == "/etc/x-ui/xray-managed.key" || -z "${XRAY_TLS_KEY_FILE:-}" ]]; then
+		XRAY_TLS_KEY_FILE="/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem"
+	fi
 	: "${TOR_PROXY_PROBE_URL:=https://check.torproject.org/api/ip}"
 	: "${TOR_PROXY_HOST:=tor-proxy}"
 	: "${TOR_PROXY_PORT:=1080}"
@@ -78,8 +84,19 @@ init_defaults() {
 # Объединяет локальное и смонтированное окружение, затем дополняет его значениями по умолчанию.
 load_runtime_env() {
 	local script_dir=$1
+	local name
+	local -A preserved_env=()
+	for name in MODE ENABLE_VLESS_GRPC ENABLE_HYSTERIA2; do
+		if [[ ${!name+x} ]]; then
+			preserved_env[$name]=${!name}
+		fi
+	done
 	load_env_file "$PWD/.env"
 	load_env_file "$script_dir/../../3x-ui.env"
+	for name in "${!preserved_env[@]}"; do
+		printf -v "$name" '%s' "${preserved_env[$name]}"
+		export "${name?}"
+	done
 	init_defaults
 }
 

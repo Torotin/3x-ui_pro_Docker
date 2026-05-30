@@ -78,27 +78,55 @@ test_remove_managed_xray_artifacts_only_removes_our_tags() {
 }
 
 test_desired_clients_are_deterministic() {
-	local desired shared_email shared_sub shared_flow
+	local desired shared_email shared_sub shared_flow vision_flow xhttp_flow grpc_flow
 	export CLIENT_EMAIL_PREFIX=autogen
 	export CLIENT_SUB_ID=stable-sub
 	desired=$(build_desired_state)
 	shared_email=$(printf '%s' "$desired" | jq -r '.clients.shared.email')
 	shared_sub=$(printf '%s' "$desired" | jq -r '.clients.shared.subId')
 	shared_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.flow')
+	vision_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.visionFlow')
+	xhttp_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.xhttpFlow')
+	grpc_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.grpcFlow')
 	assert_eq autogen "$shared_email" "shared client email default mismatch"
 	assert_eq stable-sub "$shared_sub" "shared client sub id mismatch"
-	assert_eq "xtls-rprx-vision" "$shared_flow" "shared VLESS client flow mismatch"
+	assert_eq "" "$shared_flow" "shared first-class client flow must stay empty"
+	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision inbound client flow mismatch"
+	assert_eq "" "$xhttp_flow" "XHTTP VLESS client flow must stay empty"
+	assert_eq "" "$grpc_flow" "gRPC VLESS client flow must stay empty"
 }
 
 test_desired_inbound_remarks_use_country_flag() {
-	local desired vision_remark xhttp_remark
+	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark
 	export EMOJI_FLAG="🇩🇪"
 	desired=$(build_desired_state)
 	vision_remark=$(printf '%s' "$desired" | jq -r '.inbounds.vision.remark')
 	xhttp_remark=$(printf '%s' "$desired" | jq -r '.inbounds.xhttp.remark')
+	grpc_remark=$(printf '%s' "$desired" | jq -r '.inbounds.grpc.remark')
+	hysteria2_remark=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.remark')
 	assert_eq "🇩🇪 vless-tcp-reality" "$vision_remark" "vision inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-xhttp" "$xhttp_remark" "xhttp inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 vless-grpc-tls" "$grpc_remark" "gRPC inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 hysteria2" "$hysteria2_remark" "Hysteria2 inbound remark must use the detected country flag"
 	unset EMOJI_FLAG
+}
+
+test_runtime_env_preserves_explicit_optional_inbound_flags() {
+	local tmp old_pwd
+	tmp=$(mktemp -d)
+	old_pwd=$PWD
+	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
+	printf 'ENABLE_VLESS_GRPC=true\nENABLE_HYSTERIA2=false\n' >"$tmp/.env"
+	printf 'ENABLE_VLESS_GRPC="${ENABLE_VLESS_GRPC:-true}"\nENABLE_HYSTERIA2="${ENABLE_HYSTERIA2:-true}"\n' >"$tmp/3x-ui/3x-ui.env"
+	export ENABLE_VLESS_GRPC=false
+	export ENABLE_HYSTERIA2=true
+	cd "$tmp"
+	load_runtime_env "$tmp/runtime"
+	cd "$old_pwd"
+	assert_eq false "$ENABLE_VLESS_GRPC" "explicit gRPC flag must override env files"
+	assert_eq true "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag must override env files"
+	rm -rf "$tmp"
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
 }
 
 test_managed_inbound_remarks_include_legacy_names() {
@@ -138,6 +166,26 @@ test_country_flag_value_from_trace_extracts_loc() {
 	local flag
 	flag=$(country_flag_value trace_loc $'fl=1\nloc=DE\nwarp=off')
 	assert_eq "🇩🇪" "$flag" "Cloudflare trace fallback must convert loc to flag emoji"
+}
+
+test_client_vless_uuid_normalizes_api_variants() {
+	local from_uuid from_auth invalid
+	from_uuid=$(client_vless_uuid '{"uuid":"11111111-2222-3333-4444-555555555555","id":7}')
+	from_auth=$(client_vless_uuid '{"uuid":"","id":7,"auth":"f53822306a5eaed7357e4578f8c53bdd"}')
+	invalid=$(client_vless_uuid '{"id":7,"auth":""}' 2>/dev/null || true)
+	assert_eq "11111111-2222-3333-4444-555555555555" "$from_uuid" "client UUID field must be preferred"
+	assert_eq "f5382230-6a5e-aed7-357e-4578f8c53bdd" "$from_auth" "32-hex auth fallback must normalize to UUID"
+	assert_eq "" "$invalid" "numeric row id must not be treated as VLESS UUID"
+}
+
+test_inbound_vless_client_uuid_recovers_polluted_global_client() {
+	local recovered
+	inbound_by_id_json() {
+		printf '%s' '{"settings":{"clients":[{"email":"autogen","id":"f5382230-6a5e-aed7-357e-4578f8c53bdd","flow":"xtls-rprx-vision"}]}}'
+	}
+	recovered=$(inbound_vless_client_uuid 1 autogen)
+	unset -f inbound_by_id_json
+	assert_eq "f5382230-6a5e-aed7-357e-4578f8c53bdd" "$recovered" "VLESS UUID must recover from inbound settings"
 }
 
 test_resolve_panel_base_prioritizes_configured_web_port() {
@@ -515,6 +563,51 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	assert_eq tls "$force_tls" "XHTTP externalProxy must publish TLS subscription links through Traefik"
 }
 
+test_grpc_stream_uses_tls_backend_settings() {
+	local stream network security service_name alpn cert_file key_file scheme
+	stream=$(build_grpc_stream_json /grpc screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key)
+	network=$(printf '%s' "$stream" | jq -r '.network')
+	security=$(printf '%s' "$stream" | jq -r '.security')
+	service_name=$(printf '%s' "$stream" | jq -r '.grpcSettings.serviceName')
+	alpn=$(printf '%s' "$stream" | jq -r '.tlsSettings.alpn | join(",")')
+	cert_file=$(printf '%s' "$stream" | jq -r '.tlsSettings.certificates[0].certificateFile')
+	key_file=$(printf '%s' "$stream" | jq -r '.tlsSettings.certificates[0].keyFile')
+	scheme=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
+	assert_eq grpc "$network" "gRPC stream must use grpc network"
+	assert_eq tls "$security" "gRPC stream must use TLS backend security"
+	assert_eq grpc "$service_name" "gRPC serviceName must strip the leading slash"
+	assert_eq h2 "$alpn" "gRPC backend TLS ALPN must prefer h2 only"
+	assert_eq /etc/x-ui/xray.crt "$cert_file" "gRPC TLS certificate path mismatch"
+	assert_eq /etc/x-ui/xray.key "$key_file" "gRPC TLS key path mismatch"
+	assert_eq tls "$scheme" "gRPC externalProxy must publish TLS links"
+}
+
+test_hysteria2_stream_and_settings_use_required_auth() {
+	local stream settings components network security alpn masq_type masq_url auth stream_auth email protocol
+	stream=$(build_hysteria2_stream_json screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key transport-auth)
+	settings=$(build_hysteria2_settings_json '' "$(build_desired_state)")
+	components=$(build_inbound_components_json hysteria2 "$(build_desired_state)")
+	network=$(printf '%s' "$stream" | jq -r '.network')
+	security=$(printf '%s' "$stream" | jq -r '.security')
+	alpn=$(printf '%s' "$stream" | jq -r '.tlsSettings.alpn | join(",")')
+	masq_type=$(printf '%s' "$stream" | jq -r '.hysteriaSettings.masquerade.type')
+	masq_url=$(printf '%s' "$stream" | jq -r '.hysteriaSettings.masquerade.url')
+	auth=$(printf '%s' "$settings" | jq -r '.clients[0].auth')
+	stream_auth=$(printf '%s' "$components" | jq -r '.streamSettings.hysteriaSettings.auth')
+	email=$(printf '%s' "$settings" | jq -r '.clients[0].email')
+	protocol=$(printf '%s' "$components" | jq -r '.protocol')
+	assert_eq hysteria "$network" "Hysteria2 stream must use hysteria transport"
+	assert_eq tls "$security" "Hysteria2 stream must use TLS"
+	assert_eq h3 "$alpn" "Hysteria2 TLS ALPN must use h3"
+	assert_eq proxy "$masq_type" "Hysteria2 masquerade must proxy the public site"
+	assert_eq https://screenhub.linkpc.net/ "$masq_url" "Hysteria2 masquerade URL mismatch"
+	[[ -n "$auth" ]] || fail "Hysteria2 client auth must be generated"
+	[[ -n "$stream_auth" ]] || fail "Hysteria2 transport auth must match the managed client auth"
+	assert_eq "$(printf '%s' "$components" | jq -r '.settings.clients[0].auth')" "$stream_auth" "Hysteria2 transport auth must mirror inbound client auth"
+	assert_eq autogen "$email" "Hysteria2 must reuse the shared managed client email"
+	assert_eq hysteria "$protocol" "Hysteria2 inbound must use Xray hysteria protocol with version=2"
+}
+
 test_vision_stream_restores_old_reality_external_proxy() {
 	local stream force_tls short_id_count
 	stream=$(build_vision_stream_json traefik:4443 screenhub.linkpc.net private public '["aa","bb"]' '{}' '' '')
@@ -557,19 +650,83 @@ test_vision_settings_include_telemt_fallback_preserving_clients() {
 }
 
 test_vless_client_api_payloads_match_3x_ui_31_contract() {
-	local client create_payload tg_id inbound_count create_email update_email legacy_settings
-	client=$(vless_client_api_json client-id a@example.test stable-sub xtls-rprx-vision)
+	local client create_payload tg_id inbound_count create_email update_email update_uuid update_auth update_password legacy_settings
+	client=$(vless_client_api_json client-id a@example.test stable-sub xtls-rprx-vision client-password client-auth)
 	create_payload=$(vless_client_create_payload_json '[12,13]' "$client")
 	tg_id=$(printf '%s' "$client" | jq -r '.tgId')
 	update_email=$(printf '%s' "$client" | jq -r '.email')
+	update_uuid=$(printf '%s' "$client" | jq -r '.uuid')
+	update_password=$(printf '%s' "$client" | jq -r '.password')
+	update_auth=$(printf '%s' "$client" | jq -r '.auth')
 	inbound_count=$(printf '%s' "$create_payload" | jq '.inboundIds | length')
 	create_email=$(printf '%s' "$create_payload" | jq -r '.client.email')
 	legacy_settings=$(printf '%s' "$create_payload" | jq -r '.settings // empty')
 	assert_eq 0 "$tg_id" "3x-ui 3.1 client tgId must be numeric"
 	assert_eq a@example.test "$update_email" "3x-ui 3.1 update payload must be the direct client object"
+	assert_eq client-id "$update_uuid" "3x-ui 3.1 VLESS payload must include uuid as well as id"
+	assert_eq client-password "$update_password" "shared client payload must carry password for non-VLESS protocols"
+	assert_eq client-auth "$update_auth" "shared client payload must carry Hysteria auth"
 	assert_eq 2 "$inbound_count" "3x-ui 3.1 create payload must support shared client attachments"
 	assert_eq a@example.test "$create_email" "3x-ui 3.1 create payload must wrap client object"
 	assert_eq "" "$legacy_settings" "3x-ui 3.1 client create payload must not use legacy settings wrapper"
+}
+
+test_shared_client_create_still_syncs_vless_inbounds_without_grpc() {
+	local desired add_payload add_inbounds synced=()
+	export MODE=apply
+	export CLIENT_EMAIL_PREFIX=autogen
+	export CLIENT_SUB_ID=stable-sub
+	# shellcheck disable=SC2034 # record_change mutates this runtime global during the fixture.
+	CHANGE_COUNT=0
+	# shellcheck disable=SC2034 # ensure_shared_client mutates this runtime global during the fixture.
+	RESTART_XRAY_REQUIRED=0
+	desired=$(build_desired_state)
+	clients_json() {
+		printf '[]\n'
+	}
+	xui_add_client() {
+		add_payload=$1
+	}
+	xui_attach_client() {
+		fail "new shared client must not need a separate attach call"
+	}
+	http_success_json() {
+		return 0
+	}
+	repair_shared_client_db() {
+		return 0
+	}
+	ensure_vless_inbound_client() {
+		synced+=("$1:$4:$5")
+	}
+	ensure_shared_client 1 2 "" 4 "$desired"
+	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
+	assert_eq "1,2,4" "$add_inbounds" "shared client create must target Vision, XHTTP and Hysteria2 when gRPC is disabled"
+	assert_eq "1:xtls-rprx-vision:Vision" "${synced[0]}" "Vision inbound client must be explicitly synchronized after shared client create"
+	assert_eq "2::XHTTP" "${synced[1]}" "XHTTP inbound client must be explicitly synchronized after shared client create"
+	assert_eq 2 "${#synced[@]}" "only VLESS inbounds are synchronized inside ensure_shared_client"
+	[[ -n "$ENSURE_SHARED_CLIENT_ID" ]] || fail "shared client id must be available after create"
+	unset -f clients_json xui_add_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client
+	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_vless_inbound_client_sync_writes_uuid() {
+	local inbound desired current_settings desired_settings client_id
+	desired=$(build_desired_state)
+	client_id="f5382230-6a5e-aed7-357e-4578f8c53bdd"
+	inbound='{"settings":"{\"clients\":[{\"email\":\"autogen\",\"flow\":\"xtls-rprx-vision\"}],\"decryption\":\"none\",\"encryption\":\"none\"}"}'
+	current_settings=$(json_field_object "$inbound" settings)
+	desired_settings=$(jq -nc --argjson current "$current_settings" --argjson client "$(vless_client_api_json "$client_id" autogen stable-sub xtls-rprx-vision)" '
+      $current
+      | .decryption = "none"
+      | .encryption = "none"
+      | .clients = (((.clients // []) | map(select(.email != $client.email))) + [$client])
+    ')
+	assert_eq "$client_id" "$(printf '%s' "$desired_settings" | jq -r '.clients[0].id')" "synced VLESS inbound client must include UUID id"
+	assert_eq "$client_id" "$(printf '%s' "$desired_settings" | jq -r '.clients[0].uuid')" "synced VLESS inbound client must include uuid field"
+	assert_eq xtls-rprx-vision "$(printf '%s' "$desired_settings" | jq -r '.clients[0].flow')" "Vision flow must be preserved"
 }
 
 test_tor_balancer_uses_single_proxy_endpoint() {
@@ -722,7 +879,12 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'update_builtin_geofiles_if_enabled' \
 		'ensure_inbound vision "$desired"' \
 		'ensure_inbound xhttp "$desired"' \
-		'ensure_shared_client "$vision_id" "$xhttp_id" "$desired"' \
+		'ensure_inbound grpc "$desired"' \
+		'ensure_inbound hysteria2 "$desired"' \
+		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"' \
+		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
+		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
+		'repair_shared_client_after_inbound_sync "$desired"' \
 		'apply_managed_xray' \
 		'restart_if_needed'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
@@ -730,6 +892,18 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 			fail "after-start pipeline order changed near: $expression"
 		previous=$line
 	done
+}
+
+test_afterstart_entrypoint_initializes_optional_inbound_ids() {
+	local script main_decl
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	main_decl=$(sed -n '/^main()/,/TMP_ROOT=/p' "$script")
+	grep -Fq 'grpc_id=' <<<"$main_decl" ||
+		fail "gRPC inbound id must be initialized for ENABLE_VLESS_GRPC=false"
+	grep -Fq 'hysteria2_id=' <<<"$main_decl" ||
+		fail "Hysteria2 inbound id must be initialized for ENABLE_HYSTERIA2=false"
+	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
+		fail "gRPC must default to disabled in the runtime entrypoint"
 }
 
 test_afterstart_check_mode_bootstraps_without_apply() {
@@ -795,11 +969,14 @@ test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
 test_remove_managed_xray_artifacts_only_removes_our_tags
 test_desired_clients_are_deterministic
+test_runtime_env_preserves_explicit_optional_inbound_flags
 test_desired_inbound_remarks_use_country_flag
 test_managed_inbound_remarks_include_legacy_names
 test_country_flag_sources_include_iso_code_fallbacks
 test_country_code_to_flag_converts_iso_alpha2
 test_country_flag_value_from_trace_extracts_loc
+test_client_vless_uuid_normalizes_api_variants
+test_inbound_vless_client_uuid_recovers_polluted_global_client
 test_resolve_panel_base_prioritizes_configured_web_port
 test_resolve_panel_base_tries_new_password_when_username_is_unchanged
 test_normalize_base_path_accepts_empty_input
@@ -816,10 +993,14 @@ test_panel_keys_restore_old_cert_fields
 test_warp_domains_restore_old_ru_rules
 test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt
+test_grpc_stream_uses_tls_backend_settings
+test_hysteria2_stream_and_settings_use_required_auth
 test_vision_stream_restores_old_reality_external_proxy
 test_vision_stream_is_clean_self_steal
 test_vision_settings_include_telemt_fallback_preserving_clients
 test_vless_client_api_payloads_match_3x_ui_31_contract
+test_shared_client_create_still_syncs_vless_inbounds_without_grpc
+test_vless_inbound_client_sync_writes_uuid
 test_tor_balancer_uses_single_proxy_endpoint
 test_warp_balancer_uses_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp
@@ -831,6 +1012,7 @@ test_warp_proxy_probe_requires_confirmed_warp_route
 test_tor_proxy_probe_requires_confirmed_tor_route
 test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
+test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart

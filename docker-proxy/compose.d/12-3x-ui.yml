@@ -54,6 +54,8 @@ services:
         condition: service_healthy
       tor-proxy:
         condition: service_healthy
+      traefik-acme-exporter:
+        condition: service_healthy
     tty: true
     security_opt:
       - no-new-privileges=true
@@ -70,6 +72,7 @@ services:
       - ../3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
       - ../3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
       - ../3x-ui/configs/config.json:/app/bin/config.json:rw
+      - ../traefik/pem:/etc/traefik/pem:ro
       - ../_logs/xray/access.log:/app/access.log
       - ../_logs/xray/error.log:/app/error.log
       - ../_logs:/var/log:rw
@@ -78,6 +81,7 @@ services:
       - ../3x-ui/3x-ui.env
     ports:
       - "443:${PORT_LOCAL_VISION:-443}/tcp"
+      - "443:${PORT_LOCAL_HYSTERIA:-443}/udp"
     environment:
       # - XUI_LOG_LEVEL=debug
       - XUI_LOG_FOLDER=/var/log/3x-ui
@@ -113,6 +117,11 @@ services:
 
       # XHTTP
       - traefik.http.services.xhttp3xui-svc.loadbalancer.server.port=${PORT_LOCAL_XHTTP}
+
+      # VLESS gRPC TLS backend
+      - traefik.http.services.grpc3xui-svc.loadbalancer.server.port=${PORT_LOCAL_GRPC}
+      - traefik.http.services.grpc3xui-svc.loadbalancer.server.scheme=https
+      - traefik.http.services.grpc3xui-svc.loadbalancer.serverstransport=grpc3xui-transport@file
 
       # ---------- Middleware ----------
       # Сжатие
@@ -183,3 +192,11 @@ services:
       - traefik.http.routers.xhttp3xui.service=xhttp3xui-svc
       - traefik.http.routers.xhttp3xui.priority=9999
       - traefik.http.routers.xhttp3xui.observability.accessLogs=false
+
+      # VLESS gRPC backend uses TLS inside Xray; Traefik re-opens TLS upstream.
+      - traefik.http.routers.grpc3xui.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_GRPC}`)
+      - traefik.http.routers.grpc3xui.entrypoints=websecure
+      - traefik.http.routers.grpc3xui.tls.certresolver=le
+      - traefik.http.routers.grpc3xui.service=grpc3xui-svc
+      - traefik.http.routers.grpc3xui.priority=9999
+      - traefik.http.routers.grpc3xui.observability.accessLogs=false
