@@ -77,8 +77,6 @@ json_remove_managed_subject_selectors() {
         if type == "object" and (.subjectSelector? | type == "array") then
           .subjectSelector = ([.subjectSelector[] | . as $selector | select(
             (($managed | index($selector)) == null)
-            and (($selector | startswith("warp")) | not)
-            and (($selector | startswith("tor")) | not)
             and ($selector != "usque")
           )])
         else
@@ -246,10 +244,8 @@ json_remove_managed_xray_artifacts() {
 	local current=$1
 	current=$(json_remove_managed_subject_selectors "$current")
 	jq -c '
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | ((($tag | startswith("warp-")) | not) and $tag != "tor-proxy")))) |
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") != "warp" and (.tag // "") != "usque"))) |
+      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | (["tor-proxy","torproxy","warp","usque","warp-retired"] | index($tag)) == null))) |
       .xraySetting.routing = (.xraySetting.routing // {}) |
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") != "torproxy"))) |
       .xraySetting.routing.rules = ((.xraySetting.routing.rules // []) | map(select((.outboundTag // "") != "tor-proxy" and (.balancerTag // "") != "tor-balancer" and (.balancerTag // "") != "warp-balancer"))) |
       .xraySetting.routing.balancers = ((.xraySetting.routing.balancers // []) | map(select((.tag // "") != "tor-balancer" and (.tag // "") != "warp-balancer")))
     ' <<<"$current"
