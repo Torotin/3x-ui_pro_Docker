@@ -145,6 +145,7 @@ ensure_env_defaults() {
 	: "${CROWDSEC_API_KEY_CADDY:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_TRAEFIK:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_FIREWALL:=$(generate_random_string 32 48)}"
+	: "${ENABLE_TELEMT:=true}"
 	: "${TELEMT_API_AUTH_HEADER:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_JWT_SECRET:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_PASSWORD_HASH:=}"
@@ -207,6 +208,21 @@ ensure_env_defaults() {
 	: "${XRAY_TLS_CERT_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}"
 	: "${XRAY_TLS_KEY_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	: "${HYSTERIA2_MASQ_URL:=https://${WEBDOMAIN}/}"
+	if install_telemt_enabled; then
+		: "${VISION_FALLBACK_HOST:=telemt}"
+		: "${VISION_FALLBACK_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
+		: "${VISION_FALLBACK_XVER:=1}"
+		: "${REALITY_TARGET_HOST:=telemt}"
+		: "${REALITY_TARGET_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
+		: "${REALITY_TARGET_XVER:=1}"
+	else
+		: "${VISION_FALLBACK_HOST:=traefik}"
+		: "${VISION_FALLBACK_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
+		: "${VISION_FALLBACK_XVER:=1}"
+		: "${REALITY_TARGET_HOST:=traefik}"
+		: "${REALITY_TARGET_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
+		: "${REALITY_TARGET_XVER:=1}"
+	fi
 	export WEBDOMAIN PUBLIC_IPV4 PUBLIC_IPV6 USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
 	export URI_TRAEFIK_DASHBOARD URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
@@ -216,7 +232,7 @@ ensure_env_defaults() {
 	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_CROWDSEC_API
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	export TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export ENABLE_TELEMT TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
 	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
 	export TELEMT_ME_KEEPALIVE_ENABLED TELEMT_ME_KEEPALIVE_INTERVAL_SECS TELEMT_ME_KEEPALIVE_JITTER_SECS
 	export TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC TELEMT_ME_RECONNECT_BACKOFF_BASE_MS TELEMT_ME_RECONNECT_BACKOFF_CAP_MS TELEMT_ME_RECONNECT_FAST_RETRY_COUNT
@@ -230,6 +246,7 @@ ensure_env_defaults() {
 	export TELEMT_MASK_SHAPE_BUCKET_FLOOR_BYTES TELEMT_MASK_SHAPE_BUCKET_CAP_BYTES TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR TELEMT_MASK_RELAY_MAX_BYTES
 	export TELEMT_MASK_RELAY_TIMEOUT_MS TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS
 	export ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
+	export VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
 }
 
 generate_htpasswd_if_needed() {
@@ -294,6 +311,7 @@ generate_adguard_hash_from_htpasswd() {
 }
 
 generate_telemt_panel_hash_if_needed() {
+	install_telemt_enabled || return 0
 	[[ -n "${USER_WEB:-}" ]] || return 0
 	[[ -z "${TELEMT_PANEL_PASSWORD_HASH:-}" ]] || return 0
 	[[ -n "${PASS_WEB:-}" ]] || die "PASS_WEB is required to generate TELEMT_PANEL_PASSWORD_HASH"
@@ -323,6 +341,7 @@ escape_env_double_quoted_value() {
 
 render_telemt_configs() {
 	local templates telemt_config telemt_panel_config
+	install_telemt_enabled || return 0
 	templates=$(template_dir)
 	telemt_config="$INSTALL_ROOT/telemt/config/config.toml"
 	telemt_panel_config="$INSTALL_ROOT/telemt-panel/config/config.toml"
@@ -361,5 +380,8 @@ install_env_command() {
 	render_env_template "$templates/docker.env.template" "$compose_env"
 	render_telemt_configs
 	run_cmd env.render printf 'rendered env files\n'
-	printf 'rendered:\n- %s\n- %s\n- %s\n- %s\n' "$install_env" "$compose_env" "$INSTALL_ROOT/telemt/config/config.toml" "$INSTALL_ROOT/telemt-panel/config/config.toml"
+	printf 'rendered:\n- %s\n- %s\n' "$install_env" "$compose_env"
+	if install_telemt_enabled; then
+		printf -- '- %s\n- %s\n' "$INSTALL_ROOT/telemt/config/config.toml" "$INSTALL_ROOT/telemt-panel/config/config.toml"
+	fi
 }

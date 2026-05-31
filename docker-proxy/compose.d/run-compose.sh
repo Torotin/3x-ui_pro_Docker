@@ -101,10 +101,63 @@ setup_runtime_paths() {
 }
 
 collect_compose_files() {
-	mapfile -d '' -t COMPOSE_FILES < <(
+	local file
+	COMPOSE_FILES=()
+	while IFS= read -r -d '' file; do
+		if [[ "$(basename "$file")" =~ ^15-telemt[.]ya?ml$ ]] && ! telemt_compose_enabled; then
+			continue
+		fi
+		COMPOSE_FILES+=("$file")
+	done < <(
 		find "$ACTIVE_COMPOSE_DIR" -maxdepth 1 -type f \( -name "*.yml" -o -name "*.yaml" \) -print0 |
 			LC_ALL=C sort -z
 	)
+}
+
+env_file_value() {
+	local key=$1 file=${ENV_FILE:-}
+	[[ -f "$file" ]] || return 1
+	awk -F= -v k="$key" '
+		$1 == k {
+			value = substr($0, length(k) + 2)
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+			if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) {
+				value = substr(value, 2, length(value) - 2)
+			}
+			print value
+			found = 1
+		}
+		END { exit found ? 0 : 1 }
+	' "$file"
+}
+
+compose_env_value() {
+	local key=$1 value
+	if [[ -n "${!key+x}" ]]; then
+		printf '%s\n' "${!key}"
+		return 0
+	fi
+	if value=$(env_file_value "$key"); then
+		printf '%s\n' "$value"
+		return 0
+	fi
+	return 1
+}
+
+compose_bool_is_false() {
+	local value=${1:-}
+	value=${value,,}
+	case "$value" in
+	0 | false | no | off | disabled) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+telemt_compose_enabled() {
+	local value
+	value=$(compose_env_value ENABLE_TELEMT || true)
+	[[ -n "$value" ]] || value=true
+	! compose_bool_is_false "$value"
 }
 
 pick_compose_command() {
