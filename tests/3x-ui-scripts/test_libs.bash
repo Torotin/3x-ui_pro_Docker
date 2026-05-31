@@ -68,13 +68,17 @@ test_dns_replace_preserves_unknown_fields() {
 }
 
 test_remove_managed_xray_artifacts_only_removes_our_tags() {
-	local input cleaned managed_count direct_count
-	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"}]}}}'
+	local input cleaned managed_count direct_count custom_count custom_subjects
+	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"},{"tag":"warp-custom"},{"tag":"tor-custom"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"},{"balancerTag":"custom-balancer"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"},{"tag":"warp-custom-balancer"},{"tag":"tor-custom-balancer"}]},"burstObservatory":{"subjectSelector":["warp-custom","tor-custom","custom-out","usque"]}}}'
 	cleaned=$(json_remove_managed_xray_artifacts "$input")
 	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-retired" or $t == "tor-proxy" or $t == "warp-balancer")] | length')
 	direct_count=$(printf '%s' "$cleaned" | jq '[.xraySetting.outbounds[]? | select(.tag=="direct")] | length')
+	custom_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-custom" or $t == "tor-custom" or $t == "custom-balancer" or $t == "custom" or $t == "warp-custom-balancer" or $t == "tor-custom-balancer")] | length')
+	custom_subjects=$(printf '%s' "$cleaned" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
 	assert_eq 0 "$managed_count" "managed artifacts were not removed"
 	assert_eq 1 "$direct_count" "unmanaged outbound was removed"
+	assert_eq 6 "$custom_count" "unmanaged routing artifacts must be preserved"
+	assert_eq "custom-out,tor-custom,warp-custom" "$custom_subjects" "unmanaged observatory subjects must be preserved"
 }
 
 test_desired_clients_are_deterministic() {
@@ -786,6 +790,19 @@ test_managed_burst_observatory_preserves_custom_subjects() {
 	assert_eq null "$custom_observatory" "unexpected observatory object was created"
 }
 
+test_managed_xray_preserves_unmanaged_balancers_and_rules() {
+	local base dns updated custom_balancers custom_rules custom_outbounds
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"custom-proxy","protocol":"socks","settings":{"servers":[{"address":"custom","port":1080}]}}],"routing":{"rules":[{"type":"field","balancerTag":"custom-balancer","domain":["domain:example.com"]},{"type":"field","outboundTag":"custom-proxy","domain":["domain:direct.example"]}],"balancers":[{"tag":"custom-balancer","selector":["custom-proxy"],"strategy":{"type":"random"}}]},"burstObservatory":{"subjectSelector":["custom-proxy"],"pingConfig":{"destination":"https://old.example/204"}}}}'
+	dns='[]'
+	updated=$(json_apply_managed_xray_state "$(json_remove_managed_xray_artifacts "$base")" "$dns" true true false '[{"tag":"usque","host":"usque","port":1080}]' "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]')
+	custom_balancers=$(printf '%s' "$updated" | jq '[.xraySetting.routing.balancers[] | select(.tag=="custom-balancer")] | length')
+	custom_rules=$(printf '%s' "$updated" | jq '[.xraySetting.routing.rules[] | select((.balancerTag // "")=="custom-balancer" or (.outboundTag // "")=="custom-proxy")] | length')
+	custom_outbounds=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[] | select(.tag=="custom-proxy")] | length')
+	assert_eq 1 "$custom_balancers" "custom balancer must survive managed Xray update"
+	assert_eq 2 "$custom_rules" "custom routing rules must survive managed Xray update"
+	assert_eq 1 "$custom_outbounds" "custom outbound must survive managed Xray update"
+}
+
 test_unhealthy_external_proxies_create_no_managed_xray_artifacts() {
 	local base updated managed_outbounds managed_balancers managed_rules subjects
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"blocked","protocol":"blackhole","settings":{}}],"routing":{"rules":[],"balancers":[]},"burstObservatory":null}}'
@@ -1005,6 +1022,7 @@ test_tor_balancer_uses_single_proxy_endpoint
 test_warp_balancer_uses_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp
 test_managed_burst_observatory_preserves_custom_subjects
+test_managed_xray_preserves_unmanaged_balancers_and_rules
 test_unhealthy_external_proxies_create_no_managed_xray_artifacts
 test_only_healthy_external_proxies_enter_xray_state
 test_runtime_does_not_probe_legacy_torproxy_endpoint
