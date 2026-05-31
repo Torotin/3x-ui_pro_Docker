@@ -38,6 +38,8 @@ make_fixture() {
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
+	unset ENABLE_TELEMT VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER
+	unset REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -76,6 +78,7 @@ test_doctor_verbose_keeps_detailed_success_output() {
 
 test_doctor_inventory_uses_bundled_telemt_panel_healthcheck() {
 	assert_contains 'containers+=(telemt)' "$ROOT_DIR/script/modules/00_common.sh" "doctor must check the bundled Telemt container"
+	assert_contains 'install_telemt_enabled' "$ROOT_DIR/script/modules/00_common.sh" "doctor must gate Telemt checks on ENABLE_TELEMT"
 	assert_not_contains 'containers+=(telemt telemt-panel)' "$ROOT_DIR/script/modules/00_common.sh" "doctor must not expect a retired standalone panel container"
 }
 
@@ -129,6 +132,7 @@ USER_SSH="state-user"
 CROWDSEC_API_KEY_FIREWALL=state-firewall-key
 TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin
 DOCKER_SOCKET_GID=12345
+ENABLE_TELEMT=false
 ENV
 	run_installer run env
 	assert_contains "WEBDOMAIN=state.example.test" "$INSTALL_STATE_DIR/install.env" "env must preserve existing domain when no override is provided"
@@ -138,6 +142,8 @@ ENV
 	assert_contains "TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin" "$INSTALL_ROOT/compose.d/.env" "compose env must receive an explicit telemt-stack image"
 	assert_contains "DOCKER_SOCKET_GID=12345" "$INSTALL_STATE_DIR/install.env" "env must preserve an explicit Docker socket group id"
 	assert_contains "DOCKER_SOCKET_GID=12345" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Docker socket group id"
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "env must preserve the Telemt enable switch"
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Telemt enable switch"
 }
 
 test_state_loader_preserves_literal_dollars() {
@@ -226,6 +232,19 @@ ENV
 	assert_contains 'stun_servers = ["stun1.l.google.com:19302", "stun2.l.google.com:19302"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render STUN servers as TOML array"
 	assert_contains 'http_ip_detect_urls = ["https://api.ipify.org", "https://ifconfig.me/ip"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render HTTP IP detect URLs as TOML array"
 	assert_not_contains "http_ip_detect_urls = '[" "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must not render HTTP IP detect URLs as TOML string"
+}
+
+test_env_can_disable_telemt_rendering() {
+	make_fixture
+	export ENABLE_TELEMT=false
+	run_installer run env
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "install env must persist disabled Telemt state"
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "compose env must persist disabled Telemt state"
+	assert_contains "VISION_FALLBACK_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "disabled Telemt must make Xray fallback target Traefik"
+	assert_contains "REALITY_TARGET_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "disabled Telemt must make REALITY target Traefik"
+	[[ ! -e "$INSTALL_ROOT/telemt/config/config.toml" ]] || fail "disabled Telemt must not render Telemt config"
+	[[ ! -e "$INSTALL_ROOT/telemt-panel/config/config.toml" ]] || fail "disabled Telemt must not render Telemt panel config"
+	assert_not_contains "$INSTALL_ROOT/telemt/config/config.toml" "$tmpdir/stdout" "disabled Telemt must not report Telemt config path"
 }
 
 test_env_regenerates_stale_htpasswd_when_password_changes() {
@@ -859,6 +878,7 @@ test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels
 test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state
+test_env_can_disable_telemt_rendering
 test_env_regenerates_stale_htpasswd_when_password_changes
 test_env_regenerates_existing_hash_when_verify_is_unsupported
 test_adguard_update_pass_uses_precomputed_hash

@@ -108,6 +108,19 @@ has_flag() {
 	return 1
 }
 
+install_bool_is_false() {
+	local value=${1:-}
+	value=${value,,}
+	case "$value" in
+	0 | false | no | off | disabled) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+install_telemt_enabled() {
+	! install_bool_is_false "${ENABLE_TELEMT:-true}"
+}
+
 require_opt_in() {
 	local flag=$1
 	shift || true
@@ -407,7 +420,7 @@ install_doctor_check_containers() {
 	if [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
 		containers+=(lampac)
 	fi
-	if [[ -f "$INSTALL_ROOT/compose.d/15-telemt.yml" || -f "$INSTALL_ROOT/compose.d/15-telemt.yaml" ]]; then
+	if install_telemt_enabled && [[ -f "$INSTALL_ROOT/compose.d/15-telemt.yml" || -f "$INSTALL_ROOT/compose.d/15-telemt.yaml" ]]; then
 		containers+=(telemt)
 	fi
 	for name in "${containers[@]}"; do
