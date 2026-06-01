@@ -114,7 +114,8 @@ install_ssh_backup_config() {
 }
 
 install_ssh_restore_backup() {
-	local backup=$1 target=$2 unit=$3 socket_unit="${unit}.socket"
+	local backup=$1 target=$2 unit=$3
+	local socket_unit="${unit}.socket"
 
 	[[ -n "$backup" && -f "$backup" ]] || return 0
 
@@ -145,6 +146,11 @@ install_ssh_apply_service() {
 	else
 		run_cmd ssh.daemon.reload systemctl daemon-reload || true
 
+		if run_cmd ssh.reload systemctl reload "$unit" && install_ssh_service_ready "$unit"; then
+			printf 'SSH service reloaded and ready on port: %s\n' "$PORT_REMOTE_SSH"
+			return 0
+		fi
+
 		if run_cmd ssh.restart systemctl restart "$unit" && install_ssh_service_ready "$unit"; then
 			printf 'SSH service restarted and ready on port: %s\n' "$PORT_REMOTE_SSH"
 			return 0
@@ -161,9 +167,17 @@ install_ssh_apply_service() {
 }
 
 install_ssh_service_ready() {
-	local unit=$1 socket_unit="${unit}.socket"
+	local unit=$1
+	local socket_unit="${unit}.socket"
 	local timeout="${INSTALL_SSH_READY_TIMEOUT:-20}"
 	local i
+
+	if [[ "$INSTALL_MOCK" == "1" && "${INSTALL_MOCK_SSH_LISTENER_READY:-1}" == "0" ]]; then
+		install_ssh_port_listening "$PORT_REMOTE_SSH" || true
+		INSTALL_MOCK_SSH_LISTENER_READY=1
+		export INSTALL_MOCK_SSH_LISTENER_READY
+		return 1
+	fi
 
 	for ((i = 0; i < timeout; i++)); do
 		if install_ssh_port_listening "$PORT_REMOTE_SSH"; then
@@ -199,7 +213,8 @@ install_ssh_port_listening() {
 }
 
 install_ssh_configure_socket_activation() {
-	local unit=$1 socket_unit="${unit}.socket"
+	local unit=$1
+	local socket_unit="${unit}.socket"
 	local override_dir="/etc/systemd/system/${socket_unit}.d"
 	local override_file="${override_dir}/override.conf"
 

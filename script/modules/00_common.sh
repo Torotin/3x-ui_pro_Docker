@@ -117,8 +117,58 @@ install_bool_is_false() {
 	esac
 }
 
+install_normalize_bool_value() {
+	local name=$1 value=${2:-}
+	value=${value,,}
+	case "$value" in
+	1 | true | yes | y | on | enabled)
+		printf 'true\n'
+		;;
+	0 | false | no | n | off | disabled)
+		printf 'false\n'
+		;;
+	*)
+		die "$name must be boolean: true/false, yes/no, on/off, enabled/disabled, or 1/0"
+		;;
+	esac
+}
+
+install_normalize_bool_var() {
+	local name=$1 value
+	value=$(install_normalize_bool_value "$name" "${!name-}")
+	printf -v "$name" '%s' "$value"
+	export "${name?}"
+}
+
+install_normalize_global_bool_env() {
+	local name
+	for name in \
+		STRICT_DNS_CHECK \
+		STRICT_ACME_CHECK \
+		ENABLE_LAMPAC \
+		ENABLE_TELEMT \
+		ENABLE_VLESS_GRPC \
+		ENABLE_HYSTERIA2 \
+		TELEMT_MIDDLE_PROXY_NAT_PROBE \
+		TELEMT_ME_KEEPALIVE_ENABLED \
+		TELEMT_HARDSWAP \
+		TELEMT_PROXY_SECRET_ROTATE_RUNTIME \
+		TELEMT_STUN_USE \
+		TELEMT_STUN_TCP_FALLBACK \
+		TELEMT_MASK_SHAPE_HARDENING \
+		TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE \
+		TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR
+	do
+		install_normalize_bool_var "$name"
+	done
+}
+
 install_telemt_enabled() {
 	! install_bool_is_false "${ENABLE_TELEMT:-true}"
+}
+
+install_lampac_enabled() {
+	! install_bool_is_false "${ENABLE_LAMPAC:-true}"
 }
 
 require_opt_in() {
@@ -417,7 +467,7 @@ install_doctor_check_containers() {
 		usque
 		3x-ui
 	)
-	if [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
+	if install_lampac_enabled && [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
 		containers+=(lampac)
 	fi
 	if install_telemt_enabled && [[ -f "$INSTALL_ROOT/compose.d/15-telemt.yml" || -f "$INSTALL_ROOT/compose.d/15-telemt.yaml" ]]; then

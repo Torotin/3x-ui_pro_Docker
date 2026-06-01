@@ -133,6 +133,24 @@ test_runtime_env_preserves_explicit_optional_inbound_flags() {
 	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
 }
 
+test_runtime_env_normalizes_explicit_optional_inbound_flags() {
+	local tmp old_pwd
+	tmp=$(mktemp -d)
+	old_pwd=$PWD
+	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
+	printf 'ENABLE_VLESS_GRPC=false\nENABLE_HYSTERIA2=true\n' >"$tmp/.env"
+	printf 'ENABLE_VLESS_GRPC="${ENABLE_VLESS_GRPC:-false}"\nENABLE_HYSTERIA2="${ENABLE_HYSTERIA2:-true}"\n' >"$tmp/3x-ui/3x-ui.env"
+	export ENABLE_VLESS_GRPC=YES
+	export ENABLE_HYSTERIA2=0
+	cd "$tmp"
+	load_runtime_env "$tmp/runtime"
+	cd "$old_pwd"
+	assert_eq true "$ENABLE_VLESS_GRPC" "explicit gRPC flag aliases must normalize to true"
+	assert_eq false "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag aliases must normalize to false"
+	rm -rf "$tmp"
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+}
+
 test_managed_inbound_remarks_include_legacy_names() {
 	local desired remarks has_new has_legacy
 	export EMOJI_FLAG="🇩🇪"
@@ -987,6 +1005,7 @@ test_dns_replace_preserves_unknown_fields
 test_remove_managed_xray_artifacts_only_removes_our_tags
 test_desired_clients_are_deterministic
 test_runtime_env_preserves_explicit_optional_inbound_flags
+test_runtime_env_normalizes_explicit_optional_inbound_flags
 test_desired_inbound_remarks_use_country_flag
 test_managed_inbound_remarks_include_legacy_names
 test_country_flag_sources_include_iso_code_fallbacks

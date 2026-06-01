@@ -18,6 +18,36 @@ load_env_file() {
 	((nounset_was_on == 1)) && set -u
 }
 
+normalize_bool_value() {
+	local name=$1 value=${2:-}
+	value=${value,,}
+	case "$value" in
+	1 | true | yes | y | on | enabled)
+		printf 'true\n'
+		;;
+	0 | false | no | n | off | disabled)
+		printf 'false\n'
+		;;
+	*)
+		die "$name must be boolean: true/false, yes/no, on/off, enabled/disabled, or 1/0"
+		;;
+	esac
+}
+
+normalize_bool_var() {
+	local name=$1 value
+	value=$(normalize_bool_value "$name" "${!name-}")
+	printf -v "$name" '%s' "$value"
+	export "${name?}"
+}
+
+normalize_runtime_bool_env() {
+	local name
+	for name in ENABLE_VLESS_GRPC ENABLE_HYSTERIA2; do
+		normalize_bool_var "$name"
+	done
+}
+
 # Задает значения runtime-параметров, если они не были переданы окружением.
 init_defaults() {
 	: "${MODE:=apply}"
@@ -98,6 +128,7 @@ load_runtime_env() {
 		export "${name?}"
 	done
 	init_defaults
+	normalize_runtime_bool_env
 }
 
 # Проверяет наличие утилит, требуемых сценарию после запуска контейнера.

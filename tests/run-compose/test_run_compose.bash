@@ -43,6 +43,12 @@ services:
     image: amir20/dozzle:latest
     container_name: dozzle
 YAML
+	cat >"$tmpdir/compose.d/14-lampac.yml" <<'YAML'
+services:
+  lampac:
+    image: lampac:test
+    container_name: lampac
+YAML
 	cat >"$tmpdir/compose.d/15-telemt.yml" <<'YAML'
 services:
   telemt:
@@ -119,8 +125,8 @@ run_runner_default_env() {
 test_restart_uses_no_deps_by_default() {
 	make_fixture
 	run_runner restart traefik
-	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/15-telemt.yml rm --stop --force traefik" "$tmpdir/docker.log" "restart must remove target service"
-	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/15-telemt.yml up -d --no-deps --force-recreate traefik" "$tmpdir/docker.log" "restart must recreate target without dependencies"
+	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml rm --stop --force traefik" "$tmpdir/docker.log" "restart must remove target service"
+	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml up -d --no-deps --force-recreate traefik" "$tmpdir/docker.log" "restart must recreate target without dependencies"
 	assert_not_contains "logs -f traefik" "$tmpdir/docker.log" "restart must not follow logs by default"
 }
 
@@ -247,6 +253,23 @@ test_telemt_compose_file_follows_enable_switch() {
 	fi
 }
 
+test_lampac_compose_file_follows_enable_switch() {
+	make_fixture
+	output=$(run_runner list-files)
+	if ! grep -Fq "14-lampac.yml" <<<"$output"; then
+		fail "Lampac compose file must be active by default"
+	fi
+	printf 'ENABLE_LAMPAC=false\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
+	if grep -Fq "14-lampac.yml" <<<"$output"; then
+		fail "Lampac compose file must be excluded when ENABLE_LAMPAC=false"
+	fi
+	output=$(ENABLE_LAMPAC=true run_runner list-files)
+	if ! grep -Fq "14-lampac.yml" <<<"$output"; then
+		fail "environment ENABLE_LAMPAC=true must override disabled env file"
+	fi
+}
+
 test_list_files_does_not_require_env_file() {
 	make_fixture
 	rm -f "$tmpdir/compose.d/.env"
@@ -331,6 +354,7 @@ test_rebuild_is_destructive_explicitly
 test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files
 test_telemt_compose_file_follows_enable_switch
+test_lampac_compose_file_follows_enable_switch
 test_list_files_does_not_require_env_file
 test_maintenance_prune_keeps_networks_and_volumes
 test_up_reports_foreign_container_name_conflict

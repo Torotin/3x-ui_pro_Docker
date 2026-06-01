@@ -16,6 +16,7 @@ Available steps:
   7. network   Apply sysctl/network tuning
   8. compose   Validate/start compose stack
   9. final     Render final summary
+  t. toggles   Enable/disable optional stack features
   x. Exit
 MENU
 }
@@ -36,6 +37,7 @@ wizard_normalize_step() {
 	7) printf 'network\n' ;;
 	8) printf 'compose\n' ;;
 	9) printf 'final\n' ;;
+	t) printf 'toggles\n' ;;
 	*) printf '%s\n' "$1" ;;
 	esac
 }
@@ -71,6 +73,90 @@ wizard_wait_continue() {
 	local _
 	printf '\nPress Enter to continue...'
 	read -r _ || true
+}
+
+wizard_load_feature_toggles() {
+	install_load_state_env
+	: "${ENABLE_LAMPAC:=true}"
+	: "${ENABLE_TELEMT:=true}"
+	: "${ENABLE_HYSTERIA2:=true}"
+	: "${ENABLE_VLESS_GRPC:=false}"
+	install_normalize_bool_var ENABLE_LAMPAC
+	install_normalize_bool_var ENABLE_TELEMT
+	install_normalize_bool_var ENABLE_HYSTERIA2
+	install_normalize_bool_var ENABLE_VLESS_GRPC
+}
+
+wizard_toggle_bool_var() {
+	local name=$1
+	case "${!name}" in
+	true) printf -v "$name" '%s' false ;;
+	false) printf -v "$name" '%s' true ;;
+	*) install_normalize_bool_var "$name" ;;
+	esac
+	export "${name?}"
+}
+
+wizard_save_feature_toggles() {
+	install_state_set_env ENABLE_LAMPAC "$ENABLE_LAMPAC"
+	install_state_set_env ENABLE_TELEMT "$ENABLE_TELEMT"
+	install_state_set_env ENABLE_HYSTERIA2 "$ENABLE_HYSTERIA2"
+	install_state_set_env ENABLE_VLESS_GRPC "$ENABLE_VLESS_GRPC"
+}
+
+wizard_print_feature_toggles() {
+	if [[ -t 1 ]]; then
+		printf '\033[H\033[2J'
+	fi
+	cat <<MENU
+Feature toggles:
+  1. ENABLE_LAMPAC      $ENABLE_LAMPAC   Lampac compose service
+  2. ENABLE_TELEMT      $ENABLE_TELEMT   Telemt fallback/proxy stack
+  3. ENABLE_HYSTERIA2   $ENABLE_HYSTERIA2   Hysteria2 inbound in 3x-ui/Xray
+  4. ENABLE_VLESS_GRPC  $ENABLE_VLESS_GRPC   VLESS gRPC inbound in 3x-ui/Xray
+
+Choose 1-4 to toggle, a to apply/render env, x to return:
+MENU
+}
+
+wizard_feature_toggles() {
+	local input
+	wizard_load_feature_toggles
+	while true; do
+		wizard_print_feature_toggles
+		printf '> '
+		read -r input || return 0
+		case "$input" in
+		1)
+			wizard_toggle_bool_var ENABLE_LAMPAC
+			;;
+		2)
+			wizard_toggle_bool_var ENABLE_TELEMT
+			;;
+		3)
+			wizard_toggle_bool_var ENABLE_HYSTERIA2
+			;;
+		4)
+			wizard_toggle_bool_var ENABLE_VLESS_GRPC
+			;;
+		a | apply)
+			wizard_save_feature_toggles
+			wizard_execute_step env dispatch_step env
+			return 0
+			;;
+		x | q | quit)
+			WIZARD_LAST_STATUS="SKIPPED toggles"
+			return 0
+			;;
+		'')
+			;;
+		*)
+			WIZARD_LAST_STATUS="INVALID toggles $input"
+			printf '\nUnknown toggle item: %s\n' "$input"
+			wizard_wait_continue
+			;;
+		esac
+	done
 }
 
 wizard_filter_compose_output() {
@@ -196,6 +282,9 @@ wizard_dispatch_step() {
 	env | compose | final)
 		wizard_execute_step "$input" dispatch_step "$input"
 		;;
+	toggles)
+		wizard_feature_toggles
+		;;
 	*)
 		WIZARD_LAST_STATUS="INVALID $input"
 		printf '\nUnknown menu item: %s\n' "$input"
@@ -217,6 +306,7 @@ install_wizard() {
 		read -r input || break
 		[[ -z "$input" ]] && continue
 		[[ "$input" == "x" ]] && break
+		[[ "$input" == "q" || "$input" == "quit" ]] && break
 		input=$(wizard_normalize_step "$input")
 		if ! wizard_dispatch_step "$input"; then
 			log WARN "wizard step failed: $input"

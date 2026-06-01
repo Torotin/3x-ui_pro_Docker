@@ -104,6 +104,9 @@ collect_compose_files() {
 	local file
 	COMPOSE_FILES=()
 	while IFS= read -r -d '' file; do
+		if [[ "$(basename "$file")" =~ ^14-lampac[.]ya?ml$ ]] && ! lampac_compose_enabled; then
+			continue
+		fi
 		if [[ "$(basename "$file")" =~ ^15-telemt[.]ya?ml$ ]] && ! telemt_compose_enabled; then
 			continue
 		fi
@@ -156,6 +159,13 @@ compose_bool_is_false() {
 telemt_compose_enabled() {
 	local value
 	value=$(compose_env_value ENABLE_TELEMT || true)
+	[[ -n "$value" ]] || value=true
+	! compose_bool_is_false "$value"
+}
+
+lampac_compose_enabled() {
+	local value
+	value=$(compose_env_value ENABLE_LAMPAC || true)
 	[[ -n "$value" ]] || value=true
 	! compose_bool_is_false "$value"
 }

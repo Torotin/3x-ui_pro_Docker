@@ -38,7 +38,11 @@ make_fixture() {
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	unset ENABLE_TELEMT VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER
+	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 STRICT_DNS_CHECK STRICT_ACME_CHECK
+	unset TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_ME_KEEPALIVE_ENABLED TELEMT_HARDSWAP
+	unset TELEMT_PROXY_SECRET_ROTATE_RUNTIME TELEMT_STUN_USE TELEMT_STUN_TCP_FALLBACK
+	unset TELEMT_MASK_SHAPE_HARDENING TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR
+	unset VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER
 	unset REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
@@ -132,6 +136,7 @@ USER_SSH="state-user"
 CROWDSEC_API_KEY_FIREWALL=state-firewall-key
 TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin
 DOCKER_SOCKET_GID=12345
+ENABLE_LAMPAC=false
 ENABLE_TELEMT=false
 ENV
 	run_installer run env
@@ -142,8 +147,59 @@ ENV
 	assert_contains "TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin" "$INSTALL_ROOT/compose.d/.env" "compose env must receive an explicit telemt-stack image"
 	assert_contains "DOCKER_SOCKET_GID=12345" "$INSTALL_STATE_DIR/install.env" "env must preserve an explicit Docker socket group id"
 	assert_contains "DOCKER_SOCKET_GID=12345" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Docker socket group id"
+	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_STATE_DIR/install.env" "env must preserve the Lampac enable switch"
+	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Lampac enable switch"
 	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "env must preserve the Telemt enable switch"
 	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Telemt enable switch"
+}
+
+test_env_normalizes_global_boolean_values() {
+	make_fixture
+	export ENABLE_LAMPAC=off
+	export ENABLE_TELEMT=disabled
+	export ENABLE_VLESS_GRPC=YES
+	export ENABLE_HYSTERIA2=0
+	export STRICT_DNS_CHECK=ON
+	export STRICT_ACME_CHECK=off
+	export TELEMT_MIDDLE_PROXY_NAT_PROBE=enabled
+	export TELEMT_ME_KEEPALIVE_ENABLED=No
+	export TELEMT_HARDSWAP=1
+	export TELEMT_PROXY_SECRET_ROTATE_RUNTIME=false
+	export TELEMT_STUN_USE=True
+	export TELEMT_STUN_TCP_FALLBACK=FALSE
+	export TELEMT_MASK_SHAPE_HARDENING=yes
+	export TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE=no
+	export TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR=Disabled
+
+	run_installer run env
+
+	for file in "$INSTALL_STATE_DIR/install.env" "$INSTALL_ROOT/compose.d/.env"; do
+		assert_contains "ENABLE_LAMPAC=false" "$file" "ENABLE_LAMPAC must normalize to false in $file"
+		assert_contains "ENABLE_TELEMT=false" "$file" "ENABLE_TELEMT must normalize to false in $file"
+		assert_contains "ENABLE_VLESS_GRPC=true" "$file" "ENABLE_VLESS_GRPC must normalize to true in $file"
+		assert_contains "ENABLE_HYSTERIA2=false" "$file" "ENABLE_HYSTERIA2 must normalize to false in $file"
+		assert_contains "STRICT_DNS_CHECK=true" "$file" "STRICT_DNS_CHECK must normalize to true in $file"
+		assert_contains "STRICT_ACME_CHECK=false" "$file" "STRICT_ACME_CHECK must normalize to false in $file"
+		assert_contains "TELEMT_MIDDLE_PROXY_NAT_PROBE=true" "$file" "TELEMT_MIDDLE_PROXY_NAT_PROBE must normalize to true in $file"
+		assert_contains "TELEMT_ME_KEEPALIVE_ENABLED=false" "$file" "TELEMT_ME_KEEPALIVE_ENABLED must normalize to false in $file"
+		assert_contains "TELEMT_HARDSWAP=true" "$file" "TELEMT_HARDSWAP must normalize to true in $file"
+		assert_contains "TELEMT_PROXY_SECRET_ROTATE_RUNTIME=false" "$file" "TELEMT_PROXY_SECRET_ROTATE_RUNTIME must normalize to false in $file"
+		assert_contains "TELEMT_STUN_USE=true" "$file" "TELEMT_STUN_USE must normalize to true in $file"
+		assert_contains "TELEMT_STUN_TCP_FALLBACK=false" "$file" "TELEMT_STUN_TCP_FALLBACK must normalize to false in $file"
+		assert_contains "TELEMT_MASK_SHAPE_HARDENING=true" "$file" "TELEMT_MASK_SHAPE_HARDENING must normalize to true in $file"
+		assert_contains "TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE=false" "$file" "TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE must normalize to false in $file"
+		assert_contains "TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR=false" "$file" "TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR must normalize to false in $file"
+	done
+	assert_contains "VISION_FALLBACK_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "normalized disabled Telemt must affect fallback defaults"
+}
+
+test_env_rejects_invalid_global_boolean_values() {
+	make_fixture
+	export ENABLE_HYSTERIA2=maybe
+	if run_installer run env; then
+		fail "env must reject invalid global boolean values"
+	fi
+	assert_contains "ENABLE_HYSTERIA2 must be boolean" "$tmpdir/stderr" "invalid boolean must name the variable and allowed values"
 }
 
 test_state_loader_preserves_literal_dollars() {
@@ -405,11 +461,12 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_not_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must not restart when reload and listener check succeed"
 }
 
-test_firewall_preserves_current_ssh_port_for_rollback() {
+test_firewall_does_not_preserve_current_ssh_port() {
 	make_fixture
 	export SSH_CONNECTION="198.51.100.20 54321 203.0.113.10 22"
 	run_installer run firewall --apply --yes
-	assert_contains "ufw allow 22/tcp comment CURRENT_SSH_PORT" "$INSTALL_COMMAND_LOG" "firewall must preserve active SSH port before SSH policy changes"
+	assert_not_contains "CURRENT_SSH_PORT" "$INSTALL_COMMAND_LOG" "firewall must not preserve active SSH port"
+	assert_not_contains "ufw allow 22/tcp" "$INSTALL_COMMAND_LOG" "firewall must not allow current SSH port when it differs from configured port"
 	assert_contains "ufw allow 22022/tcp comment PORT_REMOTE_SSH" "$INSTALL_COMMAND_LOG" "firewall must still allow configured target SSH port"
 }
 
@@ -435,7 +492,7 @@ test_ssh_restarts_when_listener_check_fails_after_reload() {
 test_ssh_listener_mock_uses_realistic_address_pattern() {
 	make_fixture
 	run_installer run ssh --apply --yes
-	assert_contains '\[\^\[:space:\]\]\*:\$1' "$INSTALL_COMMAND_LOG" "ssh listener check must match address-prefixed sockets"
+	assert_contains 'addr ~ port' "$INSTALL_COMMAND_LOG" "ssh listener check must match address-prefixed sockets"
 }
 
 test_ssh_auth_mode_follows_optional_public_key() {
@@ -629,6 +686,35 @@ test_wizard_menu_accepts_numbered_choices() {
 	assert_contains "1. apt" "$tmpdir/stdout" "wizard must show apt as first numbered step"
 	assert_contains "2. env" "$tmpdir/stdout" "wizard must show numbered menu"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard must dispatch numbered choices"
+}
+
+test_wizard_toggles_optional_feature_flags_and_renders_env() {
+	make_fixture
+	printf 't\n1\n2\n3\n4\na\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "t. toggles" "$tmpdir/stdout" "wizard must expose feature toggles"
+	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must have a clear heading"
+	assert_contains "1. ENABLE_LAMPAC" "$tmpdir/stdout" "toggle screen must show Lampac flag"
+	assert_contains "2. ENABLE_TELEMT" "$tmpdir/stdout" "toggle screen must show Telemt flag"
+	assert_contains "3. ENABLE_HYSTERIA2" "$tmpdir/stdout" "toggle screen must show Hysteria2 flag"
+	assert_contains "4. ENABLE_VLESS_GRPC" "$tmpdir/stdout" "toggle screen must show VLESS gRPC flag"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "applying toggles must render env through dispatcher"
+	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_STATE_DIR/install.env" "Lampac toggle must persist false"
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "Telemt toggle must persist false"
+	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_STATE_DIR/install.env" "Hysteria2 toggle must persist false"
+	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_STATE_DIR/install.env" "VLESS gRPC toggle must persist true"
+	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_ROOT/compose.d/.env" "Lampac toggle must render compose env"
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "Telemt toggle must render compose env"
+	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_ROOT/compose.d/.env" "Hysteria2 toggle must render compose env"
+	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_ROOT/compose.d/.env" "VLESS gRPC toggle must render compose env"
+	assert_contains "VISION_FALLBACK_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "disabled Telemt must rerender fallback target"
+}
+
+test_wizard_toggle_exit_does_not_persist_changes() {
+	make_fixture
+	printf 't\n1\nx\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must render before exit"
+	assert_not_contains "ENABLE_LAMPAC=false" "$INSTALL_STATE_DIR/install.env" "exiting toggles without apply must not persist changes"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "exiting toggles without apply must not render env"
 }
 
 test_wizard_removes_html_and_shows_last_status() {
@@ -872,6 +958,8 @@ test_run_dispatches_named_steps_without_eval
 test_compose_installs_docker_maintenance_timer
 test_env_reports_permission_problem_before_backup
 test_env_preserves_existing_state_defaults
+test_env_normalizes_global_boolean_values
+test_env_rejects_invalid_global_boolean_values
 test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
 test_env_detects_public_ips_when_missing
@@ -886,7 +974,7 @@ test_adguard_update_pass_updates_yaml_without_yq
 test_state_loader_keeps_explicit_values_over_state
 test_destructive_steps_require_explicit_flags
 test_destructive_steps_use_mock_runner_when_explicit
-test_firewall_preserves_current_ssh_port_for_rollback
+test_firewall_does_not_preserve_current_ssh_port
 test_ssh_rejects_invalid_port_before_apply
 test_ssh_restarts_when_listener_check_fails_after_reload
 test_ssh_listener_mock_uses_realistic_address_pattern
@@ -906,6 +994,8 @@ test_self_update_force_applies_equal_version
 test_wizard_offers_update_and_uses_same_dispatcher
 test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
+test_wizard_toggles_optional_feature_flags_and_renders_env
+test_wizard_toggle_exit_does_not_persist_changes
 test_wizard_removes_html_and_shows_last_status
 test_wizard_rejects_unknown_menu_choice_without_exit
 test_wizard_streams_output_and_waits_for_enter
