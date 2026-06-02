@@ -15,6 +15,21 @@ json_upsert_outbound_by_tag() {
     ' <<<"$current"
 }
 
+# Добавляет Xray outbound, только если outbound с таким тегом отсутствует.
+json_add_outbound_if_missing() {
+	local current=$1 outbound=$2
+	jq -c --argjson ob "$outbound" '
+      .xraySetting.outbounds = (.xraySetting.outbounds // []) |
+      .xraySetting.outbounds = (
+        if any(.xraySetting.outbounds[]?; .tag == $ob.tag) then
+          .xraySetting.outbounds
+        else
+          .xraySetting.outbounds + [$ob]
+        end
+      )
+    ' <<<"$current"
+}
+
 # Добавляет либо заменяет правило маршрутизации по ключу, определяющему владельца.
 json_upsert_routing_rule_by_key() {
 	local current=$1 key=$2 value=$3 rule=$4
@@ -26,6 +41,22 @@ json_upsert_routing_rule_by_key() {
           [.xraySetting.routing.rules[] | if .[$key] == $value then $rule else . end]
         else
           [$rule] + .xraySetting.routing.rules
+        end
+      )
+    ' <<<"$current"
+}
+
+# Добавляет правило маршрутизации в конец списка, только если правило с таким outboundTag отсутствует.
+json_append_routing_rule_if_outbound_missing() {
+	local current=$1 outbound_tag=$2 rule=$3
+	jq -c --arg outboundTag "$outbound_tag" --argjson rule "$rule" '
+      .xraySetting.routing = (.xraySetting.routing // {}) |
+      .xraySetting.routing.rules = (.xraySetting.routing.rules // []) |
+      .xraySetting.routing.rules = (
+        if any(.xraySetting.routing.rules[]?; (.outboundTag // "") == $outboundTag) then
+          .xraySetting.routing.rules
+        else
+          .xraySetting.routing.rules + [$rule]
         end
       )
     ' <<<"$current"
@@ -168,10 +199,10 @@ json_replace_warp_routing_rules() {
     ' <<<"$current"
 }
 
-# Накладывает доступные WARP/TOR/DNS интеграции на очищенное состояние Xray.
+# Накладывает доступные WARP/TOR/DNS/Mihomo интеграции на очищенное состояние Xray.
 json_apply_managed_xray_state() {
-	local current=$1 dns_servers=$2 warp_enabled=$3 tor_enabled=$4 dns_enabled=$5 warp_endpoints=${6:-'[]'} webdomain=$7 tor_endpoints=${8:-'[]'} warp_console_ob=${9:-}
-	local updated=$current tor_ob tor_rule tor_balancer tor_selectors warp_ob warp_rule warp_balancer selectors warp_domains endpoint_count index tag host port observatory_selectors='[]' burst_observatory
+	local current=$1 dns_servers=$2 warp_enabled=$3 tor_enabled=$4 dns_enabled=$5 warp_endpoints=${6:-'[]'} webdomain=$7 tor_endpoints=${8:-'[]'} warp_console_ob=${9:-} mihomo_enabled=${10:-false} mihomo_endpoints=${11:-'[]'}
+	local updated=$current tor_ob tor_rule tor_balancer tor_selectors warp_ob warp_rule warp_balancer selectors warp_domains endpoint_count index tag host port observatory_selectors='[]' burst_observatory mihomo_ob mihomo_rule
 	if [[ "$dns_enabled" == "true" ]]; then
 		updated=$(json_replace_dns_servers "$updated" "$dns_servers")
 	fi
@@ -218,6 +249,18 @@ json_apply_managed_xray_state() {
 			updated=$(json_replace_warp_routing_rules "$updated" "$webdomain" "$warp_rule")
 			updated=$(json_upsert_balancer_by_tag "$updated" "$warp_balancer")
 			observatory_selectors=$(jq -c --argjson selectors "$selectors" '. + $selectors | unique' <<<"$observatory_selectors")
+		fi
+	fi
+	if [[ "$mihomo_enabled" == "true" ]]; then
+		endpoint_count=$(jq 'length' <<<"$mihomo_endpoints")
+		if ((endpoint_count > 0)); then
+			tag=$(jq -r '.[0].tag // "mihomo"' <<<"$mihomo_endpoints")
+			host=$(jq -r '.[0].host // "mihomo"' <<<"$mihomo_endpoints")
+			port=$(jq -r '.[0].port // 7890' <<<"$mihomo_endpoints")
+			mihomo_ob=$(jq -nc --arg tag "$tag" --arg host "$host" --argjson port "$port" '{tag:$tag,protocol:"socks",settings:{servers:[{address:$host,port:$port,users:[]}]}}')
+			mihomo_rule=$(jq -nc --arg tag "$tag" '{type:"field",network:"tcp,udp",outboundTag:$tag}')
+			updated=$(json_add_outbound_if_missing "$updated" "$mihomo_ob")
+			updated=$(json_append_routing_rule_if_outbound_missing "$updated" "$tag" "$mihomo_rule")
 		fi
 	fi
 	if [[ "$(jq 'length' <<<"$observatory_selectors")" -gt 0 ]]; then

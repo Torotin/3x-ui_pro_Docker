@@ -79,10 +79,12 @@ wizard_load_feature_toggles() {
 	install_load_state_env
 	: "${ENABLE_LAMPAC:=true}"
 	: "${ENABLE_TELEMT:=true}"
+	: "${ENABLE_MIHOMO:=true}"
 	: "${ENABLE_HYSTERIA2:=true}"
 	: "${ENABLE_VLESS_GRPC:=false}"
 	install_normalize_bool_var ENABLE_LAMPAC
 	install_normalize_bool_var ENABLE_TELEMT
+	install_normalize_bool_var ENABLE_MIHOMO
 	install_normalize_bool_var ENABLE_HYSTERIA2
 	install_normalize_bool_var ENABLE_VLESS_GRPC
 }
@@ -100,6 +102,7 @@ wizard_toggle_bool_var() {
 wizard_save_feature_toggles() {
 	install_state_set_env ENABLE_LAMPAC "$ENABLE_LAMPAC"
 	install_state_set_env ENABLE_TELEMT "$ENABLE_TELEMT"
+	install_state_set_env ENABLE_MIHOMO "$ENABLE_MIHOMO"
 	install_state_set_env ENABLE_HYSTERIA2 "$ENABLE_HYSTERIA2"
 	install_state_set_env ENABLE_VLESS_GRPC "$ENABLE_VLESS_GRPC"
 }
@@ -114,8 +117,9 @@ Feature toggles:
   2. ENABLE_TELEMT      $ENABLE_TELEMT   Telemt fallback/proxy stack
   3. ENABLE_HYSTERIA2   $ENABLE_HYSTERIA2   Hysteria2 inbound in 3x-ui/Xray
   4. ENABLE_VLESS_GRPC  $ENABLE_VLESS_GRPC   VLESS gRPC inbound in 3x-ui/Xray
+  5. ENABLE_MIHOMO      $ENABLE_MIHOMO   Mihomo compose service
 
-Choose 1-4 to toggle, a to apply/render env, x to return:
+Choose 1-5 to toggle, a to apply/render env, x to return:
 MENU
 }
 
@@ -138,6 +142,9 @@ wizard_feature_toggles() {
 			;;
 		4)
 			wizard_toggle_bool_var ENABLE_VLESS_GRPC
+			;;
+		5)
+			wizard_toggle_bool_var ENABLE_MIHOMO
 			;;
 		a | apply)
 			wizard_save_feature_toggles

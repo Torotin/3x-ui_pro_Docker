@@ -55,6 +55,12 @@ services:
     image: telemt:test
     container_name: telemt
 YAML
+	cat >"$tmpdir/compose.d/16-mihomo.yml" <<'YAML'
+services:
+  mihomo:
+    image: metacubex/mihomo:latest
+    container_name: mihomo
+YAML
 	cat >"$tmpdir/compose.d/99-disabled.yml.disable" <<'YAML'
 services:
   disabled:
@@ -125,8 +131,8 @@ run_runner_default_env() {
 test_restart_uses_no_deps_by_default() {
 	make_fixture
 	run_runner restart traefik
-	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml rm --stop --force traefik" "$tmpdir/docker.log" "restart must remove target service"
-	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml up -d --no-deps --force-recreate traefik" "$tmpdir/docker.log" "restart must recreate target without dependencies"
+	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml -f $tmpdir/compose.d/16-mihomo.yml rm --stop --force traefik" "$tmpdir/docker.log" "restart must remove target service"
+	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml -f $tmpdir/compose.d/16-mihomo.yml up -d --no-deps --force-recreate traefik" "$tmpdir/docker.log" "restart must recreate target without dependencies"
 	assert_not_contains "logs -f traefik" "$tmpdir/docker.log" "restart must not follow logs by default"
 }
 
@@ -270,6 +276,23 @@ test_lampac_compose_file_follows_enable_switch() {
 	fi
 }
 
+test_mihomo_compose_file_follows_enable_switch() {
+	make_fixture
+	output=$(run_runner list-files)
+	if ! grep -Fq "16-mihomo.yml" <<<"$output"; then
+		fail "Mihomo compose file must be active by default"
+	fi
+	printf 'ENABLE_MIHOMO=false\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
+	if grep -Fq "16-mihomo.yml" <<<"$output"; then
+		fail "Mihomo compose file must be excluded when ENABLE_MIHOMO=false"
+	fi
+	output=$(ENABLE_MIHOMO=true run_runner list-files)
+	if ! grep -Fq "16-mihomo.yml" <<<"$output"; then
+		fail "environment ENABLE_MIHOMO=true must override disabled env file"
+	fi
+}
+
 test_list_files_does_not_require_env_file() {
 	make_fixture
 	rm -f "$tmpdir/compose.d/.env"
@@ -355,6 +378,7 @@ test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files
 test_telemt_compose_file_follows_enable_switch
 test_lampac_compose_file_follows_enable_switch
+test_mihomo_compose_file_follows_enable_switch
 test_list_files_does_not_require_env_file
 test_maintenance_prune_keeps_networks_and_volumes
 test_up_reports_foreign_container_name_conflict

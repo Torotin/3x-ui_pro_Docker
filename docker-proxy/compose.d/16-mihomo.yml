@@ -1,0 +1,78 @@
+services:
+  mihomo:
+    container_name: mihomo
+    image: metacubex/mihomo:latest
+    restart: unless-stopped
+    environment:
+      - SAFE_PATHS=/zashboard
+    volumes:
+      - ../mihomo:/root/.config/mihomo
+    networks:
+      - traefik-proxy
+    security_opt:
+      - no-new-privileges=true
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      # ---------- Service ----------
+      - traefik.http.services.mihomo-ui-svc.loadbalancer.server.port=9090
+      - traefik.http.services.mihomo-ui-svc.loadbalancer.healthcheck.path=/ui/
+      - traefik.http.services.mihomo-ui-svc.loadbalancer.healthcheck.interval=30s
+      - traefik.http.services.mihomo-ui-svc.loadbalancer.healthcheck.timeout=5s
+
+      # ---------- Middleware ----------
+      - traefik.http.middlewares.mihomo-basic-auth.basicauth.users=${HT_PASS_ENCODED}
+      - traefik.http.middlewares.mihomo-basic-auth.basicauth.realm=Mihomo
+      - traefik.http.middlewares.mihomo-rate-limit.ratelimit.average=50
+      - traefik.http.middlewares.mihomo-rate-limit.ratelimit.burst=100
+      - traefik.http.middlewares.mihomo-strip.stripPrefix.prefixes=/${URI_MIHOMO}
+      - traefik.http.middlewares.mihomo-compress.compress=true
+      - traefik.http.middlewares.mihomo-chain.chain.middlewares=bouncer@file,mihomo-rate-limit,admin-security-headers@file,mihomo-strip,mihomo-compress
+      - traefik.http.middlewares.mihomo-static-chain.chain.middlewares=bouncer@file,mihomo-basic-auth,mihomo-rate-limit,admin-security-headers@file,mihomo-strip,mihomo-compress
+      - traefik.http.middlewares.mihomo-manifest-chain.chain.middlewares=bouncer@file,mihomo-rate-limit,admin-security-headers@file,mihomo-strip,mihomo-compress
+      - traefik.http.middlewares.mihomo-ui-slash-redirect.redirectRegex.regex=^https?://([^/]+)/${URI_MIHOMO}/ui$$
+      - traefik.http.middlewares.mihomo-ui-slash-redirect.redirectRegex.replacement=https://${WEBDOMAIN}/${URI_MIHOMO}/ui/
+      - traefik.http.middlewares.mihomo-ui-slash-redirect.redirectRegex.permanent=true
+      - traefik.http.middlewares.mihomo-ui-slash-chain.chain.middlewares=bouncer@file,mihomo-basic-auth,mihomo-rate-limit,admin-security-headers@file,mihomo-ui-slash-redirect
+      - traefik.http.middlewares.mihomo-ui-redirect.redirectRegex.regex=^https?://([^/]+)/${URI_MIHOMO}/?$$
+      - traefik.http.middlewares.mihomo-ui-redirect.redirectRegex.replacement=https://${WEBDOMAIN}/${URI_MIHOMO}/ui/#/setup?hostname=${WEBDOMAIN}&port=443&secondaryPath=/${URI_MIHOMO}
+      - traefik.http.middlewares.mihomo-ui-redirect.redirectRegex.permanent=true
+      - traefik.http.middlewares.mihomo-root-chain.chain.middlewares=bouncer@file,mihomo-basic-auth,mihomo-rate-limit,admin-security-headers@file,mihomo-ui-redirect
+
+      # ---------- Router ----------
+      - traefik.http.routers.mihomo-ui-manifest.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`/${URI_MIHOMO}/ui/.*manifest(\.webmanifest|\.json)$$`)
+      - traefik.http.routers.mihomo-ui-manifest.entrypoints=websecure
+      - traefik.http.routers.mihomo-ui-manifest.middlewares=mihomo-manifest-chain
+      - traefik.http.routers.mihomo-ui-manifest.tls.certresolver=le
+      - traefik.http.routers.mihomo-ui-manifest.service=mihomo-ui-svc
+      - traefik.http.routers.mihomo-ui-manifest.priority=974
+
+      - traefik.http.routers.mihomo-ui-slash.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_MIHOMO}/ui`)
+      - traefik.http.routers.mihomo-ui-slash.entrypoints=websecure
+      - traefik.http.routers.mihomo-ui-slash.middlewares=mihomo-ui-slash-chain
+      - traefik.http.routers.mihomo-ui-slash.tls.certresolver=le
+      - traefik.http.routers.mihomo-ui-slash.service=mihomo-ui-svc
+      - traefik.http.routers.mihomo-ui-slash.priority=973
+
+      - traefik.http.routers.mihomo-ui-static.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_MIHOMO}/ui`)
+      - traefik.http.routers.mihomo-ui-static.entrypoints=websecure
+      - traefik.http.routers.mihomo-ui-static.middlewares=mihomo-static-chain
+      - traefik.http.routers.mihomo-ui-static.tls.certresolver=le
+      - traefik.http.routers.mihomo-ui-static.service=mihomo-ui-svc
+      - traefik.http.routers.mihomo-ui-static.priority=972
+
+      - traefik.http.routers.mihomo-ui-root.rule=Host(`${WEBDOMAIN}`) && (Path(`/${URI_MIHOMO}`) || Path(`/${URI_MIHOMO}/`))
+      - traefik.http.routers.mihomo-ui-root.entrypoints=websecure
+      - traefik.http.routers.mihomo-ui-root.middlewares=mihomo-root-chain
+      - traefik.http.routers.mihomo-ui-root.tls.certresolver=le
+      - traefik.http.routers.mihomo-ui-root.service=mihomo-ui-svc
+      - traefik.http.routers.mihomo-ui-root.priority=971
+
+      - traefik.http.routers.mihomo-ui.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_MIHOMO}`)
+      - traefik.http.routers.mihomo-ui.entrypoints=websecure
+      - traefik.http.routers.mihomo-ui.middlewares=mihomo-chain
+      - traefik.http.routers.mihomo-ui.tls.certresolver=le
+      - traefik.http.routers.mihomo-ui.service=mihomo-ui-svc
+      - traefik.http.routers.mihomo-ui.priority=970

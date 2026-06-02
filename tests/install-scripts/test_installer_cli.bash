@@ -38,7 +38,7 @@ make_fixture() {
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 STRICT_DNS_CHECK STRICT_ACME_CHECK
+	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 STRICT_DNS_CHECK STRICT_ACME_CHECK
 	unset TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_ME_KEEPALIVE_ENABLED TELEMT_HARDSWAP
 	unset TELEMT_PROXY_SECRET_ROTATE_RUNTIME TELEMT_STUN_USE TELEMT_STUN_TCP_FALLBACK
 	unset TELEMT_MASK_SHAPE_HARDENING TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR
@@ -138,6 +138,7 @@ TELEMT_STACK_IMAGE=torotin/telemt-stack:test-pin
 DOCKER_SOCKET_GID=12345
 ENABLE_LAMPAC=false
 ENABLE_TELEMT=false
+ENABLE_MIHOMO=false
 ENV
 	run_installer run env
 	assert_contains "WEBDOMAIN=state.example.test" "$INSTALL_STATE_DIR/install.env" "env must preserve existing domain when no override is provided"
@@ -151,12 +152,15 @@ ENV
 	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Lampac enable switch"
 	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "env must preserve the Telemt enable switch"
 	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Telemt enable switch"
+	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_STATE_DIR/install.env" "env must preserve the Mihomo enable switch"
+	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Mihomo enable switch"
 }
 
 test_env_normalizes_global_boolean_values() {
 	make_fixture
 	export ENABLE_LAMPAC=off
 	export ENABLE_TELEMT=disabled
+	export ENABLE_MIHOMO=no
 	export ENABLE_VLESS_GRPC=YES
 	export ENABLE_HYSTERIA2=0
 	export STRICT_DNS_CHECK=ON
@@ -176,6 +180,7 @@ test_env_normalizes_global_boolean_values() {
 	for file in "$INSTALL_STATE_DIR/install.env" "$INSTALL_ROOT/compose.d/.env"; do
 		assert_contains "ENABLE_LAMPAC=false" "$file" "ENABLE_LAMPAC must normalize to false in $file"
 		assert_contains "ENABLE_TELEMT=false" "$file" "ENABLE_TELEMT must normalize to false in $file"
+		assert_contains "ENABLE_MIHOMO=false" "$file" "ENABLE_MIHOMO must normalize to false in $file"
 		assert_contains "ENABLE_VLESS_GRPC=true" "$file" "ENABLE_VLESS_GRPC must normalize to true in $file"
 		assert_contains "ENABLE_HYSTERIA2=false" "$file" "ENABLE_HYSTERIA2 must normalize to false in $file"
 		assert_contains "STRICT_DNS_CHECK=true" "$file" "STRICT_DNS_CHECK must normalize to true in $file"
@@ -690,22 +695,25 @@ test_wizard_menu_accepts_numbered_choices() {
 
 test_wizard_toggles_optional_feature_flags_and_renders_env() {
 	make_fixture
-	printf 't\n1\n2\n3\n4\na\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 't\n1\n2\n3\n4\n5\na\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "t. toggles" "$tmpdir/stdout" "wizard must expose feature toggles"
 	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must have a clear heading"
 	assert_contains "1. ENABLE_LAMPAC" "$tmpdir/stdout" "toggle screen must show Lampac flag"
 	assert_contains "2. ENABLE_TELEMT" "$tmpdir/stdout" "toggle screen must show Telemt flag"
 	assert_contains "3. ENABLE_HYSTERIA2" "$tmpdir/stdout" "toggle screen must show Hysteria2 flag"
 	assert_contains "4. ENABLE_VLESS_GRPC" "$tmpdir/stdout" "toggle screen must show VLESS gRPC flag"
+	assert_contains "5. ENABLE_MIHOMO" "$tmpdir/stdout" "toggle screen must show Mihomo flag"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "applying toggles must render env through dispatcher"
 	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_STATE_DIR/install.env" "Lampac toggle must persist false"
 	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "Telemt toggle must persist false"
 	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_STATE_DIR/install.env" "Hysteria2 toggle must persist false"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_STATE_DIR/install.env" "VLESS gRPC toggle must persist true"
+	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_STATE_DIR/install.env" "Mihomo toggle must persist false"
 	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_ROOT/compose.d/.env" "Lampac toggle must render compose env"
 	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "Telemt toggle must render compose env"
 	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_ROOT/compose.d/.env" "Hysteria2 toggle must render compose env"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_ROOT/compose.d/.env" "VLESS gRPC toggle must render compose env"
+	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_ROOT/compose.d/.env" "Mihomo toggle must render compose env"
 	assert_contains "VISION_FALLBACK_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "disabled Telemt must rerender fallback target"
 }
 

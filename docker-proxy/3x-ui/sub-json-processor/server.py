@@ -88,13 +88,14 @@ def build_geodata(env):
         assets = DEFAULT_ASSETS
 
     return {
-        "cron": env.get("SUB_JSON_GEODATA_CRON") or "0 6 * * *",
+        "cron": env.get("SUB_JSON_GEODATA_CRON") or "0 4 * * *",
         "outbound": env.get("SUB_JSON_GEODATA_OUTBOUND") or "proxy",
         "assets": copy.deepcopy(assets),
     }
 
 
 def apply_geodata(payload, geodata):
+    payload = strip_removed_xray_tls_fields(payload)
     if geodata is None:
         return payload
 
@@ -110,6 +111,19 @@ def apply_geodata(payload, geodata):
     if isinstance(payload, dict):
         return with_geodata(payload)
     raise ValueError("JSON subscription root must be an object or array")
+
+
+def strip_removed_xray_tls_fields(value):
+    if isinstance(value, list):
+        return [strip_removed_xray_tls_fields(item) for item in value]
+    if isinstance(value, dict):
+        updated = {}
+        for key, item in value.items():
+            if key == "allowInsecure":
+                continue
+            updated[key] = strip_removed_xray_tls_fields(item)
+        return updated
+    return value
 
 
 def upstream_base_from_env(env):
