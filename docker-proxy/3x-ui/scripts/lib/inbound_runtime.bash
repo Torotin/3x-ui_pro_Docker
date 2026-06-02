@@ -103,9 +103,9 @@ new_client_secret() {
 normalize_uuid() {
 	local value=${1:-}
 	value=${value,,}
-	if [[ "$value" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+	if [[ "$value" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
 		printf '%s' "$value"
-	elif [[ "$value" =~ ^[0-9a-f]{32}$ ]]; then
+	elif [[ "$value" =~ ^[0-9a-f]{12}[1-8][0-9a-f]{3}[89ab][0-9a-f]{15}$ ]]; then
 		printf '%s-%s-%s-%s-%s' "${value:0:8}" "${value:8:4}" "${value:12:4}" "${value:16:4}" "${value:20:12}"
 	else
 		return 1
@@ -128,7 +128,7 @@ client_vless_uuid() {
 
 client_vless_uuid_without_auth() {
 	local client=$1 candidate normalized
-	for field in uuid id password; do
+	for field in uuid id; do
 		candidate=$(jq -r --arg field "$field" '.[$field] // empty' <<<"$client")
 		normalized=$(normalize_uuid "$candidate" 2>/dev/null || true)
 		if [[ -n "$normalized" ]]; then
@@ -276,7 +276,7 @@ build_inbound_stream_json() {
 	local kind=$1 current=${2:-}
 	if [[ -n "$current" && "$current" != "null" && "$kind" == "vision" ]]; then
 		# Существующие ключи REALITY нельзя регенерировать при повторной сверке состояния.
-		json_field_object "$current" streamSettings
+		sanitize_vision_stream_json "$(json_field_object "$current" streamSettings)"
 		return 0
 	fi
 
@@ -284,8 +284,16 @@ build_inbound_stream_json() {
 		get_x25519_keys || die "Failed to get X25519 keys for Vision inbound."
 		build_vision_stream_json "${REALITY_TARGET_HOST:-telemt}:${REALITY_TARGET_PORT:-${PORT_LOCAL_TELEMT_PROXY:-9443}}" "$WEBDOMAIN" "$X25519_PRIVATE_KEY" "$X25519_PUBLIC_KEY" "$(generate_short_ids_json 8 8)" "$(build_sockopt_json false AsIs off)" "" "" "${REALITY_TARGET_XVER:-1}"
 	elif [[ "$kind" == "xhttp" ]]; then
+		if [[ -n "$current" && "$current" != "null" ]]; then
+			sanitize_xhttp_stream_json "$(json_field_object "$current" streamSettings)" "$URI_VLESS_XHTTP" "$WEBDOMAIN"
+			return 0
+		fi
 		build_xhttp_stream_json "$URI_VLESS_XHTTP" "$WEBDOMAIN"
 	elif [[ "$kind" == "grpc" ]]; then
+		if [[ -n "$current" && "$current" != "null" ]]; then
+			sanitize_grpc_stream_json "$(json_field_object "$current" streamSettings)" "${URI_VLESS_GRPC:-/grpc}" "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
+			return 0
+		fi
 		build_grpc_stream_json "${URI_VLESS_GRPC:-/grpc}" "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	elif [[ "$kind" == "hysteria2" ]]; then
 		build_hysteria2_stream_json "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}" "${HYSTERIA2_STREAM_AUTH:-}"
@@ -310,7 +318,7 @@ build_hysteria2_settings_json() {
 	[[ -n "$auth" ]] || auth=$(new_client_secret)
 	client=$(jq -nc --arg auth "$auth" --arg email "$email" --arg sid "$sub_id" '{
       auth:$auth, email:$email, limitIp:0, totalGB:0, expiryTime:0,
-      enable:true, tgId:"", subId:$sid, comment:"", reset:0
+      enable:true, tgId:0, subId:$sid, group:"", comment:"", reset:0
     }')
 	jq -nc --argjson clients "$clients" --argjson client "$client" --arg legacyEmail "$legacy_email" --arg legacyHysteria "$legacy_hysteria_email" '{
       version:2,
@@ -505,7 +513,10 @@ ensure_shared_client() {
 		if [[ -z "$client_id" ]]; then
 			client_id=$(client_vless_uuid "$current" || true)
 		fi
-		[[ -n "$client_id" ]] || die "Existing shared client email=$email has no VLESS identifier."
+		if [[ -z "$client_id" ]]; then
+			client_id=$(new_uuid)
+			log WARN "Existing shared client email=$email has no valid VLESS UUID; generating a replacement."
+		fi
 		client_password=$(jq -r '.password // empty' <<<"$current")
 		client_auth=$(jq -r '.auth // empty' <<<"$current")
 		[[ -n "$client_password" ]] || client_password=$(new_client_secret)
@@ -548,6 +559,8 @@ ensure_shared_client() {
 
 	ensure_vless_inbound_client "$vision_id" "$client_id" "$desired" "$vision_flow" "Vision"
 	ensure_vless_inbound_client "$xhttp_id" "$client_id" "$desired" "$xhttp_flow" "XHTTP"
+	ensure_vless_stream "$vision_id" vision "Vision"
+	ensure_vless_stream "$xhttp_id" xhttp "XHTTP"
 }
 
 repair_shared_client_after_inbound_sync() {
@@ -587,6 +600,23 @@ ensure_vless_inbound_client() {
 	components=$(current_inbound_components_json "$inbound" | jq -c --argjson settings "$desired_settings" '.settings = $settings')
 	if plan_or_apply "$label VLESS inbound client synchronized"; then
 		update_inbound_components "$inbound_id" "$components"
+	fi
+}
+
+# Синхронизирует inbound-level VLESS клиента gRPC с пустым flow.
+ensure_vless_stream() {
+	local inbound_id=$1 kind=$2 label=$3 inbound desired_stream current_components desired_components
+	[[ -n "$inbound_id" ]] || return 0
+	inbound=$(inbound_by_id_json "$inbound_id")
+	desired_stream=$(build_inbound_stream_json "$kind" "$inbound")
+	current_components=$(current_inbound_components_json "$inbound")
+	desired_components=$(jq -c --argjson stream "$desired_stream" '.streamSettings = $stream' <<<"$current_components")
+	if jq -e --argjson desired "$desired_components" '. == $desired' <<<"$current_components" >/dev/null; then
+		log INFO "$label stream already matches desired state."
+		return 0
+	fi
+	if plan_or_apply "$label stream synchronized"; then
+		update_inbound_components "$inbound_id" "$desired_components"
 	fi
 }
 

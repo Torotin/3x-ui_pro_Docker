@@ -43,7 +43,7 @@ normalize_bool_var() {
 
 normalize_runtime_bool_env() {
 	local name
-	for name in ENABLE_VLESS_GRPC ENABLE_HYSTERIA2; do
+	for name in ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_MIHOMO; do
 		normalize_bool_var "$name"
 	done
 }
@@ -87,6 +87,7 @@ init_defaults() {
 	: "${XRAY_MANAGED_WARP:=true}"
 	: "${XRAY_MANAGED_WARP_CONSOLE:=false}"
 	: "${XRAY_MANAGED_TOR:=true}"
+	: "${ENABLE_MIHOMO:=true}"
 	: "${WARP_REUSE_PANEL_CONFIG:=false}"
 	: "${WARP_ENDPOINT_HOST:=engage.cloudflareclient.com:2408}"
 	: "${USQUE_HOST:=usque}"
@@ -116,7 +117,7 @@ load_runtime_env() {
 	local script_dir=$1
 	local name
 	local -A preserved_env=()
-	for name in MODE ENABLE_VLESS_GRPC ENABLE_HYSTERIA2; do
+	for name in MODE ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_MIHOMO; do
 		if [[ ${!name+x} ]]; then
 			preserved_env[$name]=${!name}
 		fi

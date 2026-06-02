@@ -1,0 +1,210 @@
+allow-lan: true
+# bind-address: "*"
+# lan-allowed-ips:
+# - 0.0.0.0/0
+# - ::/0
+# lan-disallowed-ips:
+# - 192.168.0.3/32
+# authentication: #для прокси http(s)/socks/mixed
+# - "user1:pass1"
+# - "user2:pass2"
+# skip-auth-prefixes: #разрешено пропускать аутентификацию
+# - 127.0.0.1/8
+# - ::1/128
+mode: rule
+log-level: info
+ipv6: true
+find-process-mode: strict
+mixed-port: 7890
+secret: MyStrongSecret123
+bind-address: "*"
+tcp-concurrent: true
+unified-delay: true
+external-ui: /zashboard
+external-ui-url: https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip
+profile:
+  store-selected: true
+  store-fake-ip: true
+external-controller: 0.0.0.0:9090
+external-controller-cors:
+  allow-private-network: true
+
+dns:
+  enable: true
+  ipv6: true
+  listen: 0.0.0.0:1053
+  respect-rules: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+    - "*.localhost"
+    - "*.docker"
+    - "*.internal"
+  default-nameserver:
+    - 9.9.9.9
+    - 1.1.1.1
+    - 8.8.8.8
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://1.0.0.1/dns-query
+    - https://dns.quad9.net/dns-query
+  fallback:
+    - https://8.8.8.8/dns-query
+    - https://8.8.4.4/dns-query
+  fallback-filter:
+  geoip: false
+  proxy-server-nameserver:
+    - https://1.1.1.1/dns-query
+  hosts:
+    'domain:appcenter.ms': 127.0.0.1
+    'domain:firebase.io': 127.0.0.1
+    'domain:mixpanel.com': 127.0.0.1
+    'domain:scorecardresearch.com': 127.0.0.1
+    'domain:quantserve.com': 127.0.0.1
+    'domain:adj.st': 127.0.0.1
+    'domain:app.adjust.com': 127.0.0.1
+    'domain:app.link': 127.0.0.1
+    'domain:appsflyer.com': 127.0.0.1
+    'domain:adservice.google.com': 127.0.0.1
+    'domain:googleadservices.com': 127.0.0.1
+
+    'googleapis.cn': 'googleapis.com'
+
+    'dns.alidns.com':
+      - 223.5.5.5
+      - 223.6.6.6
+
+    'one.one.one.one':
+      - 1.1.1.1
+      - 1.0.0.1
+
+    'dns.cloudflare.com':
+      - 104.16.132.229
+      - 104.16.133.229
+
+    'cloudflare-dns.com':
+      - 104.16.248.249
+      - 104.16.249.249
+
+    'dot.pub':
+      - 1.12.12.12
+      - 120.53.53.53
+
+    'dns.google':
+      - 8.8.8.8
+      - 8.8.4.4
+
+    'dns.quad9.net':
+      - 9.9.9.9
+      - 149.112.112.112
+
+    'common.dot.dns.yandex.net':
+      - 77.88.8.8
+      - 77.88.8.1
+
+    'doh.dns.sb':
+      - 185.222.222.222
+
+    'dns10.quad9.net':
+      - 9.9.9.10
+      - 149.112.112.10
+
+    'dns.opendns.com':
+      - 208.67.222.222
+      - 208.67.220.220
+
+    'dns.adguard.com':
+      - 94.140.14.14
+      - 94.140.15.15
+
+    'dns-unfiltered.adguard.com':
+      - 94.140.14.140
+      - 94.140.14.141
+
+    'doh.cleanbrowsing.org':
+      - 185.228.168.168
+      - 185.228.168.10
+
+    'gstatic.com':
+      - 142.250.120.94
+      - 142.250.120.120
+
+    'connectivitycheck.gstatic.com': 142.251.98.94
+    'cp.cloudflare.com': 104.16.133.229    
+
+proxy-providers:
+  nodes:
+    type: file
+    path: ./proxy-providers/local/proxies.yaml
+    health-check:
+      enable: true
+      url: https://cp.cloudflare.com/generate_204
+      interval: 1800
+
+  provider1:
+    type: http
+    url: "https://example.com/sub1"
+    path: ./proxy-providers/subs/provider1.yaml
+    interval: 3600
+    lazy: true
+    health-check:
+      enable: true
+      interval: 600
+      url: https://cp.cloudflare.com/generate_204
+
+  provider2:
+    type: http
+    url: "https://example.com/sub2"
+    path: ./proxy-providers/subs/provider2.yaml
+    interval: 3600
+    lazy: true
+    health-check:
+      enable: true
+      interval: 600
+      url: https://cp.cloudflare.com/generate_204
+
+  provider3:
+    type: http
+    url: "https://example.com/sub3"
+    path: ./proxy-providers/subs/provider3.yaml
+    interval: 3600
+    lazy: true
+    health-check:
+      enable: true
+      interval: 600
+      url: https://cp.cloudflare.com/generate_204
+
+proxy-groups:
+  - name: MANUAL
+    type: select
+
+    use:
+      - nodes
+      - provider1
+      - provider2
+      - provider3
+
+  - name: AUTO
+    type: url-test
+
+    use:
+      - nodes
+      - provider1
+      - provider2
+      - provider3
+
+    url: https://cp.cloudflare.com/generate_204
+    interval: 300
+    tolerance: 50
+
+  - name: INTERNET
+    type: select
+    proxies:
+      - AUTO
+      - MANUAL
+      - DIRECT
+
+rules:
+  - MATCH,INTERNET

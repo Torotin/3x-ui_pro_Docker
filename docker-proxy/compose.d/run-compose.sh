@@ -110,6 +110,9 @@ collect_compose_files() {
 		if [[ "$(basename "$file")" =~ ^15-telemt[.]ya?ml$ ]] && ! telemt_compose_enabled; then
 			continue
 		fi
+		if [[ "$(basename "$file")" =~ ^16-mihomo[.]ya?ml$ ]] && ! mihomo_compose_enabled; then
+			continue
+		fi
 		COMPOSE_FILES+=("$file")
 	done < <(
 		find "$ACTIVE_COMPOSE_DIR" -maxdepth 1 -type f \( -name "*.yml" -o -name "*.yaml" \) -print0 |
@@ -166,6 +169,13 @@ telemt_compose_enabled() {
 lampac_compose_enabled() {
 	local value
 	value=$(compose_env_value ENABLE_LAMPAC || true)
+	[[ -n "$value" ]] || value=true
+	! compose_bool_is_false "$value"
+}
+
+mihomo_compose_enabled() {
+	local value
+	value=$(compose_env_value ENABLE_MIHOMO || true)
 	[[ -n "$value" ]] || value=true
 	! compose_bool_is_false "$value"
 }

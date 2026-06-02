@@ -147,6 +147,7 @@ install_normalize_global_bool_env() {
 		STRICT_ACME_CHECK \
 		ENABLE_LAMPAC \
 		ENABLE_TELEMT \
+		ENABLE_MIHOMO \
 		ENABLE_VLESS_GRPC \
 		ENABLE_HYSTERIA2 \
 		TELEMT_MIDDLE_PROXY_NAT_PROBE \
@@ -169,6 +170,10 @@ install_telemt_enabled() {
 
 install_lampac_enabled() {
 	! install_bool_is_false "${ENABLE_LAMPAC:-true}"
+}
+
+install_mihomo_enabled() {
+	! install_bool_is_false "${ENABLE_MIHOMO:-true}"
 }
 
 require_opt_in() {

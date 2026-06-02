@@ -350,8 +350,8 @@ build_vless_settings_json() {
 vless_client_api_json() {
 	local client_id=$1 email=$2 sub_id=$3 flow=$4 password=${5:-} auth=${6:-}
 	jq -nc --arg id "$client_id" --arg email "$email" --arg sid "$sub_id" --arg flow "$flow" --arg password "$password" --arg auth "$auth" '{
-      id:$id, uuid:$id, password:$password, auth:$auth, flow:$flow, email:$email, limitIp:0, totalGB:0, expiryTime:0,
-      enable:true, tgId:0, subId:$sid, comment:"", reset:0
+      id:$id, uuid:$id, password:$password, auth:$auth, flow:$flow, security:"auto", email:$email,
+      limitIp:0, totalGB:0, expiryTime:0, reset:0, tgId:0, group:"", comment:"", enable:true, subId:$sid
     }'
 }
 
@@ -374,7 +374,6 @@ build_sockopt_json() {
       domainStrategy:$domainStrategy,
       interface:"",
       mark:0,
-      penetrate:true,
       tcpFastOpen:true,
       tcpKeepAliveIdle:300,
       tcpKeepAliveInterval:0,
@@ -389,17 +388,127 @@ build_sockopt_json() {
 
 # Строит список внешнего proxy для маскирующего соединения, если задан домен.
 build_external_proxy_json() {
-	local host=$1 force_tls=${2:-same}
+	local host=$1 force_tls=${2:-same} alpn_json=${3:-'[]'} fingerprint=${4:-}
 	if [[ -z "$host" ]]; then
 		printf '[]'
 	else
-		jq -nc --arg dest "$host" --arg forceTls "$force_tls" '[{forceTls:$forceTls,dest:$dest,port:443,remark:""}]'
+		[[ -n "$fingerprint" ]] || fingerprint=$(select_tls_fingerprint)
+		jq -nc --arg dest "$host" --arg forceTls "$force_tls" --arg fingerprint "$fingerprint" --argjson alpn "$alpn_json" '
+          [{
+            forceTls:$forceTls,
+            dest:$dest,
+            port:443,
+            remark:"",
+            sni:$dest,
+            fingerprint:$fingerprint
+          } + (if ($alpn | length) > 0 then {alpn:$alpn} else {} end)]
+        '
 	fi
+}
+
+# Выбирает client-side TLS fingerprint для ссылок/JSON подписок.
+select_tls_fingerprint() {
+	local values=(random firefox safari)
+	local idx
+	idx=$((RANDOM % ${#values[@]}))
+	printf '%s' "${values[$idx]}"
+}
+
+tls_fingerprint_allowed() {
+	case "${1:-}" in
+	random | firefox | safari) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# Удаляет из panel-side streamSettings поля, которые больше не принимает Xray.
+strip_removed_xray_stream_fields_json() {
+	jq -c 'walk(if type == "object" then del(.allowInsecure) | del(.penetrate) else . end)'
+}
+
+# Нормализует сохраненный REALITY stream без регенерации ключей.
+sanitize_vision_stream_json() {
+	local stream=$1 fingerprint
+	fingerprint=$(jq -r '.realitySettings.settings.fingerprint // empty' <<<"$stream")
+	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
+	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c --arg fingerprint "$fingerprint" '
+      if (.realitySettings // null) then
+        .realitySettings.maxTimeDiff = (.realitySettings.maxTimeDiff // .realitySettings.maxTimediff // 0)
+        | del(.realitySettings.maxTimediff)
+        | .realitySettings.settings.fingerprint = $fingerprint
+      else
+        .
+      end
+    '
+}
+
+sanitize_external_proxy_tls_json() {
+	local stream=$1 host=$2 alpn_json=${3:-'[]'} fingerprint
+	fingerprint=$(jq -r '.externalProxy[0].fingerprint // empty' <<<"$stream")
+	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
+	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c \
+		--arg host "$host" \
+		--arg fingerprint "$fingerprint" \
+		--argjson alpn "$alpn_json" '
+        .externalProxy = [((.externalProxy[0] // {}) + {
+          forceTls:"tls",
+          dest:$host,
+          port:443,
+          remark:"",
+          sni:$host,
+          fingerprint:$fingerprint
+        } + (if ($alpn | length) > 0 then {alpn:$alpn} else {} end))]
+      '
+}
+
+sanitize_xhttp_stream_json() {
+	local stream=$1 path=$2 host=$3 sanitized
+	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2","http/1.1"]')
+	printf '%s' "$sanitized" | jq -c --arg path "$path" --arg host "$host" '
+      .network = "xhttp"
+      | .security = "none"
+      | .xhttpSettings.path = $path
+      | .xhttpSettings.host = $host
+    '
+}
+
+sanitize_grpc_stream_json() {
+	local stream=$1 path=$2 host=$3 cert_file=$4 key_file=$5 service_name fingerprint sanitized
+	service_name=${path#/}
+	service_name=${service_name%/}
+	fingerprint=$(jq -r '.tlsSettings.settings.fingerprint // .externalProxy[0].fingerprint // empty' <<<"$stream")
+	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
+	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2"]')
+	printf '%s' "$sanitized" | jq -c \
+		--arg serviceName "$service_name" \
+		--arg host "$host" \
+		--arg certFile "$cert_file" \
+		--arg keyFile "$key_file" \
+		--arg fingerprint "$fingerprint" '
+      .network = "grpc"
+      | .security = "tls"
+      | .tlsSettings.serverName = $host
+      | .tlsSettings.minVersion = (.tlsSettings.minVersion // "1.2")
+      | .tlsSettings.maxVersion = (.tlsSettings.maxVersion // "1.3")
+      | .tlsSettings.certificates = [{
+          certificateFile:$certFile,
+          keyFile:$keyFile,
+          oneTimeLoading:false,
+          usage:"encipherment"
+        }]
+      | .tlsSettings.alpn = ["h2"]
+      | .tlsSettings.settings.fingerprint = $fingerprint
+      | .externalProxy[0].fingerprint = $fingerprint
+      | .grpcSettings.serviceName = $serviceName
+      | .grpcSettings.authority = (.grpcSettings.authority // "")
+      | .grpcSettings.multiMode = (.grpcSettings.multiMode // false)
+    '
 }
 
 # Строит общую TLS-конфигурацию для управляемых inbound с локальным сертификатом.
 build_tls_settings_json() {
-	local server_name=$1 cert_file=$2 key_file=$3 alpn_json=$4 fingerprint=${5:-chrome}
+	local server_name=$1 cert_file=$2 key_file=$3 alpn_json=$4 fingerprint=${5:-}
+	[[ -n "$fingerprint" ]] || fingerprint=$(select_tls_fingerprint)
 	jq -nc \
 		--arg serverName "$server_name" \
 		--arg certFile "$cert_file" \
@@ -431,13 +540,15 @@ build_tls_settings_json() {
 # Строит streamSettings для TCP/REALITY Vision с ключами и fallback-назначением.
 build_vision_stream_json() {
 	local target=$1 sni=$2 private_key=$3 public_key=$4 short_ids=${5:-'[""]'} sockopt=${6:-'{}'} mldsa_seed=${7:-} mldsa_verify=${8:-} target_xver=${9:-0}
-	local external_proxy
+	local external_proxy fingerprint
 	external_proxy=$(build_external_proxy_json "$sni")
+	fingerprint=$(select_tls_fingerprint)
 	jq -nc \
 		--arg target "$target" \
 		--arg sni "$sni" \
 		--arg privateKey "$private_key" \
 		--arg publicKey "$public_key" \
+		--arg fingerprint "$fingerprint" \
 		--arg mldsaSeed "$mldsa_seed" \
 		--arg mldsaVerify "$mldsa_verify" \
 		--argjson shortIds "$short_ids" \
@@ -455,12 +566,12 @@ build_vision_stream_json() {
             privateKey:$privateKey,
             minClientVer:"",
             maxClientVer:"",
-            maxTimediff:0,
+            maxTimeDiff:0,
             shortIds:$shortIds,
             mldsa65Seed:$mldsaSeed,
             settings:{
               publicKey:$publicKey,
-              fingerprint:"chrome",
+              fingerprint:$fingerprint,
               serverName:"",
               spiderX:"/",
               mldsa65Verify:$mldsaVerify
@@ -473,11 +584,12 @@ build_vision_stream_json() {
 
 # Строит streamSettings для VLESS gRPC backend с TLS между Traefik и Xray.
 build_grpc_stream_json() {
-	local path=$1 host=$2 cert_file=$3 key_file=$4 service_name external_proxy tls_settings
+	local path=$1 host=$2 cert_file=$3 key_file=$4 service_name external_proxy tls_settings fingerprint
 	service_name=${path#/}
 	service_name=${service_name%/}
-	external_proxy=$(build_external_proxy_json "$host" tls)
-	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h2"]' chrome)
+	fingerprint=$(select_tls_fingerprint)
+	external_proxy=$(build_external_proxy_json "$host" tls '["h2"]' "$fingerprint")
+	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h2"]' "$fingerprint")
 	jq -nc \
 		--arg serviceName "$service_name" \
 		--argjson externalProxy "$external_proxy" \
@@ -498,7 +610,7 @@ build_grpc_stream_json() {
 build_xhttp_stream_json() {
 	local path=$1 host=$2 sockopt external_proxy
 	sockopt=$(build_sockopt_json false UseIP tproxy)
-	external_proxy=$(build_external_proxy_json "$host" tls)
+	external_proxy=$(build_external_proxy_json "$host" tls '["h2","http/1.1"]')
 	jq -nc --arg path "$path" --arg host "$host" --argjson sockopt "$sockopt" --argjson externalProxy "$external_proxy" '{
       network:"xhttp",
       security:"none",

@@ -110,6 +110,33 @@ class ProcessorTests(unittest.TestCase):
 
         self.assertEqual("proxy", result["geodata"]["outbound"])
 
+    def test_removes_removed_xray_tls_allow_insecure_from_outbounds(self):
+        payload = {
+            "outbounds": [
+                {
+                    "tag": "proxy",
+                    "streamSettings": {
+                        "security": "tls",
+                        "tlsSettings": {
+                            "serverName": "screenhub.linkpc.net",
+                            "allowInsecure": False,
+                            "settings": {
+                                "allowInsecure": False,
+                                "pinnedPeerCertSha256": ["pin"],
+                            },
+                        },
+                    },
+                }
+            ]
+        }
+
+        result = self.server.apply_geodata(payload, None)
+        tls_settings = result["outbounds"][0]["streamSettings"]["tlsSettings"]
+
+        self.assertNotIn("allowInsecure", tls_settings)
+        self.assertNotIn("allowInsecure", tls_settings["settings"])
+        self.assertEqual(["pin"], tls_settings["settings"]["pinnedPeerCertSha256"])
+
     def test_assets_override_must_be_valid_array(self):
         with self.assertRaises(ValueError):
             self.server.build_geodata({"SUB_JSON_GEODATA_ASSETS_JSON": '{"url":"bad"}'})

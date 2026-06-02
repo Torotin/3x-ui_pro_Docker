@@ -191,23 +191,25 @@ test_country_flag_value_from_trace_extracts_loc() {
 }
 
 test_client_vless_uuid_normalizes_api_variants() {
-	local from_uuid from_auth invalid
-	from_uuid=$(client_vless_uuid '{"uuid":"11111111-2222-3333-4444-555555555555","id":7}')
-	from_auth=$(client_vless_uuid '{"uuid":"","id":7,"auth":"f53822306a5eaed7357e4578f8c53bdd"}')
+	local from_uuid from_auth invalid invalid_random_secret
+	from_uuid=$(client_vless_uuid '{"uuid":"11111111-2222-3333-8444-555555555555","id":7}')
+	from_auth=$(client_vless_uuid '{"uuid":"","id":7,"auth":"5c06031be7354024b568009e0cb47422"}')
 	invalid=$(client_vless_uuid '{"id":7,"auth":""}' 2>/dev/null || true)
-	assert_eq "11111111-2222-3333-4444-555555555555" "$from_uuid" "client UUID field must be preferred"
-	assert_eq "f5382230-6a5e-aed7-357e-4578f8c53bdd" "$from_auth" "32-hex auth fallback must normalize to UUID"
+	invalid_random_secret=$(client_vless_uuid '{"id":7,"uuid":"5c06031b-e735-e024-7568-009e0cb47422","password":"d9c67df9b9e4cd267c58c6cca150f1be","auth":"5c06031be735e0247568009e0cb47422"}' 2>/dev/null || true)
+	assert_eq "11111111-2222-3333-8444-555555555555" "$from_uuid" "client UUID field must be preferred"
+	assert_eq "5c06031b-e735-4024-b568-009e0cb47422" "$from_auth" "valid 32-hex auth fallback must normalize to UUID"
 	assert_eq "" "$invalid" "numeric row id must not be treated as VLESS UUID"
+	assert_eq "" "$invalid_random_secret" "random 32-hex secrets must not be treated as VLESS UUID"
 }
 
 test_inbound_vless_client_uuid_recovers_polluted_global_client() {
 	local recovered
 	inbound_by_id_json() {
-		printf '%s' '{"settings":{"clients":[{"email":"autogen","id":"f5382230-6a5e-aed7-357e-4578f8c53bdd","flow":"xtls-rprx-vision"}]}}'
+		printf '%s' '{"settings":{"clients":[{"email":"autogen","id":"5c06031b-e735-4024-b568-009e0cb47422","flow":"xtls-rprx-vision"}]}}'
 	}
 	recovered=$(inbound_vless_client_uuid 1 autogen)
 	unset -f inbound_by_id_json
-	assert_eq "f5382230-6a5e-aed7-357e-4578f8c53bdd" "$recovered" "VLESS UUID must recover from inbound settings"
+	assert_eq "5c06031b-e735-4024-b568-009e0cb47422" "$recovered" "VLESS UUID must recover from inbound settings"
 }
 
 test_resolve_panel_base_prioritizes_configured_web_port() {
@@ -561,7 +563,7 @@ test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs() {
 }
 
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
-	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls
+	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls penetrate ep_sni ep_fp ep_alpn ep_insecure
 	stream=$(build_xhttp_stream_json /xhttp screenhub.linkpc.net)
 	headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers')
 	server=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers.Server')
@@ -573,6 +575,11 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	access_headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Access-Control-Allow-Headers"]')
 	tproxy=$(printf '%s' "$stream" | jq -r '.sockopt.tproxy')
 	force_tls=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
+	penetrate=$(printf '%s' "$stream" | jq -r '.sockopt.penetrate')
+	ep_sni=$(printf '%s' "$stream" | jq -r '.externalProxy[0].sni')
+	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
+	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
+	ep_insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
 	assert_eq 3 "$(printf '%s' "$headers" | jq 'length')" "XHTTP headers should stay minimal"
 	assert_eq null "$server" "XHTTP headers must not spoof nginx Server"
 	assert_eq null "$content_type" "XHTTP headers must not force HTML content type"
@@ -583,10 +590,15 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	assert_eq "GET, POST" "$access_methods" "XHTTP CORS methods should match official transport guidance"
 	assert_eq tproxy "$tproxy" "old XHTTP sockopt tproxy was not restored"
 	assert_eq tls "$force_tls" "XHTTP externalProxy must publish TLS subscription links through Traefik"
+	assert_eq null "$penetrate" "XHTTP sockopt must not emit removed penetrate field"
+	assert_eq screenhub.linkpc.net "$ep_sni" "XHTTP externalProxy must publish SNI for TLS subscriptions"
+	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "XHTTP externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
+	assert_eq h2,http/1.1 "$ep_alpn" "XHTTP externalProxy must publish modern TLS ALPN hints"
+	assert_eq 0 "$ep_insecure" "XHTTP stream must not contain removed allowInsecure anywhere"
 }
 
 test_grpc_stream_uses_tls_backend_settings() {
-	local stream network security service_name alpn cert_file key_file scheme
+	local stream network security service_name alpn cert_file key_file scheme fp ep_sni ep_fp ep_alpn insecure
 	stream=$(build_grpc_stream_json /grpc screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key)
 	network=$(printf '%s' "$stream" | jq -r '.network')
 	security=$(printf '%s' "$stream" | jq -r '.security')
@@ -595,6 +607,11 @@ test_grpc_stream_uses_tls_backend_settings() {
 	cert_file=$(printf '%s' "$stream" | jq -r '.tlsSettings.certificates[0].certificateFile')
 	key_file=$(printf '%s' "$stream" | jq -r '.tlsSettings.certificates[0].keyFile')
 	scheme=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
+	fp=$(printf '%s' "$stream" | jq -r '.tlsSettings.settings.fingerprint')
+	ep_sni=$(printf '%s' "$stream" | jq -r '.externalProxy[0].sni')
+	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
+	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
+	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
 	assert_eq grpc "$network" "gRPC stream must use grpc network"
 	assert_eq tls "$security" "gRPC stream must use TLS backend security"
 	assert_eq grpc "$service_name" "gRPC serviceName must strip the leading slash"
@@ -602,10 +619,15 @@ test_grpc_stream_uses_tls_backend_settings() {
 	assert_eq /etc/x-ui/xray.crt "$cert_file" "gRPC TLS certificate path mismatch"
 	assert_eq /etc/x-ui/xray.key "$key_file" "gRPC TLS key path mismatch"
 	assert_eq tls "$scheme" "gRPC externalProxy must publish TLS links"
+	[[ "$fp" =~ ^(random|firefox|safari)$ ]] || fail "gRPC TLS fingerprint must be random/firefox/safari; got '$fp'"
+	assert_eq screenhub.linkpc.net "$ep_sni" "gRPC externalProxy must publish SNI for TLS subscriptions"
+	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "gRPC externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
+	assert_eq h2 "$ep_alpn" "gRPC externalProxy must publish h2 ALPN"
+	assert_eq 0 "$insecure" "gRPC stream must not contain removed allowInsecure anywhere"
 }
 
 test_hysteria2_stream_and_settings_use_required_auth() {
-	local stream settings components network security alpn masq_type masq_url auth stream_auth email protocol
+	local stream settings components network security alpn masq_type masq_url auth stream_auth email protocol tg_id group comment
 	stream=$(build_hysteria2_stream_json screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key transport-auth)
 	settings=$(build_hysteria2_settings_json '' "$(build_desired_state)")
 	components=$(build_inbound_components_json hysteria2 "$(build_desired_state)")
@@ -618,6 +640,9 @@ test_hysteria2_stream_and_settings_use_required_auth() {
 	stream_auth=$(printf '%s' "$components" | jq -r '.streamSettings.hysteriaSettings.auth')
 	email=$(printf '%s' "$settings" | jq -r '.clients[0].email')
 	protocol=$(printf '%s' "$components" | jq -r '.protocol')
+	tg_id=$(printf '%s' "$settings" | jq -r '.clients[0].tgId')
+	group=$(printf '%s' "$settings" | jq -r '.clients[0].group')
+	comment=$(printf '%s' "$settings" | jq -r '.clients[0].comment')
 	assert_eq hysteria "$network" "Hysteria2 stream must use hysteria transport"
 	assert_eq tls "$security" "Hysteria2 stream must use TLS"
 	assert_eq h3 "$alpn" "Hysteria2 TLS ALPN must use h3"
@@ -628,6 +653,9 @@ test_hysteria2_stream_and_settings_use_required_auth() {
 	assert_eq "$(printf '%s' "$components" | jq -r '.settings.clients[0].auth')" "$stream_auth" "Hysteria2 transport auth must mirror inbound client auth"
 	assert_eq autogen "$email" "Hysteria2 must reuse the shared managed client email"
 	assert_eq hysteria "$protocol" "Hysteria2 inbound must use Xray hysteria protocol with version=2"
+	assert_eq 0 "$tg_id" "Hysteria2 client tgId must be numeric for 3x-ui 3.1 validation"
+	assert_eq "" "$group" "Hysteria2 client group must be present as an empty string"
+	assert_eq "" "$comment" "Hysteria2 client comment must be present as an empty string"
 }
 
 test_vision_stream_restores_old_reality_external_proxy() {
@@ -640,18 +668,44 @@ test_vision_stream_restores_old_reality_external_proxy() {
 }
 
 test_vision_stream_is_clean_self_steal() {
-	local stream show target target_xver server_name empty_short_ids
+	local stream show target target_xver server_name empty_short_ids max_time_diff legacy_max_timediff penetrate fp insecure
 	stream=$(build_vision_stream_json telemt:9443 screenhub.linkpc.net private public '["aa","bb"]' "$(build_sockopt_json false AsIs off)" '' '' 1)
 	show=$(printf '%s' "$stream" | jq -r '.realitySettings.show')
 	target=$(printf '%s' "$stream" | jq -r '.realitySettings.target // empty')
 	target_xver=$(printf '%s' "$stream" | jq -r '.realitySettings.xver')
 	server_name=$(printf '%s' "$stream" | jq -r '.realitySettings.serverNames[0]')
 	empty_short_ids=$(printf '%s' "$stream" | jq '[.realitySettings.shortIds[] | select(. == "")] | length')
+	max_time_diff=$(printf '%s' "$stream" | jq -r '.realitySettings.maxTimeDiff')
+	legacy_max_timediff=$(printf '%s' "$stream" | jq -r '.realitySettings.maxTimediff')
+	penetrate=$(printf '%s' "$stream" | jq -r '.sockopt.penetrate')
+	fp=$(printf '%s' "$stream" | jq -r '.realitySettings.settings.fingerprint')
+	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
 	assert_eq false "$show" "Reality show must be false for anti-probing clean install"
 	assert_eq telemt:9443 "$target" "Reality self-steal target must point to Telemt before Traefik"
 	assert_eq 1 "$target_xver" "Reality self-steal target must send PROXY protocol to Telemt"
 	assert_eq screenhub.linkpc.net "$server_name" "Reality serverNames must whitelist the public front domain"
 	assert_eq 0 "$empty_short_ids" "Reality shortIds must not contain empty example values"
+	assert_eq 0 "$max_time_diff" "Reality stream must use current maxTimeDiff field"
+	assert_eq null "$legacy_max_timediff" "Reality stream must not use legacy misspelled maxTimediff field"
+	assert_eq null "$penetrate" "Reality sockopt must not emit removed penetrate field"
+	[[ "$fp" =~ ^(random|firefox|safari)$ ]] || fail "Reality fingerprint must be random/firefox/safari; got '$fp'"
+	assert_eq 0 "$insecure" "Reality stream must not contain removed allowInsecure anywhere"
+}
+
+test_existing_vision_stream_is_sanitized_without_regenerating_keys() {
+	local current stream private_key public_key fingerprint insecure legacy_max_timediff
+	current='{"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"privateKey":"old-private","maxTimediff":0,"settings":{"publicKey":"old-public","fingerprint":"chrome","allowInsecure":false}},"sockopt":{"penetrate":true},"externalProxy":[{"forceTls":"same","dest":"screenhub.linkpc.net","port":443,"allowInsecure":false}]}}'
+	stream=$(build_inbound_stream_json vision "$current")
+	private_key=$(printf '%s' "$stream" | jq -r '.realitySettings.privateKey')
+	public_key=$(printf '%s' "$stream" | jq -r '.realitySettings.settings.publicKey')
+	fingerprint=$(printf '%s' "$stream" | jq -r '.realitySettings.settings.fingerprint')
+	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
+	legacy_max_timediff=$(printf '%s' "$stream" | jq -r '.realitySettings.maxTimediff')
+	assert_eq old-private "$private_key" "existing Vision private key must be preserved"
+	assert_eq old-public "$public_key" "existing Vision public key must be preserved"
+	[[ "$fingerprint" =~ ^(random|firefox|safari)$ ]] || fail "existing Vision fingerprint must be refreshed; got '$fingerprint'"
+	assert_eq 0 "$insecure" "existing Vision stream must be stripped from allowInsecure"
+	assert_eq null "$legacy_max_timediff" "existing Vision stream must drop legacy maxTimediff"
 }
 
 test_vision_settings_include_telemt_fallback_preserving_clients() {
@@ -672,10 +726,12 @@ test_vision_settings_include_telemt_fallback_preserving_clients() {
 }
 
 test_vless_client_api_payloads_match_3x_ui_31_contract() {
-	local client create_payload tg_id inbound_count create_email update_email update_uuid update_auth update_password legacy_settings
+	local client create_payload tg_id group security inbound_count create_email update_email update_uuid update_auth update_password legacy_settings
 	client=$(vless_client_api_json client-id a@example.test stable-sub xtls-rprx-vision client-password client-auth)
 	create_payload=$(vless_client_create_payload_json '[12,13]' "$client")
 	tg_id=$(printf '%s' "$client" | jq -r '.tgId')
+	group=$(printf '%s' "$client" | jq -r '.group')
+	security=$(printf '%s' "$client" | jq -r '.security')
 	update_email=$(printf '%s' "$client" | jq -r '.email')
 	update_uuid=$(printf '%s' "$client" | jq -r '.uuid')
 	update_password=$(printf '%s' "$client" | jq -r '.password')
@@ -684,6 +740,8 @@ test_vless_client_api_payloads_match_3x_ui_31_contract() {
 	create_email=$(printf '%s' "$create_payload" | jq -r '.client.email')
 	legacy_settings=$(printf '%s' "$create_payload" | jq -r '.settings // empty')
 	assert_eq 0 "$tg_id" "3x-ui 3.1 client tgId must be numeric"
+	assert_eq "" "$group" "3x-ui 3.1 client group must be present as an empty string"
+	assert_eq auto "$security" "3x-ui 3.1 client security must default to auto"
 	assert_eq a@example.test "$update_email" "3x-ui 3.1 update payload must be the direct client object"
 	assert_eq client-id "$update_uuid" "3x-ui 3.1 VLESS payload must include uuid as well as id"
 	assert_eq client-password "$update_password" "shared client payload must carry password for non-VLESS protocols"
@@ -721,6 +779,9 @@ test_shared_client_create_still_syncs_vless_inbounds_without_grpc() {
 	ensure_vless_inbound_client() {
 		synced+=("$1:$4:$5")
 	}
+	ensure_vless_stream() {
+		return 0
+	}
 	ensure_shared_client 1 2 "" 4 "$desired"
 	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
 	assert_eq "1,2,4" "$add_inbounds" "shared client create must target Vision, XHTTP and Hysteria2 when gRPC is disabled"
@@ -728,9 +789,56 @@ test_shared_client_create_still_syncs_vless_inbounds_without_grpc() {
 	assert_eq "2::XHTTP" "${synced[1]}" "XHTTP inbound client must be explicitly synchronized after shared client create"
 	assert_eq 2 "${#synced[@]}" "only VLESS inbounds are synchronized inside ensure_shared_client"
 	[[ -n "$ENSURE_SHARED_CLIENT_ID" ]] || fail "shared client id must be available after create"
-	unset -f clients_json xui_add_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client
+	unset -f clients_json xui_add_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
 	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
 	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_existing_shared_client_with_invalid_uuid_is_repaired() {
+	local desired update_payload synced=()
+	export MODE=apply
+	export CLIENT_EMAIL_PREFIX=autogen
+	export CLIENT_SUB_ID=stable-sub
+	# shellcheck disable=SC2034 # record_change mutates this runtime global during the fixture.
+	CHANGE_COUNT=0
+	# shellcheck disable=SC2034 # ensure_shared_client mutates this runtime global during the fixture.
+	RESTART_XRAY_REQUIRED=0
+	desired=$(build_desired_state)
+	clients_json() {
+		printf '%s\n' '[{"id":1,"email":"autogen","subId":"old-sub","uuid":"5c06031b-e735-e024-7568-009e0cb47422","password":"d9c67df9b9e4cd267c58c6cca150f1be","auth":"5c06031be735e0247568009e0cb47422","flow":"","inboundIds":[1,2,4]}]'
+	}
+	inbound_vless_client_uuid() {
+		return 1
+	}
+	new_uuid() {
+		printf '%s' "87853b09-32fc-49e0-95ad-2651948b7e3e"
+	}
+	xui_update_client() {
+		update_payload=$2
+	}
+	xui_attach_client() {
+		fail "invalid UUID repair must not attach already attached inbounds"
+	}
+	http_success_json() {
+		return 0
+	}
+	repair_shared_client_db() {
+		return 0
+	}
+	ensure_vless_inbound_client() {
+		synced+=("$2:$5")
+	}
+	ensure_vless_stream() {
+		return 0
+	}
+	ensure_shared_client 1 2 "" 4 "$desired"
+	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.id')" "invalid first-class UUID must be replaced with a valid UUID"
+	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.uuid')" "update payload must carry matching uuid"
+	assert_eq 2 "${#synced[@]}" "repaired UUID must be synced to VLESS inbounds"
+	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e:Vision" "${synced[0]}" "Vision sync must use repaired UUID"
+	unset -f clients_json inbound_vless_client_uuid new_uuid xui_update_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
+	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
 	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
 }
 
@@ -795,6 +903,34 @@ test_warp_balancer_can_opt_in_console_warp() {
 	assert_eq "usque,warp" "$selectors" "Console WARP opt-in selectors mismatch"
 	assert_eq "usque:socks,warp:wireguard" "$protocols" "Console WARP opt-in protocols mismatch"
 	assert_eq "usque,warp" "$burst_subjects" "Console WARP opt-in burstObservatory selectors mismatch"
+}
+
+test_mihomo_outbound_and_terminal_rule_are_added_when_available() {
+	local base updated outbound_count last_rule_tag last_rule_network
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
+
+	updated=$(json_apply_managed_xray_state "$base" '[]' false false false '[]' "screenhub.linkpc.net" '[]' '' true '[{"tag":"mihomo","host":"mihomo","port":7890}]')
+	outbound_count=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="mihomo" and .protocol=="socks" and .settings.servers[0].address=="mihomo" and .settings.servers[0].port==7890 and (.settings.servers[0].users | length)==0)] | length')
+	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
+	last_rule_network=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].network')
+
+	assert_eq 1 "$outbound_count" "Mihomo SOCKS outbound must be added when endpoint is available"
+	assert_eq mihomo "$last_rule_tag" "Mihomo rule must be appended as the terminal routing rule"
+	assert_eq tcp,udp "$last_rule_network" "Mihomo terminal routing rule must cover TCP and UDP"
+}
+
+test_existing_mihomo_outbound_and_rule_are_preserved() {
+	local base updated port rule_index last_rule_tag
+	base='{"xraySetting":{"outbounds":[{"tag":"mihomo","protocol":"socks","settings":{"servers":[{"address":"custom-mihomo","port":17890,"users":[{"user":"kept"}]}]}}],"routing":{"rules":[{"type":"field","network":"tcp,udp","outboundTag":"mihomo"},{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
+
+	updated=$(json_apply_managed_xray_state "$base" '[]' false false false '[]' "screenhub.linkpc.net" '[]' '' true '[{"tag":"mihomo","host":"mihomo","port":7890}]')
+	port=$(printf '%s' "$updated" | jq -r '.xraySetting.outbounds[] | select(.tag=="mihomo") | .settings.servers[0].port')
+	rule_index=$(printf '%s' "$updated" | jq '.xraySetting.routing.rules | map((.outboundTag // "") == "mihomo") | index(true)')
+	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
+
+	assert_eq 17890 "$port" "existing Mihomo outbound must not be overwritten"
+	assert_eq 0 "$rule_index" "existing Mihomo routing rule must not be moved"
+	assert_eq blocked "$last_rule_tag" "existing terminal rule order must be preserved when Mihomo rule already exists"
 }
 
 test_managed_burst_observatory_preserves_custom_subjects() {
@@ -877,6 +1013,63 @@ test_tor_proxy_probe_requires_confirmed_tor_route() {
 		fail "IsTor=false response must fail TOR proxy probe"
 	fi
 	unset -f curl
+}
+
+test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
+	local tmp seen_file
+	tmp=$(mktemp -d)
+	seen_file="$tmp/seen"
+	HTTP_BODY_FILE="$tmp/body.json"
+	# shellcheck disable=SC2034 # apply_managed_xray consumes this runtime global.
+	TMP_ROOT="$tmp"
+	export MODE=apply
+	export XRAY_MANAGED_DNS=false
+	export XRAY_MANAGED_WARP=false
+	export XRAY_MANAGED_TOR=false
+	export ENABLE_MIHOMO=true
+	export MIHOMO_PROXY_HOST=mihomo
+	export MIHOMO_PROXY_PORT=7890
+	export WEBDOMAIN=screenhub.linkpc.net
+	# shellcheck disable=SC2034 # record_change mutates this runtime global in apply fixtures.
+	CHANGE_COUNT=0
+	# shellcheck disable=SC2034 # apply_managed_xray mutates this runtime global when updates are applied.
+	RESTART_PANEL_REQUIRED=0
+	# shellcheck disable=SC2034 # apply_managed_xray mutates this runtime global when updates are applied.
+	RESTART_XRAY_REQUIRED=0
+	xui_get_xray_settings() {
+		printf '%s\n' '{"obj":"{\"xraySetting\":{\"outbounds\":[],\"routing\":{\"rules\":[]}}}"}' >"$HTTP_BODY_FILE"
+	}
+	http_success_json() {
+		return 0
+	}
+	available_dns_servers() {
+		printf '[]'
+	}
+	tcp_endpoint_available() {
+		[[ "$1:$2" == "mihomo:7890" ]]
+	}
+	json_apply_managed_xray_state() {
+		printf '%s\n' "${11}" >>"$seen_file"
+		printf '%s' "$1"
+	}
+	plan_or_apply() {
+		return 1
+	}
+
+	apply_managed_xray
+
+	assert_eq '[{"tag":"mihomo","host":"mihomo","port":7890}]' "$(sed -n '1p' "$seen_file")" "reachable Mihomo endpoint must be passed to managed Xray state"
+	tcp_endpoint_available() {
+		return 1
+	}
+	: >"$seen_file"
+	apply_managed_xray
+	assert_eq '[]' "$(sed -n '1p' "$seen_file")" "unreachable Mihomo endpoint must not be passed to managed Xray state"
+	unset -f xui_get_xray_settings http_success_json available_dns_servers tcp_endpoint_available json_apply_managed_xray_state plan_or_apply
+	unset MODE XRAY_MANAGED_DNS XRAY_MANAGED_WARP XRAY_MANAGED_TOR ENABLE_MIHOMO MIHOMO_PROXY_HOST MIHOMO_PROXY_PORT WEBDOMAIN
+	rm -rf "$tmp"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
 }
 
 test_afterstart_entrypoint_loads_runtime_modules() {
@@ -966,6 +1159,33 @@ test_panel_restart_does_not_suppress_xray_restart() {
 	fi
 }
 
+test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
+	local checks joined
+	checks=()
+	export ENABLE_HYSTERIA2=true
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_HYSTERIA=3443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	wait_tcp_port() {
+		checks+=("tcp:$2:$4")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1:$3")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
+	assert_eq "tcp:1443:Vision inbound 1443 tcp:2443:XHTTP inbound 2443 udp:3443:Hysteria2 inbound 3443/udp" "$joined" "managed port wait must include Hysteria2 UDP listener"
+	unset -f wait_tcp_port wait_udp_port_listener
+	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
 test_warp_outbound_from_registration_prefers_panel_host_endpoint() {
 	local config outbound endpoint reserved
 	config='{"client_id":"N1cA","peers":[{"public_key":"peer-pub","endpoint":{"v4":"162.159.192.10:0","host":"engage.cloudflareclient.com:2408"}}],"interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8e67:a9a4:3ae0:2482:245b"}}}'
@@ -1033,13 +1253,17 @@ test_grpc_stream_uses_tls_backend_settings
 test_hysteria2_stream_and_settings_use_required_auth
 test_vision_stream_restores_old_reality_external_proxy
 test_vision_stream_is_clean_self_steal
+test_existing_vision_stream_is_sanitized_without_regenerating_keys
 test_vision_settings_include_telemt_fallback_preserving_clients
 test_vless_client_api_payloads_match_3x_ui_31_contract
 test_shared_client_create_still_syncs_vless_inbounds_without_grpc
+test_existing_shared_client_with_invalid_uuid_is_repaired
 test_vless_inbound_client_sync_writes_uuid
 test_tor_balancer_uses_single_proxy_endpoint
 test_warp_balancer_uses_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp
+test_mihomo_outbound_and_terminal_rule_are_added_when_available
+test_existing_mihomo_outbound_and_rule_are_preserved
 test_managed_burst_observatory_preserves_custom_subjects
 test_managed_xray_preserves_unmanaged_balancers_and_rules
 test_unhealthy_external_proxies_create_no_managed_xray_artifacts
@@ -1047,12 +1271,14 @@ test_only_healthy_external_proxies_enter_xray_state
 test_runtime_does_not_probe_legacy_torproxy_endpoint
 test_warp_proxy_probe_requires_confirmed_warp_route
 test_tor_proxy_probe_requires_confirmed_tor_route
+test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable
 test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
+test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol
