@@ -30,6 +30,8 @@ Service URLs:
   Dozzle Logs      : ${SUMMARY_URL_DOZZLE}
   Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
   Telemt Panel     : ${SUMMARY_URL_TELEMT_PANEL}
+  Mihomo UI        : ${SUMMARY_URL_MIHOMO_UI}
+  Mihomo secret    : ${SUMMARY_MIHOMO_SECRET}
 
 Local service endpoints:
   Traefik HTTPS    : internal Docker websecure :${SUMMARY_PORT_LOCAL_TRAEFIK} (not public)
@@ -59,3 +61,4 @@ Generated files:
   Install env      : ${INSTALL_STATE_DIR}/install.env
   Compose env      : ${SUMMARY_COMPOSE_ENV}
   Summary          : ${SUMMARY_OUTPUT_FILE}
+  Mihomo config    : ${INSTALL_ROOT}/mihomo/config.yaml

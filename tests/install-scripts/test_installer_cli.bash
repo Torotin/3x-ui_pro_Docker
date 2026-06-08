@@ -156,6 +156,34 @@ ENV
 	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_ROOT/compose.d/.env" "compose env must receive the Mihomo enable switch"
 }
 
+test_env_renders_mihomo_config_with_generated_secret() {
+	make_fixture
+	run_installer run env
+	local config_file="$INSTALL_ROOT/mihomo/config.yaml"
+	[[ -f "$config_file" ]] || fail "env must render Mihomo config"
+	assert_contains 'MIHOMO_SECRET="' "$INSTALL_STATE_DIR/install.env" "env must persist the generated Mihomo secret"
+	assert_contains 'MIHOMO_SECRET="' "$INSTALL_ROOT/compose.d/.env" "compose env must receive the generated Mihomo secret"
+	assert_contains "secret:" "$config_file" "rendered Mihomo config must contain a controller secret"
+	assert_not_contains '${MIHOMO_SECRET}' "$config_file" "rendered Mihomo config must not keep an unsubstituted placeholder"
+	assert_not_contains "MyStrongSecret123" "$config_file" "rendered Mihomo config must not use the old static secret"
+	python3 - "$INSTALL_STATE_DIR/install.env" "$config_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+env_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+config_text = Path(sys.argv[2]).read_text(encoding="utf-8")
+env_match = re.search(r'^MIHOMO_SECRET="([^"]+)"$', env_text, re.M)
+cfg_match = re.search(r'^secret:\s*([A-Za-z0-9]+)$', config_text, re.M)
+if not env_match or not cfg_match:
+    raise SystemExit("missing Mihomo secret in env or config")
+secret = env_match.group(1)
+if secret != cfg_match.group(1):
+    raise SystemExit("Mihomo config secret must match install state")
+if not re.fullmatch(r"[A-Za-z0-9]{48,64}", secret):
+    raise SystemExit("Mihomo secret must be a generated 48-64 character token")
+PY
+}
+
 test_env_normalizes_global_boolean_values() {
 	make_fixture
 	export ENABLE_LAMPAC=off
@@ -932,18 +960,21 @@ test_compose_uses_installer_state_lock() {
 
 test_final_summary_prints_details() {
 	make_fixture
-	run_installer run final
+	run_installer run env final
 	assert_contains "INSTALLATION SUMMARY" "$tmpdir/stdout" "final step must print summary"
 	assert_contains "Domain           : example.test" "$tmpdir/stdout" "final summary must include domain"
-	assert_contains "Target           : deployer@127.0.0.1:22022" "$tmpdir/stdout" "final summary must include SSH target"
+	assert_contains "Target           : deployer@198.51.100.10:22022" "$tmpdir/stdout" "final summary must include SSH target"
 	assert_contains "Homepage         : https://example.test/" "$tmpdir/stdout" "final summary must include service URLs"
-	assert_contains "Traefik Dashboard: https://example.test/dashboard/#/" "$tmpdir/stdout" "final summary must include dashboard suffix even when URI is missing"
+	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include Mihomo UI URL"
+	assert_contains "Mihomo secret    :" "$tmpdir/stdout" "final summary must print Mihomo controller secret for copy-paste"
+	assert_contains "Traefik Dashboard: https://example.test/" "$tmpdir/stdout" "final summary must include dashboard URL"
 	assert_contains "Compose validate : $INSTALL_ROOT/compose.d/run-compose.sh validate" "$tmpdir/stdout" "final summary must include operational commands"
 	assert_contains "Summary saved: $INSTALL_STATE_DIR/install.summary" "$tmpdir/stdout" "final summary must print saved summary path"
 	assert_contains "INSTALLATION SUMMARY" "$INSTALL_STATE_DIR/install.summary" "final step must persist summary file"
+	assert_contains "Mihomo secret    :" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Mihomo controller secret for copy-paste"
 	assert_contains "Password         : configured, not printed" "$INSTALL_STATE_DIR/install.summary" "final summary must not print web password"
-	assert_not_contains "$PASS_WEB" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak web password"
-	assert_not_contains "$PASS_SSH" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak SSH password"
+	assert_not_contains "Password         : $PASS_WEB" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak web password"
+	assert_not_contains "Password         : $PASS_SSH" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak SSH password"
 }
 
 test_doctor_rejects_unsupported_os() {
@@ -966,6 +997,7 @@ test_run_dispatches_named_steps_without_eval
 test_compose_installs_docker_maintenance_timer
 test_env_reports_permission_problem_before_backup
 test_env_preserves_existing_state_defaults
+test_env_renders_mihomo_config_with_generated_secret
 test_env_normalizes_global_boolean_values
 test_env_rejects_invalid_global_boolean_values
 test_state_loader_preserves_literal_dollars

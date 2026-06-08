@@ -112,6 +112,28 @@ assert_true(
     telemt_homepage_card.get("container") == "telemt",
     "Homepage Telemt card must follow the bundled panel container",
 )
+mihomo_homepage_card = find_homepage_service("Network & Security", "Mihomo")
+assert_true(
+    mihomo_homepage_card.get("href") == "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_MIHOMO}}/ui/",
+    "Homepage Mihomo card must point to the routed Zashboard UI",
+)
+assert_true(
+    "{{HOMEPAGE_VAR_MIHOMO_SECRET}}" in mihomo_homepage_card.get("description", ""),
+    "Homepage Mihomo card must expose the controller secret for copy-paste",
+)
+assert_true(
+    mihomo_homepage_card.get("container") == "mihomo",
+    "Homepage Mihomo card must follow the bundled Mihomo container",
+)
+homepage_env = homepage_compose["services"]["homepage"].get("environment") or {}
+assert_true(
+    homepage_env.get("HOMEPAGE_VAR_URI_MIHOMO") == "${URI_MIHOMO}",
+    "Homepage must receive the generated Mihomo route prefix",
+)
+assert_true(
+    homepage_env.get("HOMEPAGE_VAR_MIHOMO_SECRET") == "${MIHOMO_SECRET}",
+    "Homepage must receive the generated Mihomo controller secret",
+)
 
 xui_compose = load_yaml("docker-proxy/compose.d/12-3x-ui.yml")
 xui_service = xui_compose["services"]["3x-ui"]
@@ -387,6 +409,9 @@ for file_name, service_name, key in [
         assert_true(admin_domain not in rule, f"{key} must not use separate admin subdomains")
 
 mihomo_labels = labels_for(load_yaml("docker-proxy/compose.d/16-mihomo.yml")["services"]["mihomo"])
+mihomo_template = (root / "script/template/mihomo.config.yaml.template").read_text(encoding="utf-8")
+assert_true("secret: ${MIHOMO_SECRET}" in mihomo_template, "Mihomo config template must render the generated controller secret")
+assert_true("MyStrongSecret123" not in mihomo_template, "Mihomo config template must not contain the old static secret")
 assert_true(mihomo_labels.get("traefik.enable") == "true", "Mihomo must enable Traefik explicitly")
 assert_true(mihomo_labels.get("traefik.docker.network") == "traefik-proxy", "Mihomo must pin Traefik to traefik-proxy")
 assert_true(mihomo_labels.get("traefik.tags") == "traefik", "Mihomo must match the Docker provider constraint")
