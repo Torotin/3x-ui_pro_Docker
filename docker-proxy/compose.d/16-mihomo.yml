@@ -3,8 +3,6 @@ services:
     container_name: mihomo
     image: metacubex/mihomo:latest
     restart: unless-stopped
-    environment:
-      - SAFE_PATHS=/zashboard
     volumes:
       - ../mihomo:/root/.config/mihomo
     networks:

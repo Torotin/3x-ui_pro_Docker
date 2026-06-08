@@ -149,6 +149,7 @@ ensure_env_defaults() {
 	: "${ENABLE_LAMPAC:=true}"
 	: "${ENABLE_TELEMT:=true}"
 	: "${ENABLE_MIHOMO:=true}"
+	: "${MIHOMO_SECRET:=$(generate_hex_secret 32)}"
 	: "${TELEMT_API_AUTH_HEADER:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_JWT_SECRET:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_PASSWORD_HASH:=}"
@@ -236,7 +237,7 @@ ensure_env_defaults() {
 	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_CROWDSEC_API
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
 	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
 	export TELEMT_ME_KEEPALIVE_ENABLED TELEMT_ME_KEEPALIVE_INTERVAL_SECS TELEMT_ME_KEEPALIVE_JITTER_SECS
 	export TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC TELEMT_ME_RECONNECT_BACKOFF_BASE_MS TELEMT_ME_RECONNECT_BACKOFF_CAP_MS TELEMT_ME_RECONNECT_FAST_RETRY_COUNT
@@ -358,6 +359,19 @@ render_telemt_configs() {
 	chmod 0600 "$telemt_config" "$telemt_panel_config" 2>/dev/null || true
 }
 
+render_mihomo_config() {
+	local templates mihomo_config
+	install_mihomo_enabled || return 0
+	templates=$(template_dir)
+	mihomo_config="$INSTALL_ROOT/mihomo/config.yaml"
+	backup_file "$mihomo_config"
+	render_env_template "$templates/mihomo.config.yaml.template" "$mihomo_config"
+	if grep -Fq '${MIHOMO_SECRET}' "$mihomo_config"; then
+		die "Mihomo config still contains an unsubstituted MIHOMO_SECRET placeholder"
+	fi
+	chmod 0600 "$mihomo_config" 2>/dev/null || true
+}
+
 install_env_command() {
 	require_writable_target "$INSTALL_STATE_DIR" "installer state directory"
 	require_writable_target "$INSTALL_STATE_DIR/backups" "installer backup directory"
@@ -383,9 +397,13 @@ install_env_command() {
 	render_env_template "$templates/install.env.template" "$install_env"
 	render_env_template "$templates/docker.env.template" "$compose_env"
 	render_telemt_configs
+	render_mihomo_config
 	run_cmd env.render printf 'rendered env files\n'
 	printf 'rendered:\n- %s\n- %s\n' "$install_env" "$compose_env"
 	if install_telemt_enabled; then
 		printf -- '- %s\n- %s\n' "$INSTALL_ROOT/telemt/config/config.toml" "$INSTALL_ROOT/telemt-panel/config/config.toml"
+	fi
+	if install_mihomo_enabled; then
+		printf -- '- %s\n' "$INSTALL_ROOT/mihomo/config.yaml"
 	fi
 }
