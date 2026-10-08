@@ -69,8 +69,7 @@ main() {
 	ensure_panel_settings
 	update_admin_credentials_if_needed
 	resolve_panel_base || die "Could not login after panel settings update."
-	ensure_custom_geo_resources
-	update_builtin_geofiles_if_enabled
+	repair_inbound_client_tg_ids_db
 
 	ensure_xray_tls_certificate "$(jq -r '.tls.certFile' <<<"$desired")" "$(jq -r '.tls.keyFile' <<<"$desired")"
 	ensure_inbound vision "$desired"
@@ -94,7 +93,9 @@ main() {
 	fi
 	repair_shared_client_after_inbound_sync "$desired"
 	apply_managed_xray
-	restart_if_needed
+	restart_xray_if_needed
+	update_builtin_geofiles_if_enabled
+	restart_panel_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"
 }
 

@@ -179,6 +179,62 @@ repair_shared_client_db() {
 	log WARN "Managed client DB repair skipped email=$email; sqlite update failed."
 }
 
+# 3x-ui 3.5 rejects inbound updates when stored settings still have string tgId
+# (even if the request payload already uses numeric tgId). Normalize in SQLite first.
+repair_inbound_client_tg_ids_db() {
+	local db=${XUI_DB_PATH:-/etc/x-ui/x-ui.db} changed
+	[[ "$MODE" == "apply" ]] || return 0
+	[[ -s "$db" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || {
+		log WARN "Inbound tgId repair skipped: python3 is unavailable."
+		return 0
+	}
+	changed=$(
+		XUI_DB_PATH="$db" python3 - <<'PY'
+import json
+import os
+import sqlite3
+
+db = os.environ.get("XUI_DB_PATH", "/etc/x-ui/x-ui.db")
+con = sqlite3.connect(db)
+cur = con.cursor()
+changed = 0
+for inbound_id, settings in cur.execute("select id, settings from inbounds"):
+    if not settings:
+        continue
+    try:
+        obj = json.loads(settings)
+    except Exception:
+        continue
+    dirty = False
+    for client in obj.get("clients") or []:
+        tg = client.get("tgId", 0)
+        if isinstance(tg, str):
+            text = tg.strip()
+            client["tgId"] = int(text) if text.lstrip("-").isdigit() else 0
+            dirty = True
+        elif tg is None:
+            client["tgId"] = 0
+            dirty = True
+    if dirty:
+        cur.execute(
+            "update inbounds set settings=? where id=?",
+            (json.dumps(obj, separators=(",", ":")), inbound_id),
+        )
+        changed += 1
+con.commit()
+con.close()
+print(changed)
+PY
+	) || {
+		log WARN "Inbound tgId repair skipped: sqlite/python update failed."
+		return 0
+	}
+	if [[ "${changed:-0}" != "0" ]]; then
+		log INFO "Normalized string tgId values in $changed inbound settings row(s)."
+	fi
+}
+
 jq_join_csv() {
 	jq -r 'join(",")'
 }
@@ -322,7 +378,18 @@ build_hysteria2_settings_json() {
     }')
 	jq -nc --argjson clients "$clients" --argjson client "$client" --arg legacyEmail "$legacy_email" --arg legacyHysteria "$legacy_hysteria_email" '{
       version:2,
-      clients:(([$clients[] | select(.email != $client.email and .email != $legacyEmail and .email != $legacyHysteria)] + [$client]))
+      clients:(
+        [
+          $clients[]
+          | select(.email != $client.email and .email != $legacyEmail and .email != $legacyHysteria)
+          | .tgId = (
+              if (.tgId|type) == "number" then .tgId
+              elif ((.tgId|tostring)|length) == 0 then 0
+              else ((.tgId|tonumber?) // 0)
+              end
+            )
+        ] + [$client]
+      )
     }'
 }
 
@@ -363,23 +430,10 @@ build_inbound_components_json() {
         }'
 }
 
-# Преобразует JSON-компоненты inbound в параметры form-urlencoded API.
-inbound_components_payload() {
+# Возвращает JSON inbound payload с nested settings/streamSettings для API 3.7.
+inbound_components_json() {
 	local components=$1
-	printf '%s\0' \
-		--data-urlencode "up=0" \
-		--data-urlencode "down=0" \
-		--data-urlencode "total=0" \
-		--data-urlencode "remark=$(jq -r '.remark' <<<"$components")" \
-		--data-urlencode "enable=$(jq -r '.enable // true' <<<"$components")" \
-		--data-urlencode "expiryTime=0" \
-		--data-urlencode "listen=" \
-		--data-urlencode "port=$(jq -r '.port' <<<"$components")" \
-		--data-urlencode "protocol=$(jq -r '.protocol' <<<"$components")" \
-		--data-urlencode "settings=$(jq -c '.settings' <<<"$components")" \
-		--data-urlencode "streamSettings=$(jq -c '.streamSettings' <<<"$components")" \
-		--data-urlencode "sniffing=$(jq -c '.sniffing' <<<"$components")" \
-		--data-urlencode "allocate=$(jq -c '.allocate' <<<"$components")"
+	printf '%s' "$components"
 }
 
 # Нормализует сохраненный inbound в JSON для сравнения с желаемой структурой.
@@ -404,7 +458,7 @@ current_inbound_components_json() {
 
 # Создает отсутствующий управляемый inbound и сохраняет его идентификатор.
 ensure_inbound() {
-	local kind=$1 desired=$2 inbounds id port protocol inbound args desired_components expected_remarks
+	local kind=$1 desired=$2 inbounds id port protocol inbound desired_components expected_remarks
 	ENSURE_INBOUND_ID=
 	inbounds=$(inbounds_json)
 	port=$(jq -r ".inbounds.$kind.port" <<<"$desired")
@@ -418,21 +472,18 @@ ensure_inbound() {
 	managed_conflict_check "$inbound" "$expected_remarks" "$port"
 
 	if [[ -n "$id" ]]; then
-		# Существующий управляемый inbound сохраняется, чтобы не менять действующие ключи и клиентов.
 		log INFO "$kind inbound already exists id=$id port=$port; preserving existing configuration."
 		ENSURE_INBOUND_ID=$id
 	else
 		desired_components=$(build_inbound_components_json "$kind" "$desired")
-		mapfile -d '' -t args < <(inbound_components_payload "$desired_components")
 		if [[ "$MODE" == "plan" ]]; then
 			record_change "PLAN: $kind inbound created port=$port"
 			return 0
 		fi
 		record_change "APPLY: $kind inbound created port=$port"
-		xui_add_inbound "${args[@]}" || die "Failed to add $kind inbound."
+		xui_add_inbound "$(inbound_components_json "$desired_components")" || die "Failed to add $kind inbound."
 		http_success_json || die "$kind inbound add failed: $(http_body)"
 		RESTART_XRAY_REQUIRED=1
-		# shellcheck disable=SC2034 # идентификатор читается entrypoint после вызова функции
 		ENSURE_INBOUND_ID=$(jq -r '.obj.id // empty' "$HTTP_BODY_FILE")
 	fi
 }
@@ -445,11 +496,10 @@ inbound_by_id_json() {
 	jq -c '.obj // {}' "$HTTP_BODY_FILE"
 }
 
-# Обновляет inbound заменой JSON-компонентов через штатный form-urlencoded API.
+# Обновляет inbound nested JSON через API 3.7.
 update_inbound_components() {
-	local id=$1 components=$2 args
-	mapfile -d '' -t args < <(inbound_components_payload "$components")
-	xui_update_inbound "$id" "${args[@]}" || die "Failed to update inbound id=$id."
+	local id=$1 components=$2
+	xui_update_inbound "$id" "$(inbound_components_json "$components")" || die "Failed to update inbound id=$id."
 	http_success_json || die "Inbound update failed id=$id: $(http_body)"
 	RESTART_XRAY_REQUIRED=1
 }
@@ -591,7 +641,17 @@ ensure_vless_inbound_client() {
       $current
       | .decryption = "none"
       | .encryption = "none"
-      | .clients = (((.clients // []) | map(select(.email != $client.email and .email != $legacy and .email != $legacyHysteria))) + [$client])
+      | .clients = (
+          ((.clients // [])
+            | map(select(.email != $client.email and .email != $legacy and .email != $legacyHysteria))
+            | map(.tgId = (
+                if (.tgId|type) == "number" then .tgId
+                elif ((.tgId|tostring)|length) == 0 then 0
+                else ((.tgId|tonumber?) // 0)
+                end
+              ))
+          ) + [$client]
+        )
     ')
 	if jq -e --argjson desired "$desired_settings" '. == $desired' <<<"$current_settings" >/dev/null; then
 		log INFO "$label VLESS inbound client already matches desired state."

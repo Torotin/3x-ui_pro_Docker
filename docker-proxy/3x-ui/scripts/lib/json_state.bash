@@ -282,6 +282,32 @@ json_apply_managed_xray_state() {
 	printf '%s' "$updated"
 }
 
+# Задаёт native Xray geodata auto-update block в template (3.5+ / 3.7).
+json_apply_geodata_block() {
+	local current=$1 outbound=$2 assets=$3 cron=$4
+	jq -c --arg outbound "$outbound" --arg cron "$cron" --argjson assets "$assets" '
+      .xraySetting.geodata = {
+        cron: $cron,
+        outbound: $outbound,
+        assets: $assets
+      }
+    ' <<<"$current"
+}
+
+# Выбирает tag outbound для geodata downloads: usque, иначе mihomo, иначе direct.
+geodata_outbound_tag() {
+	local warp_endpoints=${1:-'[]'} mihomo_endpoints=${2:-'[]'}
+	if jq -e 'any(.[]?; .tag == "usque")' <<<"$warp_endpoints" >/dev/null 2>&1; then
+		printf 'usque'
+		return 0
+	fi
+	if jq -e 'length > 0' <<<"$mihomo_endpoints" >/dev/null 2>&1; then
+		jq -r '.[0].tag // "mihomo"' <<<"$mihomo_endpoints"
+		return 0
+	fi
+	printf 'direct'
+}
+
 # Удаляет созданные runtime артефакты WARP/TOR перед пересборкой состояния.
 json_remove_managed_xray_artifacts() {
 	local current=$1

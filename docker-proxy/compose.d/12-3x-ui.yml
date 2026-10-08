@@ -71,7 +71,9 @@ services:
       - ../3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
       - ../3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
       - ../3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
-      - ../3x-ui/configs/config.json:/app/bin/config.json:rw
+      # Do not bind-mount config.json as a file: 3x-ui atomically renames
+      # bin/.config-*.tmp -> bin/config.json, which fails with EBUSY on a
+      # Docker file mount. Config is regenerated from x-ui.db on each start.
       - ../traefik/pem:/etc/traefik/pem:ro
       - ../_logs/xray/access.log:/app/access.log
       - ../_logs/xray/error.log:/app/error.log
