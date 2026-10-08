@@ -1,21 +1,43 @@
+# ==== Runtime / generated (docker-proxy) ====
 docker-proxy/3x-ui/clear/
 docker-proxy/_data/
+docker-proxy/_logs/
 
-# ==== SWAP / TEMP ====
+# ==== Local scratch / helpers ====
+/tmp/
+/New/
+/ideas*
+sync-lampac-docker.sh
+/.project_context*
+
+# ==== Swap / temp / backups ====
 *~
 *.swp
+*.swo
 *.tmp
+*.bak
+*.bak.*
+*.bakcheck
+*.orig
+*.pcap
 
-# ==== ОС / IDE ====
-# macOS Thumbs.db/.DS_Store, Windows
+# ==== Logs / agent debug ====
+*.log
+
+# ==== OS / IDE ====
 .DS_Store
 Thumbs.db
-
-# VSCode, JetBrains, etc.
+desktop.ini
 .vscode/
 .idea/
 *.iml
-/ideas*
-/New*
-sync-lampac-docker.sh
-/.project_context*
+.cursor/
+
+# ==== Python / test leftovers ====
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# ==== Installer local state ====
+script/install-state/
