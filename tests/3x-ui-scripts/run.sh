@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$ROOT_DIR"
 
+bash tests/3x-ui-scripts/test_download.bash
 bash tests/3x-ui-scripts/test_libs.bash
 
 mapfile -t shell_files < <(

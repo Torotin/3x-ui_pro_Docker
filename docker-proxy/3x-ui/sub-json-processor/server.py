@@ -37,6 +37,10 @@ DEFAULT_ASSETS = [
         "url": "https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat",
         "file": "adlist.dat",
     },
+    {
+        "url": "https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat",
+        "file": "geosite_RU.dat",
+    },
 ]
 
 PRESERVED_RESPONSE_HEADERS = {

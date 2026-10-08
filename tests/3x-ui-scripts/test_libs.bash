@@ -213,7 +213,7 @@ test_inbound_vless_client_uuid_recovers_polluted_global_client() {
 }
 
 test_resolve_panel_base_prioritizes_configured_web_port() {
-	local first_base
+	local first_base login_log
 	export USERNAME=admin PASSWORD=admin NEW_ADMIN_USERNAME='' NEW_ADMIN_PASSWORD=''
 	export webPort=52025 webBasePath=/panel WEBDOMAIN=example.test
 	HTTP_ATTEMPTS=4
@@ -222,21 +222,21 @@ test_resolve_panel_base_prioritizes_configured_web_port() {
 	HTTP_CONNECT_TIMEOUT=2
 	# shellcheck disable=SC2034 # resolve_panel_base reads/restores these globals dynamically
 	HTTP_MAX_TIME=8
+	login_log=$(mktemp)
 	xui_login() {
-		printf '%s\n' "$1" >>"$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+		printf '%s\n' "$1" >>"$login_log"
 		return 1
 	}
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
 	resolve_panel_base || true
-	first_base=$(head -n1 "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts")
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+	first_base=$(head -n1 "$login_log")
+	rm -f "$login_log"
 	assert_eq "https://127.0.0.1:52025/panel" "$first_base" "configured webPort was not tried first"
 	assert_eq 4 "$HTTP_ATTEMPTS" "HTTP_ATTEMPTS was not restored"
 	assert_eq 1 "$HTTP_LOG_FAILURES" "HTTP_LOG_FAILURES was not restored"
 }
 
 test_resolve_panel_base_tries_new_password_when_username_is_unchanged() {
-	local attempts
+	local attempts login_log
 	export USERNAME=admin PASSWORD=old-password NEW_ADMIN_USERNAME=admin NEW_ADMIN_PASSWORD=new-password
 	export webPort=52025 webBasePath=/panel WEBDOMAIN=example.test
 	HTTP_ATTEMPTS=4
@@ -245,14 +245,14 @@ test_resolve_panel_base_tries_new_password_when_username_is_unchanged() {
 	HTTP_CONNECT_TIMEOUT=2
 	# shellcheck disable=SC2034 # resolve_panel_base reads/restores these globals dynamically
 	HTTP_MAX_TIME=8
+	login_log=$(mktemp)
 	xui_login() {
-		printf '%s %s %s\n' "$1" "$2" "$3" >>"$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+		printf '%s %s %s\n' "$1" "$2" "$3" >>"$login_log"
 		[[ "$2" == "admin" && "$3" == "new-password" ]]
 	}
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
 	resolve_panel_base || fail "resolve_panel_base must try NEW_ADMIN_PASSWORD even when username is unchanged"
-	attempts=$(cat "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts")
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+	attempts=$(cat "$login_log")
+	rm -f "$login_log"
 	grep -Fq "admin old-password" <<<"$attempts" || fail "old credential was not tried"
 	grep -Fq "admin new-password" <<<"$attempts" || fail "new credential was not tried"
 	assert_eq new-password "$PASSWORD" "resolved password must switch to NEW_ADMIN_PASSWORD"
@@ -316,46 +316,60 @@ test_panel_api_requests_use_bearer_token_when_configured() {
 		return 0
 	}
 	xui_list_inbounds
-	xui_add_inbound --data-urlencode "remark=test"
+	xui_add_inbound '{"remark":"test","port":443,"protocol":"vless","settings":{},"streamSettings":{},"sniffing":{}}'
 	xui_restart_xray
 	xui_get_panel_settings
 	auth_count=$(grep -Fc "Authorization: Bearer test-token" "$call_log")
 	path_count=$(grep -Fc "panel/api/inbounds" "$call_log")
 	grep -Fq "panel/api/server/restartXrayService" "$call_log" || fail "Xray restart must use the panel API server route"
-	settings_auth_count=$(grep -F "panel/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
+	settings_auth_count=$(grep -F "panel/api/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
+	legacy_settings_auth_count=$(grep -F "panel/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
 	rm -f "$call_log"
 	unset -f http_request
 	unset XUI_API_TOKEN
-	assert_eq 3 "$auth_count" "Bearer token must be sent on panel API requests"
+	assert_eq 4 "$auth_count" "Bearer token must be sent on panel API requests"
 	assert_eq 2 "$path_count" "inbound API requests were not captured"
-	assert_eq 0 "$settings_auth_count" "Bearer token must not be sent on non-/panel/api routes"
+	assert_eq 1 "$settings_auth_count" "Settings read must use canonical /panel/api/setting/all with Bearer"
+	assert_eq 0 "$legacy_settings_auth_count" "Legacy settings route must not be used when canonical succeeds"
 }
 
 test_client_api_uses_3x_ui_31_json_routes() {
-	local call_log add_has_json update_has_json add_path update_path list_path attach_path
+	local call_log add_has_json update_has_json add_path update_path list_path attach_path get_path
 	call_log=$(mktemp)
 	export XUI_API_TOKEN=test-token
 	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
 	URL_BASE_RESOLVED=http://127.0.0.1:2053/panel
 	http_request() {
 		printf '%s\n' "$*" >>"$call_log"
+		HTTP_CODE=200
+		HTTP_BODY_FILE=$(mktemp)
+		case "$2" in
+		*/clients/get/*)
+			printf '{"success":true,"obj":{"email":"a@example.test","subId":"old","limitIp":0,"totalGB":0,"expiryTime":0,"reset":0,"tgId":0,"comment":"","enable":true,"security":"auto","group":""}}' >"$HTTP_BODY_FILE"
+			;;
+		*)
+			printf '{"success":true}' >"$HTTP_BODY_FILE"
+			;;
+		esac
 		return 0
 	}
 	xui_add_client '{"client":{"email":"a@example.test"},"inboundIds":[1]}'
-	xui_update_client a@example.test '{"email":"a@example.test"}'
+	xui_update_client 'a@example.test' '{"email":"a@example.test","id":"11111111-2222-3333-8444-555555555555"}'
 	xui_list_clients
-	xui_attach_client a@example.test '{"inboundIds":[2]}'
+	xui_attach_client 'a@example.test' '{"inboundIds":[2]}'
 	add_path=$(grep -Fc "panel/api/clients/add" "$call_log" || true)
-	update_path=$(grep -Fc "panel/api/clients/update/a@example.test" "$call_log" || true)
+	update_path=$(grep -Fc "panel/api/clients/update/a%40example.test" "$call_log" || true)
+	get_path=$(grep -Fc "panel/api/clients/get/a%40example.test" "$call_log" || true)
 	list_path=$(grep -Fc "panel/api/clients/list" "$call_log" || true)
-	attach_path=$(grep -Fc "panel/api/clients/a@example.test/attach" "$call_log" || true)
+	attach_path=$(grep -Fc "panel/api/clients/a%40example.test/attach" "$call_log" || true)
 	add_has_json=$(grep -F "panel/api/clients/add" "$call_log" | grep -Fc "Content-Type: application/json" || true)
-	update_has_json=$(grep -F "panel/api/clients/update/a@example.test" "$call_log" | grep -Fc "Content-Type: application/json" || true)
+	update_has_json=$(grep -F "panel/api/clients/update/a%40example.test" "$call_log" | grep -Fc "Content-Type: application/json" || true)
 	rm -f "$call_log"
 	unset -f http_request
 	unset XUI_API_TOKEN
 	assert_eq 1 "$add_path" "3x-ui 3.1 add client route mismatch"
 	assert_eq 1 "$update_path" "3x-ui 3.1 update client route mismatch"
+	assert_eq 1 "$get_path" "3x-ui 3.7 update client must GET current object first"
 	assert_eq 1 "$list_path" "3x-ui 3.1 list clients route mismatch"
 	assert_eq 1 "$attach_path" "3x-ui 3.1 attach client route mismatch"
 	assert_eq 1 "$add_has_json" "3x-ui 3.1 add client must send JSON"
@@ -379,7 +393,7 @@ test_create_mutations_use_single_long_request() {
 		observed+=("$HTTP_ATTEMPTS:$HTTP_MAX_TIME:$2")
 		return 0
 	}
-	xui_add_inbound --data-urlencode "port=62093"
+	xui_add_inbound '{"port":62093,"protocol":"vless","remark":"test","settings":{},"streamSettings":{},"sniffing":{}}'
 	xui_add_client '{"client":{"email":"a@example.test"},"inboundIds":[1]}'
 	unset -f http_request xui_csrf_args
 	# shellcheck source=/dev/null
@@ -390,27 +404,25 @@ test_create_mutations_use_single_long_request() {
 	assert_eq 8 "$HTTP_MAX_TIME" "Mutation request must restore HTTP_MAX_TIME"
 }
 
-test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty() {
+test_panel_api_does_not_read_bearer_token_from_sqlite() {
 	local call_log auth_count
 	call_log=$(mktemp)
 	XUI_API_TOKEN=
-	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	XUI_API_TOKEN_RESOLVED=
 	URL_BASE_RESOLVED=http://127.0.0.1:2053
 	sqlite3() {
-		[[ "$1" == "/etc/x-ui/x-ui.db" ]] || fail "unexpected sqlite database path: $1"
-		[[ "$2" == "select value from settings where key='secret';" ]] || fail "unexpected sqlite query: $2"
-		printf '%s\n' db-token
+		fail "sqlite3 must not be used for Bearer token resolution on 3.7"
 	}
 	http_request() {
 		printf '%s\n' "$*" >>"$call_log"
 		return 0
 	}
 	xui_list_inbounds
-	auth_count=$(grep -Fc "Authorization: Bearer db-token" "$call_log")
+	auth_count=$(grep -Fc "Authorization: Bearer" "$call_log" || true)
 	rm -f "$call_log"
 	unset -f http_request sqlite3
-	unset XUI_API_TOKEN
-	assert_eq 1 "$auth_count" "Bearer token must fall back to the SQLite secret setting"
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED
+	assert_eq 0 "$auth_count" "Bearer token must not be sent when XUI_API_TOKEN is unset"
 }
 
 test_xui_login_replays_csrf_token() {
@@ -439,15 +451,17 @@ test_xui_login_replays_csrf_token() {
 	}
 	xui_login "http://127.0.0.1:25713/panel-base" admin admin || fail "xui_login fixture failed"
 	login_has_csrf=$(grep -F "/login" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	login_has_json=$(grep -F "/login" "$call_log" | grep -Fc "Content-Type: application/json" || true)
 	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
 	unset -f http_request
 	assert_eq 1 "$login_has_csrf" "login POST must include the minted CSRF token"
+	assert_eq 1 "$login_has_json" "login POST must use application/json body"
 }
 
 test_non_bearer_api_post_replays_csrf_token() {
 	local call_log settings_has_csrf
 	call_log=$(mktemp)
-	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED XUI_ROUTE_setting_all
 	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
 	URL_BASE_RESOLVED=http://127.0.0.1:25713/panel-base
 	http_request() {
@@ -459,7 +473,7 @@ test_non_bearer_api_post_replays_csrf_token() {
 			HTTP_BODY_FILE=$(mktemp)
 			printf '{"success":true,"obj":"csrf-fixture"}' >"$HTTP_BODY_FILE"
 			;;
-		*/panel/setting/all)
+		*/panel/api/setting/all|*/panel/setting/all)
 			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state
 			HTTP_CODE=200
 			HTTP_BODY_FILE=$(mktemp)
@@ -469,14 +483,47 @@ test_non_bearer_api_post_replays_csrf_token() {
 		return 0
 	}
 	xui_get_panel_settings || fail "xui_get_panel_settings fixture failed"
-	settings_has_csrf=$(grep -F "/panel/setting/all" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	settings_has_csrf=$(grep -E "/panel/(api/)?setting/all" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
 	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
 	unset -f http_request
 	assert_eq 1 "$settings_has_csrf" "non-Bearer POST requests must include a CSRF token"
 }
 
+test_panel_settings_fallback_to_legacy_route_on_404() {
+	local call_log canonical_hits legacy_hits
+	call_log=$(mktemp)
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED XUI_ROUTE_setting_all
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:25713/panel-base
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		case "$2" in
+		*/panel/api/setting/all)
+			# shellcheck disable=SC2034 # dual-path helper reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=404
+			HTTP_BODY_FILE=$(mktemp)
+			printf '' >"$HTTP_BODY_FILE"
+			;;
+		*/panel/setting/all)
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":{"webPort":2053}}' >"$HTTP_BODY_FILE"
+			;;
+		esac
+		return 0
+	}
+	xui_get_panel_settings || fail "xui_get_panel_settings legacy fallback fixture failed"
+	http_success_json || fail "legacy settings route must return success JSON"
+	canonical_hits=$(grep -Fc "/panel/api/setting/all" "$call_log" || true)
+	legacy_hits=$(grep -Fc "/panel/setting/all" "$call_log" || true)
+	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
+	unset -f http_request
+	assert_eq 1 "$canonical_hits" "canonical settings route must be attempted first"
+	assert_eq 1 "$legacy_hits" "legacy settings route must be used after canonical 404"
+}
+
 test_custom_geo_resources_default_to_requested_dat_files() {
-	local resources count first_type first_alias first_url fourth_type fourth_alias last_type last_alias
+	local resources count first_type first_alias first_url fourth_type fourth_alias last_type last_alias assets
 	unset CUSTOM_GEO_RESOURCES
 	resources=$(custom_geo_resources_json)
 	count=$(printf '%s' "$resources" | jq 'length')
@@ -485,16 +532,18 @@ test_custom_geo_resources_default_to_requested_dat_files() {
 	first_url=$(printf '%s' "$resources" | jq -r '.[0].url')
 	fourth_type=$(printf '%s' "$resources" | jq -r '.[3].type')
 	fourth_alias=$(printf '%s' "$resources" | jq -r '.[3].alias')
-	last_type=$(printf '%s' "$resources" | jq -r '.[6].type')
-	last_alias=$(printf '%s' "$resources" | jq -r '.[6].alias')
-	assert_eq 7 "$count" "default custom geo resource count mismatch"
-	assert_eq geosite "$first_type" "default first custom geo type mismatch"
-	assert_eq geosite_refilter "$first_alias" "default first custom geo alias mismatch"
-	assert_eq https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat "$first_url" "default first custom geo URL mismatch"
-	assert_eq geoip "$fourth_type" "default fourth custom geo type mismatch"
-	assert_eq geoip_zkeenip "$fourth_alias" "default fourth custom geo alias mismatch"
-	assert_eq geosite "$last_type" "default adlist custom geo type mismatch"
-	assert_eq adlist "$last_alias" "default adlist custom geo alias mismatch"
+	last_type=$(printf '%s' "$resources" | jq -r '.[7].type')
+	last_alias=$(printf '%s' "$resources" | jq -r '.[7].alias')
+	assets=$(geodata_assets_json "$resources")
+	assert_eq 8 "$count" "default geodata resource count mismatch"
+	assert_eq geosite "$first_type" "default first geodata type mismatch"
+	assert_eq geosite_refilter "$first_alias" "default first geodata alias mismatch"
+	assert_eq https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat "$first_url" "default first geodata URL mismatch"
+	assert_eq geoip "$fourth_type" "default fourth geodata type mismatch"
+	assert_eq geoip_zkeenip "$fourth_alias" "default fourth geodata alias mismatch"
+	assert_eq geosite "$last_type" "default geosite_RU type mismatch"
+	assert_eq geosite_RU "$last_alias" "default geosite_RU alias mismatch"
+	assert_eq geosite_RU.dat "$(printf '%s' "$assets" | jq -r '.[] | select(.file=="geosite_RU.dat") | .file')" "geodata assets must include geosite_RU.dat"
 }
 
 test_custom_geo_resources_parse_custom_entries() {
@@ -505,6 +554,7 @@ test_custom_geo_resources_parse_custom_entries() {
 	url=$(printf '%s' "$resources" | jq -r '.[1].url')
 	assert_eq 2 "$count" "custom geo parser resource count mismatch"
 	assert_eq https://example.test/ip.dat "$url" "custom geo parser URL mismatch"
+	unset CUSTOM_GEO_RESOURCES
 }
 
 test_panel_keys_restore_old_cert_fields() {
@@ -515,6 +565,36 @@ test_panel_keys_restore_old_cert_fields() {
 	grep -qx subClashEnable <<<"$keys" || fail "subClashEnable is missing from desired panel keys"
 	grep -qx subSupportUrl <<<"$keys" || fail "subSupportUrl is missing from desired panel keys"
 	grep -qx ldapEnable <<<"$keys" || fail "ldapEnable is missing from desired panel keys"
+	grep -qx panelOutbound <<<"$keys" || fail "panelOutbound is missing from desired panel keys"
+}
+
+test_panel_settings_json_defaults_panel_outbound() {
+	local body
+	unset panelOutbound
+	body=$(panel_settings_json '{"webPort":2053,"smtpPort":0,"tgBotEnable":false}')
+	assert_eq usque "$(printf '%s' "$body" | jq -r '.panelOutbound')" "panel settings JSON must default panelOutbound to usque"
+	assert_eq 587 "$(printf '%s' "$body" | jq -r '.smtpPort')" "panel settings JSON must normalize invalid smtpPort"
+	assert_eq number "$(printf '%s' "$body" | jq -r '.webPort | type')" "webPort must remain a JSON number for 3.7 AllSetting"
+	assert_eq boolean "$(printf '%s' "$body" | jq -r '.tgBotEnable | type')" "boolean AllSetting fields must remain JSON booleans"
+}
+
+test_geodata_block_uses_usque_outbound() {
+	local base assets updated outbound asset_count
+	unset CUSTOM_GEO_RESOURCES
+	base='{"xraySetting":{"outbounds":[{"tag":"direct"}]}}'
+	assets=$(geodata_assets_json)
+	updated=$(json_apply_geodata_block "$base" usque "$assets" "0 4 * * *")
+	outbound=$(printf '%s' "$updated" | jq -r '.xraySetting.geodata.outbound')
+	asset_count=$(printf '%s' "$updated" | jq '.xraySetting.geodata.assets | length')
+	assert_eq usque "$outbound" "geodata outbound tag mismatch"
+	assert_eq 8 "$asset_count" "geodata assets count mismatch"
+}
+
+test_inbound_components_json_preserves_nested_objects() {
+	local payload settings_type
+	payload=$(inbound_components_json '{"port":443,"protocol":"vless","remark":"t","settings":{"decryption":"none"},"streamSettings":{"network":"tcp"},"sniffing":{"enabled":true},"allocate":{}}')
+	settings_type=$(printf '%s' "$payload" | jq -r '.settings | type')
+	assert_eq object "$settings_type" "inbound API payload must keep nested settings object"
 }
 
 test_warp_domains_restore_old_ru_rules() {
@@ -1024,9 +1104,11 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
 	TMP_ROOT="$tmp"
 	export MODE=apply
 	export XRAY_MANAGED_DNS=false
-	export XRAY_MANAGED_WARP=false
+	export XRAY_MANAGED_WARP=true
 	export XRAY_MANAGED_TOR=false
 	export ENABLE_MIHOMO=true
+	export USQUE_HOST=usque
+	export USQUE_PORT=1080
 	export MIHOMO_PROXY_HOST=mihomo
 	export MIHOMO_PROXY_PORT=7890
 	export WEBDOMAIN=screenhub.linkpc.net
@@ -1036,6 +1118,9 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
 	RESTART_PANEL_REQUIRED=0
 	# shellcheck disable=SC2034 # apply_managed_xray mutates this runtime global when updates are applied.
 	RESTART_XRAY_REQUIRED=0
+	warp_proxy_available() {
+		return 1
+	}
 	xui_get_xray_settings() {
 		printf '%s\n' '{"obj":"{\"xraySetting\":{\"outbounds\":[],\"routing\":{\"rules\":[]}}}"}' >"$HTTP_BODY_FILE"
 	}
@@ -1065,7 +1150,7 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
 	: >"$seen_file"
 	apply_managed_xray
 	assert_eq '[]' "$(sed -n '1p' "$seen_file")" "unreachable Mihomo endpoint must not be passed to managed Xray state"
-	unset -f xui_get_xray_settings http_success_json available_dns_servers tcp_endpoint_available json_apply_managed_xray_state plan_or_apply
+	unset -f xui_get_xray_settings http_success_json available_dns_servers tcp_endpoint_available warp_proxy_available json_apply_managed_xray_state plan_or_apply
 	unset MODE XRAY_MANAGED_DNS XRAY_MANAGED_WARP XRAY_MANAGED_TOR ENABLE_MIHOMO MIHOMO_PROXY_HOST MIHOMO_PROXY_PORT WEBDOMAIN
 	rm -rf "$tmp"
 	# shellcheck source=/dev/null
@@ -1081,7 +1166,7 @@ test_afterstart_entrypoint_loads_runtime_modules() {
 		grep -Fq ". \"\$LIB_DIR/$module.bash\"" "$script" ||
 			fail "after-start entrypoint must source $module.bash"
 	done
-	for function in record_change ensure_panel_settings ensure_inbound apply_managed_xray restart_if_needed; do
+	for function in record_change ensure_panel_settings ensure_inbound apply_managed_xray restart_xray_if_needed; do
 		if grep -Eq "^${function}\\(\\)" "$script"; then
 			fail "after-start entrypoint must not retain domain function: $function"
 		fi
@@ -1103,8 +1188,7 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_panel_settings' \
 		'update_admin_credentials_if_needed' \
 		'resolve_panel_base || die "Could not login after panel settings update."' \
-		'ensure_custom_geo_resources' \
-		'update_builtin_geofiles_if_enabled' \
+		'repair_inbound_client_tg_ids_db' \
 		'ensure_inbound vision "$desired"' \
 		'ensure_inbound xhttp "$desired"' \
 		'ensure_inbound grpc "$desired"' \
@@ -1114,7 +1198,9 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
 		'repair_shared_client_after_inbound_sync "$desired"' \
 		'apply_managed_xray' \
-		'restart_if_needed'; do
+		'restart_xray_if_needed' \
+		'update_builtin_geofiles_if_enabled' \
+		'restart_panel_if_needed'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
 		[[ -n "$line" && "$line" -gt "$previous" ]] ||
 			fail "after-start pipeline order changed near: $expression"
@@ -1153,10 +1239,12 @@ test_xray_template_update_requests_core_restart() {
 test_panel_restart_does_not_suppress_xray_restart() {
 	local script block
 	script="$SCRIPTS_DIR/lib/xray_runtime.bash"
-	block=$(sed -n '/^restart_if_needed()/,/^}/p' "$script")
-	if grep -Fq 'elif ((RESTART_XRAY_REQUIRED == 1))' <<<"$block"; then
-		fail "panel restart must not suppress a required Xray core restart"
-	fi
+	block=$(sed -n '/^restart_xray_if_needed()/,/^}/p' "$script")
+	grep -Fq 'xui_restart_xray' <<<"$block" ||
+		fail "Xray restart helper must call panel restartXrayService API"
+	block=$(sed -n '/^restart_panel_if_needed()/,/^}/p' "$script")
+	grep -Fq 'xui_restart_panel' <<<"$block" ||
+		fail "panel restart helper must remain separate from Xray restart"
 }
 
 test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
@@ -1211,7 +1299,7 @@ test_xray_api_inbound_uses_documented_dokodemo_protocol() {
 }
 
 test_lampac_hide_interface_waits_for_lampa_global() {
-	local file="$ROOT_DIR/docker-proxy/lampac-docker/plugins/override/hide_interface.js"
+	local file="$ROOT_DIR/docker-proxy/lampac/wwwroot/js/hide_interface.js"
 	grep -Fq "function waitForLampa()" "$file" || fail "hide_interface must wait for window.Lampa"
 	grep -Fq "typeof window.Lampa !== 'undefined'" "$file" || fail "hide_interface must check window.Lampa before init"
 	if grep -Fq "if (typeof Lampa !== 'undefined')" "$file" || grep -Fq "Lampa.Listener.follow('app', function" "$file"; then
@@ -1240,12 +1328,16 @@ test_http_request_temp_files_are_created_under_tmp_root
 test_panel_api_requests_use_bearer_token_when_configured
 test_client_api_uses_3x_ui_31_json_routes
 test_create_mutations_use_single_long_request
-test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty
+test_panel_api_does_not_read_bearer_token_from_sqlite
 test_xui_login_replays_csrf_token
 test_non_bearer_api_post_replays_csrf_token
+test_panel_settings_fallback_to_legacy_route_on_404
 test_custom_geo_resources_default_to_requested_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields
+test_panel_settings_json_defaults_panel_outbound
+test_geodata_block_uses_usque_outbound
+test_inbound_components_json_preserves_nested_objects
 test_warp_domains_restore_old_ru_rules
 test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt

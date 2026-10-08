@@ -183,11 +183,11 @@ desired_panel_keys() {
 		ldapEnable ldapHost ldapPort ldapUseTLS ldapBindDN ldapPassword ldapBaseDN \
 		ldapUserFilter ldapUserAttr ldapVlessField ldapSyncCron ldapFlagField \
 		ldapTruthyValues ldapInvertFlag ldapInboundTags ldapAutoCreate ldapAutoDelete \
-		ldapDefaultTotalGB ldapDefaultExpiryDays ldapDefaultLimitIP
+		ldapDefaultTotalGB ldapDefaultExpiryDays ldapDefaultLimitIP panelOutbound
 }
 
-# Печатает штатный набор внешних geo-файлов для регистрации через API.
-custom_geo_default_resources() {
+# Печатает штатный набор URL внешних geodata assets для Xray template.
+geodata_default_resources() {
 	cat <<'EOF'
 geosite|geosite_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat
 geosite|geosite_v2fly|https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
@@ -196,15 +196,15 @@ geoip|geoip_zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/downl
 geoip|geoip_v2fly|https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
 geoip|geoip_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat
 geosite|adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
+geosite|geosite_RU|https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat
 EOF
 }
 
-# Преобразует строки geo-ресурсов в JSON-массив, игнорируя пустые и неверные записи.
-custom_geo_resources_json() {
+# Преобразует строки geo-ресурсов в JSON-массив {type,alias,url}, игнорируя пустые записи.
+geodata_resources_json() {
 	local input=${CUSTOM_GEO_RESOURCES:-} entry typ alias url out='[]'
-	[[ -n "$input" ]] || input=$(custom_geo_default_resources)
+	[[ -n "$input" ]] || input=$(geodata_default_resources)
 
-	# Формат допускает комментарии и пробелы в пользовательском env-списке.
 	while IFS= read -r entry || [[ -n "$entry" ]]; do
 		entry=${entry#"${entry%%[![:space:]]*}"}
 		entry=${entry%"${entry##*[![:space:]]}"}
@@ -221,6 +221,22 @@ custom_geo_resources_json() {
 	done <<<"$input"
 
 	printf '%s' "$out"
+}
+
+# Строит массив Xray geodata.assets из списка geo-ресурсов ({url,file}).
+geodata_assets_json() {
+	local resources=${1:-}
+	[[ -n "$resources" ]] || resources=$(geodata_resources_json)
+	jq -c 'map({url:.url, file:(.alias + ".dat")})' <<<"$resources"
+}
+
+# Обратная совместимость для тестов и env CUSTOM_GEO_RESOURCES.
+custom_geo_resources_json() {
+	geodata_resources_json
+}
+
+custom_geo_default_resources() {
+	geodata_default_resources
 }
 
 # Извлекает три reserved-байта WireGuard из идентификатора клиента WARP.

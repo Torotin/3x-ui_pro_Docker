@@ -67,7 +67,15 @@ main() {
 	backup="$target.bak"
 
 	mkdir -p "$XUI_BIN_FOLDER"
-	download_file_atomic "$url" "$zip" "$XRAY_SHA256"
+	if ! download_file_atomic "$url" "$zip" "$XRAY_SHA256"; then
+		if [[ -s "$target" ]]; then
+			log WARN "Xray download failed; keeping existing binary $target"
+			cleanup_xray_tmpdir
+			XRAY_TMPDIR=
+			return 0
+		fi
+		die "Failed to download xray and no existing binary at $target"
+	fi
 	unzip -q "$zip" -d "$tmp"
 	[[ -s "$tmp/xray" ]] || die "Archive did not contain xray binary."
 	chmod +x "$tmp/xray"

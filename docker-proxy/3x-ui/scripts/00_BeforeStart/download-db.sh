@@ -25,14 +25,15 @@ https://github.com/jameszeroX/zkeen-domains/releases/latest/download/zkeen.dat|g
 https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat|geoip_zkeenip.dat
 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat|geoip_v2fly.dat
 https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat|geoip_refilter.dat
-https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat|adlist.dat'
+https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat|adlist.dat
+https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat|geosite_RU.dat'
 
 # При разрешенном прямом режиме обновляет локальные dat-файлы геобаз до старта панели.
 main() {
 
 	local entry dest source_file
 	if [[ "$DOWNLOAD_GEO_DIRECT" != "true" ]]; then
-		log INFO "Direct dat-file download is disabled; custom geo files are managed through the 3x-ui API after startup."
+		log INFO "Direct dat-file download is disabled; geodata assets are managed via Xray template geodata block after startup."
 		return 0
 	fi
 

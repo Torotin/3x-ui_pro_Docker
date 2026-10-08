@@ -3,14 +3,13 @@
     "version": true,
     "ip": "0.0.0.0",
     "port": 9118,
-    "scheme": "http",
+    "scheme": "https",
     "localhost": "127.0.0.1"
   },
   "chromium": {
     "enable": true,
     "executablePath": "/usr/bin/chromium"
   },
-  "lowMemoryMode": true,
   "GC": {
     "enable": true,
     "Concurrent": true,
@@ -37,18 +36,9 @@
       "TelegramAuthBot"
     ]
   },
-  "WAF": {
-    "enable": true,
-    "bypassLocalIP": true,
-    "bruteForceProtection": false
-  },
   "KnownProxies": [
     {
       "ip": "172.18.0.0",
-      "prefixLength": 24
-    },
-    {
-      "ip": "172.19.0.0",
       "prefixLength": 24
     }
   ],

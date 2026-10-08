@@ -162,12 +162,12 @@ tcp_endpoint_available() {
 	return 0
 }
 
-# Сверяет и применяет управляемый шаблон Xray с доступными DNS, WARP, TOR и Mihomo.
+# Сверяет и применяет управляемый шаблон Xray с DNS, WARP, TOR, Mihomo и native geodata.
 apply_managed_xray() {
 	local raw obj current updated dns_servers tmp_file warp_endpoints='[]' tor_available=false tor_endpoints='[]' warp_console_ob='' mihomo_endpoints='[]'
-	if [[ "$XRAY_MANAGED_DNS" != "true" && "$XRAY_MANAGED_TOR" != "true" && "$XRAY_MANAGED_WARP" != "true" && "${ENABLE_MIHOMO:-true}" != "true" ]]; then
-		cleanup_managed_xray_artifacts
-		return 0
+	local geodata_assets geodata_outbound managed_enabled=false
+	if [[ "$XRAY_MANAGED_DNS" == "true" || "$XRAY_MANAGED_TOR" == "true" || "$XRAY_MANAGED_WARP" == "true" || "${ENABLE_MIHOMO:-true}" == "true" ]]; then
+		managed_enabled=true
 	fi
 
 	xui_get_xray_settings || die "Failed to get Xray settings."
@@ -176,37 +176,47 @@ apply_managed_xray() {
 	[[ -n "$raw" ]] || die "Xray response obj is empty."
 	current=$(jq -c . <<<"$raw")
 
-	if [[ "$XRAY_MANAGED_WARP" == "true" && "$XRAY_MANAGED_WARP_CONSOLE" == "true" ]]; then
-		warp_console_ob=$(ensure_warp_console_outbound "$current" || true)
-	elif [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
-		log INFO "Console WARP outbound is disabled; managed WARP balancer will use external SOCKS outbounds only."
+	if warp_proxy_available "$USQUE_HOST" "$USQUE_PORT"; then
+		warp_endpoints=$(jq -c --arg tag "usque" --arg host "$USQUE_HOST" --argjson port "$USQUE_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$warp_endpoints")
 	fi
-	if [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
-		if warp_proxy_available "$USQUE_HOST" "$USQUE_PORT"; then
-			warp_endpoints=$(jq -c --arg tag "usque" --arg host "$USQUE_HOST" --argjson port "$USQUE_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$warp_endpoints")
-		else
-			log INFO "$USQUE_HOST:$USQUE_PORT did not confirm warp=on; excluding usque from Xray managed state."
+	if tcp_endpoint_available "${MIHOMO_PROXY_HOST:-mihomo}" "${MIHOMO_PROXY_PORT:-7890}" "${MIHOMO_PROXY_PROBE_TIMEOUT:-2}"; then
+		mihomo_endpoints=$(jq -c --arg tag "mihomo" --arg host "${MIHOMO_PROXY_HOST:-mihomo}" --argjson port "${MIHOMO_PROXY_PORT:-7890}" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$mihomo_endpoints")
+	fi
+
+	if [[ "$managed_enabled" == "true" ]]; then
+		if [[ "$XRAY_MANAGED_WARP" == "true" && "$XRAY_MANAGED_WARP_CONSOLE" == "true" ]]; then
+			warp_console_ob=$(ensure_warp_console_outbound "$current" || true)
+		elif [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
+			log INFO "Console WARP outbound is disabled; managed WARP balancer will use external SOCKS outbounds only."
 		fi
-	fi
-	# Старые артефакты сначала удаляются, затем состояние собирается только из доступных endpoint.
-	updated=$(json_remove_managed_xray_artifacts "$current")
-	if [[ "$XRAY_MANAGED_TOR" == "true" ]]; then
-		if tor_proxy_available "$TOR_PROXY_HOST" "$TOR_PROXY_PORT"; then
-			tor_available=true
-			tor_endpoints=$(jq -c --arg tag "tor-proxy" --arg host "$TOR_PROXY_HOST" --argjson port "$TOR_PROXY_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$tor_endpoints")
-		else
-			log INFO "$TOR_PROXY_HOST:$TOR_PROXY_PORT did not confirm IsTor=true; excluding tor-proxy from Xray managed state."
+		if [[ "$XRAY_MANAGED_WARP" == "true" ]]; then
+			if [[ "$(jq 'length' <<<"$warp_endpoints")" == "0" ]]; then
+				log INFO "$USQUE_HOST:$USQUE_PORT did not confirm warp=on; excluding usque from Xray managed state."
+			fi
 		fi
-	fi
-	if [[ "${ENABLE_MIHOMO:-true}" == "true" ]]; then
-		if tcp_endpoint_available "${MIHOMO_PROXY_HOST:-mihomo}" "${MIHOMO_PROXY_PORT:-7890}" "${MIHOMO_PROXY_PROBE_TIMEOUT:-2}"; then
-			mihomo_endpoints=$(jq -c --arg tag "mihomo" --arg host "${MIHOMO_PROXY_HOST:-mihomo}" --argjson port "${MIHOMO_PROXY_PORT:-7890}" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$mihomo_endpoints")
-		else
-			log INFO "${MIHOMO_PROXY_HOST:-mihomo}:${MIHOMO_PROXY_PORT:-7890} is not reachable; excluding mihomo from Xray managed state."
+		updated=$(json_remove_managed_xray_artifacts "$current")
+		if [[ "$XRAY_MANAGED_TOR" == "true" ]]; then
+			if tor_proxy_available "$TOR_PROXY_HOST" "$TOR_PROXY_PORT"; then
+				tor_available=true
+				tor_endpoints=$(jq -c --arg tag "tor-proxy" --arg host "$TOR_PROXY_HOST" --argjson port "$TOR_PROXY_PORT" '. + [{tag:$tag,host:$host,port:$port}]' <<<"$tor_endpoints")
+			else
+				log INFO "$TOR_PROXY_HOST:$TOR_PROXY_PORT did not confirm IsTor=true; excluding tor-proxy from Xray managed state."
+			fi
 		fi
+		if [[ "${ENABLE_MIHOMO:-true}" == "true" ]]; then
+			if [[ "$(jq 'length' <<<"$mihomo_endpoints")" == "0" ]]; then
+				log INFO "${MIHOMO_PROXY_HOST:-mihomo}:${MIHOMO_PROXY_PORT:-7890} is not reachable; excluding mihomo from Xray managed state."
+			fi
+		fi
+		dns_servers=$(available_dns_servers)
+		updated=$(json_apply_managed_xray_state "$updated" "$dns_servers" "$XRAY_MANAGED_WARP" "$tor_available" "$XRAY_MANAGED_DNS" "$warp_endpoints" "$WEBDOMAIN" "$tor_endpoints" "$warp_console_ob" "${ENABLE_MIHOMO:-true}" "$mihomo_endpoints")
+	else
+		updated=$(json_remove_managed_xray_artifacts "$current")
 	fi
-	dns_servers=$(available_dns_servers)
-	updated=$(json_apply_managed_xray_state "$updated" "$dns_servers" "$XRAY_MANAGED_WARP" "$tor_available" "$XRAY_MANAGED_DNS" "$warp_endpoints" "$WEBDOMAIN" "$tor_endpoints" "$warp_console_ob" "${ENABLE_MIHOMO:-true}" "$mihomo_endpoints")
+
+	geodata_assets=$(geodata_assets_json)
+	geodata_outbound=$(geodata_outbound_tag "$warp_endpoints" "$mihomo_endpoints")
+	updated=$(json_apply_geodata_block "$updated" "$geodata_outbound" "$geodata_assets" "${GEODATA_CRON:-0 4 * * *}")
 
 	if json_equal "$current" "$updated"; then
 		log INFO "Xray settings already match managed desired state."
@@ -214,7 +224,6 @@ apply_managed_xray() {
 	fi
 
 	if plan_or_apply "xray settings updated"; then
-		# Панель принимает именно содержимое xraySetting, а не внешний объект ответа API.
 		obj=$(jq -c '.xraySetting | .xrayTemplateConfig = (.xrayTemplateConfig // {})' <<<"$updated")
 		tmp_file="$TMP_ROOT/xraysetting.json"
 		printf '%s' "$obj" >"$tmp_file"
@@ -303,24 +312,32 @@ wait_managed_xray_ports() {
 	return "$failed"
 }
 
-# Выполняет требуемые рестарты и проверяет возврат управляемых портов.
-restart_if_needed() {
-	local restart_sent=0
+# Перезапускает Xray до panel geofile update, чтобы panelOutbound/usque был в running config.
+restart_xray_if_needed() {
+	if [[ "$MODE" != "apply" ]]; then
+		return 0
+	fi
+	if ((RESTART_XRAY_REQUIRED == 1)); then
+		xui_restart_xray || log WARN "Xray restart request failed: $(http_body)"
+		sleep "${XRAY_RESTART_SETTLE_SECONDS:-5}"
+		wait_managed_xray_ports || log WARN "One or more managed Xray inbounds are not listening after restart."
+	fi
+}
+
+# Перезапускает панель после geofile update, если требуется.
+restart_panel_if_needed() {
 	if [[ "$MODE" != "apply" ]]; then
 		log INFO "Restart skipped in MODE=$MODE."
 		return 0
 	fi
-	# Xray перезапускается первым, пока текущий endpoint панели еще доступен.
-	if ((RESTART_XRAY_REQUIRED == 1)); then
-		xui_restart_xray || log WARN "Xray restart request failed: $(http_body)"
-		restart_sent=1
-	fi
 	if ((RESTART_PANEL_REQUIRED == 1)); then
 		xui_restart_panel || log WARN "Panel restart request failed: $(http_body)"
-		restart_sent=1
-	fi
-	if ((restart_sent == 1)); then
 		sleep "${XRAY_RESTART_SETTLE_SECONDS:-5}"
-		wait_managed_xray_ports || log WARN "One or more managed Xray inbounds are not listening after restart."
 	fi
+}
+
+# Выполняет требуемые рестарты Xray и панели (legacy entrypoint helper).
+restart_if_needed() {
+	restart_xray_if_needed
+	restart_panel_if_needed
 }
