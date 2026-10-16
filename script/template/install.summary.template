@@ -10,6 +10,7 @@ Project:
   Compose directory: ${SUMMARY_COMPOSE_DIR}
   Compose env      : ${SUMMARY_COMPOSE_ENV}
   Update branch    : ${SUMMARY_UPDATE_BRANCH}
+  Host DNS         : DNSCrypt/DoH via 127.0.0.1:53 (/opt/dnscrypt-proxy)
 
 SSH access:
   Target           : ${SUMMARY_SSH_TARGET}
@@ -30,6 +31,8 @@ Service URLs:
   Dozzle Logs      : ${SUMMARY_URL_DOZZLE}
   Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
   Telemt Panel     : ${SUMMARY_URL_TELEMT_PANEL}
+  Mihomo UI        : ${SUMMARY_URL_MIHOMO_UI}
+  Mihomo secret    : ${SUMMARY_MIHOMO_SECRET}
 
 Local service endpoints:
   Traefik HTTPS    : internal Docker websecure :${SUMMARY_PORT_LOCAL_TRAEFIK} (not public)
@@ -37,6 +40,8 @@ Local service endpoints:
   3X-UI subscribe  : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE}
   XHTTP            : 127.0.0.1:${SUMMARY_PORT_LOCAL_XHTTP}
   Vision           : 127.0.0.1:${SUMMARY_PORT_LOCAL_VISION}
+  gRPC TLS         : 127.0.0.1:${SUMMARY_PORT_LOCAL_GRPC}
+  Hysteria2        : 0.0.0.0:${SUMMARY_PORT_LOCAL_HYSTERIA}/udp
   Telemt proxy     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PROXY} (not public)
   Telemt API       : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_API} (not public)
   Telemt panel     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PANEL} (Traefik routed)
@@ -57,3 +62,4 @@ Generated files:
   Install env      : ${INSTALL_STATE_DIR}/install.env
   Compose env      : ${SUMMARY_COMPOSE_ENV}
   Summary          : ${SUMMARY_OUTPUT_FILE}
+  Mihomo config    : ${INSTALL_ROOT}/mihomo/config.yaml

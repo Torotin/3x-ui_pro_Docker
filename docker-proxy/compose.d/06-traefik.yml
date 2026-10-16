@@ -10,18 +10,6 @@ services:
         condition: service_healthy
       caddy:
         condition: service_healthy
-      dozzle:
-        condition: service_healthy
-      usque:
-        condition: service_healthy
-      adguard:
-        condition: service_healthy
-      tor-proxy:
-        condition: service_healthy
-      3x-ui:
-        condition: service_healthy
-      homepage:
-        condition: service_healthy
     env_file:
       - ./.env
     volumes:

@@ -15,6 +15,21 @@ json_upsert_outbound_by_tag() {
     ' <<<"$current"
 }
 
+# Добавляет Xray outbound, только если outbound с таким тегом отсутствует.
+json_add_outbound_if_missing() {
+	local current=$1 outbound=$2
+	jq -c --argjson ob "$outbound" '
+      .xraySetting.outbounds = (.xraySetting.outbounds // []) |
+      .xraySetting.outbounds = (
+        if any(.xraySetting.outbounds[]?; .tag == $ob.tag) then
+          .xraySetting.outbounds
+        else
+          .xraySetting.outbounds + [$ob]
+        end
+      )
+    ' <<<"$current"
+}
+
 # Добавляет либо заменяет правило маршрутизации по ключу, определяющему владельца.
 json_upsert_routing_rule_by_key() {
 	local current=$1 key=$2 value=$3 rule=$4
@@ -26,6 +41,22 @@ json_upsert_routing_rule_by_key() {
           [.xraySetting.routing.rules[] | if .[$key] == $value then $rule else . end]
         else
           [$rule] + .xraySetting.routing.rules
+        end
+      )
+    ' <<<"$current"
+}
+
+# Добавляет правило маршрутизации в конец списка, только если правило с таким outboundTag отсутствует.
+json_append_routing_rule_if_outbound_missing() {
+	local current=$1 outbound_tag=$2 rule=$3
+	jq -c --arg outboundTag "$outbound_tag" --argjson rule "$rule" '
+      .xraySetting.routing = (.xraySetting.routing // {}) |
+      .xraySetting.routing.rules = (.xraySetting.routing.rules // []) |
+      .xraySetting.routing.rules = (
+        if any(.xraySetting.routing.rules[]?; (.outboundTag // "") == $outboundTag) then
+          .xraySetting.routing.rules
+        else
+          .xraySetting.routing.rules + [$rule]
         end
       )
     ' <<<"$current"
@@ -77,8 +108,6 @@ json_remove_managed_subject_selectors() {
         if type == "object" and (.subjectSelector? | type == "array") then
           .subjectSelector = ([.subjectSelector[] | . as $selector | select(
             (($managed | index($selector)) == null)
-            and (($selector | startswith("warp")) | not)
-            and (($selector | startswith("tor")) | not)
             and ($selector != "usque")
           )])
         else
@@ -170,10 +199,10 @@ json_replace_warp_routing_rules() {
     ' <<<"$current"
 }
 
-# Накладывает доступные WARP/TOR/DNS интеграции на очищенное состояние Xray.
+# Накладывает доступные WARP/TOR/DNS/Mihomo интеграции на очищенное состояние Xray.
 json_apply_managed_xray_state() {
-	local current=$1 dns_servers=$2 warp_enabled=$3 tor_enabled=$4 dns_enabled=$5 warp_endpoints=${6:-'[]'} webdomain=$7 tor_endpoints=${8:-'[]'} warp_console_ob=${9:-}
-	local updated=$current tor_ob tor_rule tor_balancer tor_selectors warp_ob warp_rule warp_balancer selectors warp_domains endpoint_count index tag host port observatory_selectors='[]' burst_observatory
+	local current=$1 dns_servers=$2 warp_enabled=$3 tor_enabled=$4 dns_enabled=$5 warp_endpoints=${6:-'[]'} webdomain=$7 tor_endpoints=${8:-'[]'} warp_console_ob=${9:-} mihomo_enabled=${10:-false} mihomo_endpoints=${11:-'[]'}
+	local updated=$current tor_ob tor_rule tor_balancer tor_selectors warp_ob warp_rule warp_balancer selectors warp_domains endpoint_count index tag host port observatory_selectors='[]' burst_observatory mihomo_ob mihomo_rule
 	if [[ "$dns_enabled" == "true" ]]; then
 		updated=$(json_replace_dns_servers "$updated" "$dns_servers")
 	fi
@@ -222,6 +251,18 @@ json_apply_managed_xray_state() {
 			observatory_selectors=$(jq -c --argjson selectors "$selectors" '. + $selectors | unique' <<<"$observatory_selectors")
 		fi
 	fi
+	if [[ "$mihomo_enabled" == "true" ]]; then
+		endpoint_count=$(jq 'length' <<<"$mihomo_endpoints")
+		if ((endpoint_count > 0)); then
+			tag=$(jq -r '.[0].tag // "mihomo"' <<<"$mihomo_endpoints")
+			host=$(jq -r '.[0].host // "mihomo"' <<<"$mihomo_endpoints")
+			port=$(jq -r '.[0].port // 7890' <<<"$mihomo_endpoints")
+			mihomo_ob=$(jq -nc --arg tag "$tag" --arg host "$host" --argjson port "$port" '{tag:$tag,protocol:"socks",settings:{servers:[{address:$host,port:$port,users:[]}]}}')
+			mihomo_rule=$(jq -nc --arg tag "$tag" '{type:"field",network:"tcp,udp",outboundTag:$tag}')
+			updated=$(json_add_outbound_if_missing "$updated" "$mihomo_ob")
+			updated=$(json_append_routing_rule_if_outbound_missing "$updated" "$tag" "$mihomo_rule")
+		fi
+	fi
 	if [[ "$(jq 'length' <<<"$observatory_selectors")" -gt 0 ]]; then
 		# Общий observatory объединяет управляемые и оставленные пользователем selectors.
 		burst_observatory=$(json_burst_observatory_for_selectors "$observatory_selectors")
@@ -241,15 +282,39 @@ json_apply_managed_xray_state() {
 	printf '%s' "$updated"
 }
 
+# Задаёт native Xray geodata auto-update block в template (3.5+ / 3.7).
+json_apply_geodata_block() {
+	local current=$1 outbound=$2 assets=$3 cron=$4
+	jq -c --arg outbound "$outbound" --arg cron "$cron" --argjson assets "$assets" '
+      .xraySetting.geodata = {
+        cron: $cron,
+        outbound: $outbound,
+        assets: $assets
+      }
+    ' <<<"$current"
+}
+
+# Выбирает tag outbound для geodata downloads: usque, иначе mihomo, иначе direct.
+geodata_outbound_tag() {
+	local warp_endpoints=${1:-'[]'} mihomo_endpoints=${2:-'[]'}
+	if jq -e 'any(.[]?; .tag == "usque")' <<<"$warp_endpoints" >/dev/null 2>&1; then
+		printf 'usque'
+		return 0
+	fi
+	if jq -e 'length > 0' <<<"$mihomo_endpoints" >/dev/null 2>&1; then
+		jq -r '.[0].tag // "mihomo"' <<<"$mihomo_endpoints"
+		return 0
+	fi
+	printf 'direct'
+}
+
 # Удаляет созданные runtime артефакты WARP/TOR перед пересборкой состояния.
 json_remove_managed_xray_artifacts() {
 	local current=$1
 	current=$(json_remove_managed_subject_selectors "$current")
 	jq -c '
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | ((($tag | startswith("warp-")) | not) and $tag != "tor-proxy")))) |
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") != "warp" and (.tag // "") != "usque"))) |
+      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | (["tor-proxy","torproxy","warp","usque","warp-retired"] | index($tag)) == null))) |
       .xraySetting.routing = (.xraySetting.routing // {}) |
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") != "torproxy"))) |
       .xraySetting.routing.rules = ((.xraySetting.routing.rules // []) | map(select((.outboundTag // "") != "tor-proxy" and (.balancerTag // "") != "tor-balancer" and (.balancerTag // "") != "warp-balancer"))) |
       .xraySetting.routing.balancers = ((.xraySetting.routing.balancers // []) | map(select((.tag // "") != "tor-balancer" and (.tag // "") != "warp-balancer")))
     ' <<<"$current"

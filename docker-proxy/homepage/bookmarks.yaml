@@ -2,17 +2,54 @@
 # For configuration options and examples, please see:
 # https://gethomepage.dev/configs/bookmarks
 
-# - Developer:
-#     - Github:
-#         - abbr: GH
-#           href: https://github.com/
+- Upstream Projects:
+    - 3x-ui:
+        - abbr: 3X-UI
+          href: https://github.com/MHSanaei/3x-ui
+          description: Original 3x-ui project
+    - mihomo:
+        - abbr: Mihomo
+          href: https://github.com/MetaCubeX/mihomo
+          description: Original mihomo project
+    - Homepage:
+        - abbr: Homepage
+          href: https://github.com/gethomepage/homepage
+          description: Original Homepage project
+    - CrowdSec:
+        - abbr: CrowdSec
+          href: https://github.com/crowdsecurity/crowdsec
+          description: Original CrowdSec project
+    - AdGuard Home:
+        - abbr: AdGuard Home
+          href: https://github.com/AdguardTeam/AdGuardHome
+          description: Original AdGuard Home project
+    - Caddy:
+        - abbr: Caddy
+          href: https://github.com/caddyserver/caddy
+          description: Original Caddy project
 
-# - Social:
-#     - Reddit:
-#         - abbr: RE
-#           href: https://reddit.com/
-
-# - Entertainment:
-#     - YouTube:
-#         - abbr: YT
-#           href: https://youtube.com/
+- Documentation:
+    - 3x-ui Wiki:
+        - abbr: 3X-UI
+          href: https://github.com/MHSanaei/3x-ui/wiki
+          description: 3x-ui documentation
+    - mihomo Docs:
+        - abbr: Mihomo
+          href: https://wiki.metacubex.one/en/
+          description: mihomo documentation
+    - Homepage Docs:
+        - abbr: Homepage
+          href: https://gethomepage.dev/configs/
+          description: Homepage documentation
+    - CrowdSec Docs:
+        - abbr: CrowdSec
+          href: https://docs.crowdsec.net/
+          description: CrowdSec documentation
+    - AdGuard Home Wiki:
+        - abbr: AdGuard Home
+          href: https://github.com/AdguardTeam/AdGuardHome/wiki
+          description: AdGuard Home documentation
+    - Caddy Docs:
+        - abbr: Caddy
+          href: https://caddyserver.com/docs/
+          description: Caddy documentation
