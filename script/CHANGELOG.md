@@ -1,5 +1,10 @@
 # Журнал изменений установщика
 
+## 0.7.1 - 2026-10-16
+
+- Финальный summary: UI Service URLs заканчиваются `/` (Homepage, 3X-UI, AdGuard, Dozzle, Telemt, Mihomo), чтобы браузер не терял BasicAuth на 301.
+- AdGuard DoH остаётся без trailing slash (exact `Path()` endpoint).
+
 ## 0.7.0 - 2026-10-16
 
 - `run-compose.sh up`: по умолчанию `up -d --wait --wait-timeout` (`WAIT_TIMEOUT`, default `600`).
