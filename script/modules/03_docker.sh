@@ -387,7 +387,7 @@ install_docker_maintenance_timer() {
 		run_cmd docker.maintenance.reload systemctl daemon-reload
 		run_cmd docker.maintenance.enable systemctl enable "$(basename "$timer_file")"
 		run_cmd docker.maintenance.start systemctl start "$(basename "$timer_file")"
-		run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")"
+		run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")" >/dev/null
 		printf 'Docker maintenance timer installed and active\n'
 		return 0
 	fi
@@ -406,7 +406,7 @@ install_docker_maintenance_timer() {
 	run_cmd docker.maintenance.reload systemctl daemon-reload
 	run_cmd docker.maintenance.enable systemctl enable "$(basename "$timer_file")"
 	run_cmd docker.maintenance.start systemctl start "$(basename "$timer_file")"
-	run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")"
+	run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")" >/dev/null
 	printf 'Docker maintenance timer installed and active\n'
 }
 

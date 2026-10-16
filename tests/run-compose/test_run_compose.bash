@@ -152,7 +152,7 @@ test_restart_logs_is_explicit() {
 test_up_is_safe_by_default() {
 	make_fixture
 	run_runner up
-	assert_contains "up -d" "$tmpdir/docker.log" "up must run detached by default"
+	assert_contains "up -d --wait --wait-timeout 600" "$tmpdir/docker.log" "up must wait for services to become running/healthy"
 	assert_not_contains " pull" "$tmpdir/docker.log" "safe up must not pull by default"
 	assert_not_contains "rm --stop --force" "$tmpdir/docker.log" "safe up must not remove containers"
 }

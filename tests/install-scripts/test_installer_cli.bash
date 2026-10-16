@@ -238,6 +238,33 @@ test_doctor_inventory_uses_bundled_telemt_panel_healthcheck() {
 	assert_not_contains 'containers+=(telemt telemt-panel)' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must not expect a retired standalone panel container"
 	assert_contains 'containers+=(mihomo)' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must check the Mihomo container when gated"
 	assert_contains 'install_mihomo_enabled' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must gate Mihomo checks on ENABLE_MIHOMO"
+	assert_contains 'sub-json-processor' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must inventory sub-json-processor from 12-3x-ui"
+}
+
+# dockcheck must match compose: only active 01-dockcheck.yml/.yaml, never *.yml.disable alone
+test_doctor_inventory_gates_dockcheck_on_active_compose_file() {
+	local doctor_src="$ROOT_DIR/script/modules/08_doctor.sh"
+	assert_contains 'containers+=(dockcheck)' "$doctor_src" "doctor must be able to inventory dockcheck when enabled"
+	assert_contains '01-dockcheck.yml' "$doctor_src" "doctor must gate dockcheck on active compose fragment"
+	# Bare name must not sit in the unconditional base containers=(...) list.
+	if awk '
+		/local -a containers=\(/ { in_base=1; next }
+		in_base && /^[[:space:]]*\)/ { in_base=0 }
+		in_base && $0 ~ /(^|[[:space:]])dockcheck([[:space:]]|$)/ { exit 1 }
+		END { exit 0 }
+	' "$doctor_src"; then
+		:
+	else
+		fail "dockcheck must not be in the unconditional base containers array (only *.yml.disable would still FAIL)"
+	fi
+	# Gate file check must precede the push (same pattern as telemt/mihomo).
+	awk '
+		/01-dockcheck\.yml/ { gate=NR }
+		/containers\+=\(dockcheck\)/ { push=NR }
+		END {
+			if (!(gate && push && gate < push)) exit 2
+		}
+	' "$doctor_src" || fail "dockcheck active-yml gate must precede containers+=(dockcheck)"
 }
 
 # --- Phase 7: doctor exit-matrix (plan IDs T-preflight-default .. T-os) ---
@@ -1106,24 +1133,60 @@ test_wizard_compose_output_filter_removes_pull_noise() {
 	wizard_filter_compose_output >"$tmpdir/filtered-compose.out" <<'OUT'
 [2026-05-08 23:52:53] [run-compose] Каталог с compose-файлами: /opt/docker-proxy/compose.d
 [2026-05-08 23:52:53] [run-compose] Используем env-файл: /opt/docker-proxy/compose.d/.env
+[2026-05-08 23:52:53] [run-compose] Project root: /opt/docker-proxy
+[2026-05-08 23:52:53] [run-compose] Lock file: /opt/state/docker-proxy-compose.lock
 [2026-05-08 23:52:53] [run-compose] Проверяем конфигурацию: docker compose --project-name docker-proxy --env-file /opt/docker-proxy/compose.d/.env -f /opt/docker-proxy/compose.d/00-base.yml config
 [2026-05-08 23:52:55] [run-compose] Попытка 1/3: docker compose --project-name docker-proxy --env-file /opt/docker-proxy/compose.d/.env -f /opt/docker-proxy/compose.d/00-base.yml up -d
+Created symlink '/etc/systemd/system/timers.target.wants/docker-proxy-maintenance.timer' → '/etc/systemd/system/docker-proxy-maintenance.timer'.
+NEXT                        LEFT LAST PASSED UNIT                           ACTIVATES
+Sat 2026-10-17 00:35:22 UTC   7h -         - docker-proxy-maintenance.timer docker-proxy-maintenance.service
+1 timers listed.
  Image torotin/caddy-l4:latest Pulling
+ Image traefik:latest Pulling
+ 59fccd767ac6 Preparing
+ 5b40d9c3d03b Waiting 0B
+ e2de96513ba9 Verifying Checksum 0B
  59fccd767ac6 Pulling fs layer 0B
  a57ae2b1d9eb Downloading 10.49MB
  59fccd767ac6 Pull complete 0B
  Image torotin/caddy-l4:latest Pulled
+ Image traefik:latest Pulled
  Container caddy Starting
  Container caddy Healthy
 OUT
-	assert_contains "Validating compose configuration..." "$tmpdir/filtered-compose.out" "compose filter must keep concise validation status"
-	assert_contains "Starting compose stack: Попытка 1/3" "$tmpdir/filtered-compose.out" "compose filter must keep concise attempt status"
-	assert_contains "Pulling Docker images..." "$tmpdir/filtered-compose.out" "compose filter must summarize image pulls"
-	assert_contains "Docker images pulled" "$tmpdir/filtered-compose.out" "compose filter must summarize pulled images"
-	assert_contains "Container caddy Healthy" "$tmpdir/filtered-compose.out" "compose filter must keep container status"
-	assert_not_contains "docker compose --project-name" "$tmpdir/filtered-compose.out" "compose filter must hide full compose command"
-	assert_not_contains "Downloading 10.49MB" "$tmpdir/filtered-compose.out" "compose filter must hide layer download spam"
-	assert_not_contains "Pulling fs layer" "$tmpdir/filtered-compose.out" "compose filter must hide layer pull spam"
+	assert_contains "Pulling image: torotin/caddy-l4:latest" "$tmpdir/filtered-compose.out" "filter must emit per-image pull for caddy-l4"
+	assert_contains "Pulling image: traefik:latest" "$tmpdir/filtered-compose.out" "filter must emit per-image pull for traefik"
+	assert_contains "Validating compose configuration..." "$tmpdir/filtered-compose.out" "filter must keep concise validation status"
+	assert_contains "Starting compose stack: Попытка 1/3" "$tmpdir/filtered-compose.out" "filter must keep concise attempt status"
+	assert_contains "Docker images pulled" "$tmpdir/filtered-compose.out" "filter must summarize pulled images once"
+	assert_contains "Container caddy Healthy" "$tmpdir/filtered-compose.out" "filter must keep container status"
+	assert_not_contains "Pulling Docker images..." "$tmpdir/filtered-compose.out" "old collapse summary must be removed"
+	assert_not_contains "docker compose --project-name" "$tmpdir/filtered-compose.out" "filter must hide full compose command"
+	assert_not_contains "Downloading 10.49MB" "$tmpdir/filtered-compose.out" "filter must hide download spam"
+	assert_not_contains "Pulling fs layer" "$tmpdir/filtered-compose.out" "filter must hide Pulling fs layer"
+	assert_not_contains "Waiting 0B" "$tmpdir/filtered-compose.out" "filter must hide Waiting layer status"
+	assert_not_contains "Verifying Checksum" "$tmpdir/filtered-compose.out" "filter must hide Verifying Checksum"
+	assert_not_contains "59fccd767ac6 Preparing" "$tmpdir/filtered-compose.out" "filter must hide Preparing layer status"
+	assert_not_contains "Project root:" "$tmpdir/filtered-compose.out" "filter must hide Project root"
+	assert_not_contains "Lock file:" "$tmpdir/filtered-compose.out" "filter must hide Lock file"
+	assert_not_contains "Created symlink" "$tmpdir/filtered-compose.out" "filter must hide Created symlink"
+	assert_not_contains "1 timers listed" "$tmpdir/filtered-compose.out" "filter must hide timers listed"
+}
+
+test_wizard_compose_step_ticker_emits_liveness() {
+	make_fixture
+	source "$ROOT_DIR/script/modules/01_menu.sh"
+	wizard_wait_continue() { :; }
+	export INSTALL_STATE_DIR="$tmpdir/state"
+	mkdir -p "$INSTALL_STATE_DIR"
+	export WIZARD_COMPOSE_TICKER_SECONDS=1
+	wizard_execute_step compose sleep 3 >"$tmpdir/ticker.out" 2>&1
+	assert_contains "Compose step still running..." "$tmpdir/ticker.out" "compose step must emit ticker liveness"
+	local lines_after lines_later
+	lines_after=$(wc -l <"$tmpdir/ticker.out")
+	sleep 2
+	lines_later=$(wc -l <"$tmpdir/ticker.out")
+	[[ "$lines_after" == "$lines_later" ]] || fail "compose ticker must stop after step completes"
 }
 
 test_html_step_is_removed_from_cli_dispatch() {
@@ -1410,6 +1473,7 @@ test_doctor_host_checks_user_firewall_matrix
 test_doctor_strict_flag_parses
 test_doctor_verbose_keeps_detailed_success_output
 test_doctor_inventory_uses_bundled_telemt_panel_healthcheck
+test_doctor_inventory_gates_dockcheck_on_active_compose_file
 test_doctor_exit_preflight_default
 test_doctor_exit_host
 test_doctor_exit_stack_fail
@@ -1469,6 +1533,7 @@ test_wizard_rejects_unknown_menu_choice_without_exit
 test_wizard_streams_output_and_waits_for_enter
 test_wizard_apt_step_streams_and_uses_confirmation
 test_wizard_compose_output_filter_removes_pull_noise
+test_wizard_compose_step_ticker_emits_liveness
 test_html_step_is_removed_from_cli_dispatch
 test_wizard_collects_required_variables_before_menu
 test_wizard_persists_required_variables_before_env_step
