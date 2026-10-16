@@ -69,6 +69,8 @@ inbound_remark_slug() {
 	case "$1" in
 	vision) printf '%s' vless-tcp-reality ;;
 	xhttp) printf '%s' vless-xhttp ;;
+	grpc) printf '%s' vless-grpc-tls ;;
+	hysteria2) printf '%s' hysteria2 ;;
 	*) return 1 ;;
 	esac
 }
@@ -97,16 +99,19 @@ managed_inbound_remarks_json() {
 
 # Собирает декларативное желаемое состояние панели, inbound и общего клиента.
 build_desired_state() {
-	local prefix=${CLIENT_EMAIL_PREFIX:-autogen}
+	local prefix=${CLIENT_EMAIL_PREFIX:-${WEBDOMAIN:+${WEBDOMAIN}-}autogen}
 	local shared_email=${CLIENT_EMAIL_SHARED:-"$prefix"}
 	local sub_id=${CLIENT_SUB_ID:-}
-	local vision_remark xhttp_remark
+	local tls_domain=${WEBDOMAIN:-localhost}
+	local vision_remark xhttp_remark grpc_remark hysteria2_remark
 	if [[ -z "$sub_id" ]]; then
 		# Стабильный subId производен от домена и общей метки клиента.
 		sub_id=$(printf '%s:%s' "${WEBDOMAIN:-localhost}" "$shared_email" | sha256sum | cut -c1-16)
 	fi
 	vision_remark=$(inbound_remark vision)
 	xhttp_remark=$(inbound_remark xhttp)
+	grpc_remark=$(inbound_remark grpc)
+	hysteria2_remark=$(inbound_remark hysteria2)
 
 	jq -nc \
 		--arg webListen "${webListen:-0.0.0.0}" \
@@ -116,11 +121,18 @@ build_desired_state() {
 		--arg visionPort "${PORT_LOCAL_VISION:-443}" \
 		--arg xhttpPort "${PORT_LOCAL_XHTTP:-8443}" \
 		--arg xhttpPath "${URI_VLESS_XHTTP:-/xhttp}" \
+		--arg grpcPort "${PORT_LOCAL_GRPC:-9444}" \
+		--arg grpcPath "${URI_VLESS_GRPC:-/grpc}" \
+		--arg hysteria2Port "${PORT_LOCAL_HYSTERIA:-443}" \
+		--arg xrayTlsCert "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${tls_domain}-cert.pem}" \
+		--arg xrayTlsKey "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${tls_domain}-key.pem}" \
 		--arg domain "${WEBDOMAIN:-}" \
 		--arg sharedEmail "$shared_email" \
 		--arg subId "$sub_id" \
 		--arg visionRemark "$vision_remark" \
 		--arg xhttpRemark "$xhttp_remark" \
+		--arg grpcRemark "$grpc_remark" \
+		--arg hysteria2Remark "$hysteria2_remark" \
 		'{
           panel: {
             webListen: $webListen,
@@ -130,10 +142,16 @@ build_desired_state() {
           },
           inbounds: {
             vision: {managed: true, protocol: "vless", port: ($visionPort|tonumber), remark: $visionRemark},
-            xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath}
+            xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath},
+            grpc: {managed: true, protocol: "vless", port: ($grpcPort|tonumber), remark: $grpcRemark, path: $grpcPath},
+            hysteria2: {managed: true, protocol: "hysteria", port: ($hysteria2Port|tonumber), remark: $hysteria2Remark}
           },
           clients: {
-            shared: {email: $sharedEmail, subId: $subId, flow: "xtls-rprx-vision"}
+            shared: {email: $sharedEmail, subId: $subId, flow: "", visionFlow: "xtls-rprx-vision", xhttpFlow: "", grpcFlow: ""}
+          },
+          tls: {
+            certFile: $xrayTlsCert,
+            keyFile: $xrayTlsKey
           },
           integrations: {
             warp: {enabled: true},
@@ -165,11 +183,11 @@ desired_panel_keys() {
 		ldapEnable ldapHost ldapPort ldapUseTLS ldapBindDN ldapPassword ldapBaseDN \
 		ldapUserFilter ldapUserAttr ldapVlessField ldapSyncCron ldapFlagField \
 		ldapTruthyValues ldapInvertFlag ldapInboundTags ldapAutoCreate ldapAutoDelete \
-		ldapDefaultTotalGB ldapDefaultExpiryDays ldapDefaultLimitIP
+		ldapDefaultTotalGB ldapDefaultExpiryDays ldapDefaultLimitIP panelOutbound
 }
 
-# Печатает штатный набор внешних geo-файлов для регистрации через API.
-custom_geo_default_resources() {
+# Печатает штатный набор URL внешних geodata assets для Xray template.
+geodata_default_resources() {
 	cat <<'EOF'
 geosite|geosite_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat
 geosite|geosite_v2fly|https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
@@ -178,15 +196,15 @@ geoip|geoip_zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/downl
 geoip|geoip_v2fly|https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
 geoip|geoip_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat
 geosite|adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
+geosite|geosite_RU|https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat
 EOF
 }
 
-# Преобразует строки geo-ресурсов в JSON-массив, игнорируя пустые и неверные записи.
-custom_geo_resources_json() {
+# Преобразует строки geo-ресурсов в JSON-массив {type,alias,url}, игнорируя пустые записи.
+geodata_resources_json() {
 	local input=${CUSTOM_GEO_RESOURCES:-} entry typ alias url out='[]'
-	[[ -n "$input" ]] || input=$(custom_geo_default_resources)
+	[[ -n "$input" ]] || input=$(geodata_default_resources)
 
-	# Формат допускает комментарии и пробелы в пользовательском env-списке.
 	while IFS= read -r entry || [[ -n "$entry" ]]; do
 		entry=${entry#"${entry%%[![:space:]]*}"}
 		entry=${entry%"${entry##*[![:space:]]}"}
@@ -203,6 +221,22 @@ custom_geo_resources_json() {
 	done <<<"$input"
 
 	printf '%s' "$out"
+}
+
+# Строит массив Xray geodata.assets из списка geo-ресурсов ({url,file}).
+geodata_assets_json() {
+	local resources=${1:-}
+	[[ -n "$resources" ]] || resources=$(geodata_resources_json)
+	jq -c 'map({url:.url, file:(.alias + ".dat")})' <<<"$resources"
+}
+
+# Обратная совместимость для тестов и env CUSTOM_GEO_RESOURCES.
+custom_geo_resources_json() {
+	geodata_resources_json
+}
+
+custom_geo_default_resources() {
+	geodata_default_resources
 }
 
 # Извлекает три reserved-байта WireGuard из идентификатора клиента WARP.
@@ -319,6 +353,8 @@ build_vless_settings_json() {
 		--argjson clients "$clients" '
         if $kind == "vision" then
           {clients:$clients, decryption:"none", encryption:"none", fallbacks:[{dest:$fallbackDest,xver:$fallbackXver}]}
+        elif $kind == "grpc" then
+          {clients:$clients, decryption:"none", encryption:"none"}
         else
           {clients:$clients, decryption:$dec, encryption:$enc}
           | if ($label|length)>0 then . + {selectedAuth:$label} else . end
@@ -328,10 +364,10 @@ build_vless_settings_json() {
 
 # Формирует клиентский объект в контракте API 3x-ui 3.1.
 vless_client_api_json() {
-	local client_id=$1 email=$2 sub_id=$3 flow=$4
-	jq -nc --arg id "$client_id" --arg email "$email" --arg sid "$sub_id" --arg flow "$flow" '{
-      id:$id, flow:$flow, email:$email, limitIp:0, totalGB:0, expiryTime:0,
-      enable:true, tgId:0, subId:$sid, comment:"", reset:0
+	local client_id=$1 email=$2 sub_id=$3 flow=$4 password=${5:-} auth=${6:-}
+	jq -nc --arg id "$client_id" --arg email "$email" --arg sid "$sub_id" --arg flow "$flow" --arg password "$password" --arg auth "$auth" '{
+      id:$id, uuid:$id, password:$password, auth:$auth, flow:$flow, security:"auto", email:$email,
+      limitIp:0, totalGB:0, expiryTime:0, reset:0, tgId:0, group:"", comment:"", enable:true, subId:$sid
     }'
 }
 
@@ -354,7 +390,6 @@ build_sockopt_json() {
       domainStrategy:$domainStrategy,
       interface:"",
       mark:0,
-      penetrate:true,
       tcpFastOpen:true,
       tcpKeepAliveIdle:300,
       tcpKeepAliveInterval:0,
@@ -369,24 +404,167 @@ build_sockopt_json() {
 
 # Строит список внешнего proxy для маскирующего соединения, если задан домен.
 build_external_proxy_json() {
-	local host=$1 force_tls=${2:-same}
+	local host=$1 force_tls=${2:-same} alpn_json=${3:-'[]'} fingerprint=${4:-}
 	if [[ -z "$host" ]]; then
 		printf '[]'
 	else
-		jq -nc --arg dest "$host" --arg forceTls "$force_tls" '[{forceTls:$forceTls,dest:$dest,port:443,remark:""}]'
+		[[ -n "$fingerprint" ]] || fingerprint=$(select_tls_fingerprint)
+		jq -nc --arg dest "$host" --arg forceTls "$force_tls" --arg fingerprint "$fingerprint" --argjson alpn "$alpn_json" '
+          [{
+            forceTls:$forceTls,
+            dest:$dest,
+            port:443,
+            remark:"",
+            sni:$dest,
+            fingerprint:$fingerprint
+          } + (if ($alpn | length) > 0 then {alpn:$alpn} else {} end)]
+        '
 	fi
+}
+
+# Выбирает client-side TLS fingerprint для ссылок/JSON подписок.
+select_tls_fingerprint() {
+	local values=(random firefox safari)
+	local idx
+	idx=$((RANDOM % ${#values[@]}))
+	printf '%s' "${values[$idx]}"
+}
+
+tls_fingerprint_allowed() {
+	case "${1:-}" in
+	random | firefox | safari) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# Удаляет из panel-side streamSettings поля, которые больше не принимает Xray.
+strip_removed_xray_stream_fields_json() {
+	jq -c 'walk(if type == "object" then del(.allowInsecure) | del(.penetrate) else . end)'
+}
+
+# Нормализует сохраненный REALITY stream без регенерации ключей.
+sanitize_vision_stream_json() {
+	local stream=$1 fingerprint
+	fingerprint=$(jq -r '.realitySettings.settings.fingerprint // empty' <<<"$stream")
+	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
+	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c --arg fingerprint "$fingerprint" '
+      if (.realitySettings // null) then
+        .realitySettings.maxTimeDiff = (.realitySettings.maxTimeDiff // .realitySettings.maxTimediff // 0)
+        | del(.realitySettings.maxTimediff)
+        | .realitySettings.settings.fingerprint = $fingerprint
+      else
+        .
+      end
+    '
+}
+
+sanitize_external_proxy_tls_json() {
+	local stream=$1 host=$2 alpn_json=${3:-'[]'} fingerprint
+	fingerprint=$(jq -r '.externalProxy[0].fingerprint // empty' <<<"$stream")
+	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
+	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c \
+		--arg host "$host" \
+		--arg fingerprint "$fingerprint" \
+		--argjson alpn "$alpn_json" '
+        .externalProxy = [((.externalProxy[0] // {}) + {
+          forceTls:"tls",
+          dest:$host,
+          port:443,
+          remark:"",
+          sni:$host,
+          fingerprint:$fingerprint
+        } + (if ($alpn | length) > 0 then {alpn:$alpn} else {} end))]
+      '
+}
+
+sanitize_xhttp_stream_json() {
+	local stream=$1 path=$2 host=$3 sanitized
+	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2","http/1.1"]')
+	printf '%s' "$sanitized" | jq -c --arg path "$path" --arg host "$host" '
+      .network = "xhttp"
+      | .security = "none"
+      | .xhttpSettings.path = $path
+      | .xhttpSettings.host = $host
+    '
+}
+
+sanitize_grpc_stream_json() {
+	local stream=$1 path=$2 host=$3 cert_file=$4 key_file=$5 service_name fingerprint sanitized
+	service_name=${path#/}
+	service_name=${service_name%/}
+	fingerprint=$(jq -r '.tlsSettings.settings.fingerprint // .externalProxy[0].fingerprint // empty' <<<"$stream")
+	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
+	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2"]')
+	printf '%s' "$sanitized" | jq -c \
+		--arg serviceName "$service_name" \
+		--arg host "$host" \
+		--arg certFile "$cert_file" \
+		--arg keyFile "$key_file" \
+		--arg fingerprint "$fingerprint" '
+      .network = "grpc"
+      | .security = "tls"
+      | .tlsSettings.serverName = $host
+      | .tlsSettings.minVersion = (.tlsSettings.minVersion // "1.2")
+      | .tlsSettings.maxVersion = (.tlsSettings.maxVersion // "1.3")
+      | .tlsSettings.certificates = [{
+          certificateFile:$certFile,
+          keyFile:$keyFile,
+          oneTimeLoading:false,
+          usage:"encipherment"
+        }]
+      | .tlsSettings.alpn = ["h2"]
+      | .tlsSettings.settings.fingerprint = $fingerprint
+      | .externalProxy[0].fingerprint = $fingerprint
+      | .grpcSettings.serviceName = $serviceName
+      | .grpcSettings.authority = (.grpcSettings.authority // "")
+      | .grpcSettings.multiMode = (.grpcSettings.multiMode // false)
+    '
+}
+
+# Строит общую TLS-конфигурацию для управляемых inbound с локальным сертификатом.
+build_tls_settings_json() {
+	local server_name=$1 cert_file=$2 key_file=$3 alpn_json=$4 fingerprint=${5:-}
+	[[ -n "$fingerprint" ]] || fingerprint=$(select_tls_fingerprint)
+	jq -nc \
+		--arg serverName "$server_name" \
+		--arg certFile "$cert_file" \
+		--arg keyFile "$key_file" \
+		--arg fingerprint "$fingerprint" \
+		--argjson alpn "$alpn_json" '{
+          serverName:$serverName,
+          minVersion:"1.2",
+          maxVersion:"1.3",
+          cipherSuites:"",
+          rejectUnknownSni:false,
+          disableSystemRoot:false,
+          enableSessionResumption:false,
+          certificates:[{
+            certificateFile:$certFile,
+            keyFile:$keyFile,
+            oneTimeLoading:false,
+            usage:"encipherment"
+          }],
+          alpn:$alpn,
+          echServerKeys:"",
+          settings:{
+            fingerprint:$fingerprint,
+            echConfigList:""
+          }
+        }'
 }
 
 # Строит streamSettings для TCP/REALITY Vision с ключами и fallback-назначением.
 build_vision_stream_json() {
 	local target=$1 sni=$2 private_key=$3 public_key=$4 short_ids=${5:-'[""]'} sockopt=${6:-'{}'} mldsa_seed=${7:-} mldsa_verify=${8:-} target_xver=${9:-0}
-	local external_proxy
+	local external_proxy fingerprint
 	external_proxy=$(build_external_proxy_json "$sni")
+	fingerprint=$(select_tls_fingerprint)
 	jq -nc \
 		--arg target "$target" \
 		--arg sni "$sni" \
 		--arg privateKey "$private_key" \
 		--arg publicKey "$public_key" \
+		--arg fingerprint "$fingerprint" \
 		--arg mldsaSeed "$mldsa_seed" \
 		--arg mldsaVerify "$mldsa_verify" \
 		--argjson shortIds "$short_ids" \
@@ -404,12 +582,12 @@ build_vision_stream_json() {
             privateKey:$privateKey,
             minClientVer:"",
             maxClientVer:"",
-            maxTimediff:0,
+            maxTimeDiff:0,
             shortIds:$shortIds,
             mldsa65Seed:$mldsaSeed,
             settings:{
               publicKey:$publicKey,
-              fingerprint:"chrome",
+              fingerprint:$fingerprint,
               serverName:"",
               spiderX:"/",
               mldsa65Verify:$mldsaVerify
@@ -420,11 +598,35 @@ build_vision_stream_json() {
         }'
 }
 
+# Строит streamSettings для VLESS gRPC backend с TLS между Traefik и Xray.
+build_grpc_stream_json() {
+	local path=$1 host=$2 cert_file=$3 key_file=$4 service_name external_proxy tls_settings fingerprint
+	service_name=${path#/}
+	service_name=${service_name%/}
+	fingerprint=$(select_tls_fingerprint)
+	external_proxy=$(build_external_proxy_json "$host" tls '["h2"]' "$fingerprint")
+	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h2"]' "$fingerprint")
+	jq -nc \
+		--arg serviceName "$service_name" \
+		--argjson externalProxy "$external_proxy" \
+		--argjson tlsSettings "$tls_settings" '{
+          network:"grpc",
+          security:"tls",
+          externalProxy:$externalProxy,
+          tlsSettings:$tlsSettings,
+          grpcSettings:{
+            serviceName:$serviceName,
+            authority:"",
+            multiMode:false
+          }
+        }'
+}
+
 # Строит streamSettings для XHTTP backend, TLS которого завершается в Traefik.
 build_xhttp_stream_json() {
 	local path=$1 host=$2 sockopt external_proxy
 	sockopt=$(build_sockopt_json false UseIP tproxy)
-	external_proxy=$(build_external_proxy_json "$host" tls)
+	external_proxy=$(build_external_proxy_json "$host" tls '["h2","http/1.1"]')
 	jq -nc --arg path "$path" --arg host "$host" --argjson sockopt "$sockopt" --argjson externalProxy "$external_proxy" '{
       network:"xhttp",
       security:"none",
@@ -446,4 +648,31 @@ build_xhttp_stream_json() {
         mode:"packet-up"
       }
     }'
+}
+
+# Строит streamSettings для Hysteria2 UDP inbound с TLS и HTTP/3 masquerade.
+build_hysteria2_stream_json() {
+	local host=$1 cert_file=$2 key_file=$3 auth=${4:-} tls_settings masq_url
+	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h3"]' "")
+	masq_url=${HYSTERIA2_MASQ_URL:-}
+	[[ -n "$masq_url" ]] || masq_url="https://${host}/"
+	jq -nc \
+		--arg masqUrl "$masq_url" \
+		--arg auth "$auth" \
+		--argjson tlsSettings "$tls_settings" '{
+          network:"hysteria",
+          security:"tls",
+          tlsSettings:$tlsSettings,
+          hysteriaSettings:{
+            version:2,
+            auth:$auth,
+            udpIdleTimeout:60,
+            masquerade:{
+              type:"proxy",
+              url:$masqUrl,
+              rewriteHost:false,
+              insecure:false
+            }
+          }
+        }'
 }

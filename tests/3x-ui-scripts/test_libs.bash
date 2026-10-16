@@ -68,37 +68,87 @@ test_dns_replace_preserves_unknown_fields() {
 }
 
 test_remove_managed_xray_artifacts_only_removes_our_tags() {
-	local input cleaned managed_count direct_count
-	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"}]}}}'
+	local input cleaned managed_count direct_count custom_count custom_subjects
+	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"},{"tag":"warp-custom"},{"tag":"tor-custom"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"},{"balancerTag":"custom-balancer"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"},{"tag":"warp-custom-balancer"},{"tag":"tor-custom-balancer"}]},"burstObservatory":{"subjectSelector":["warp-custom","tor-custom","custom-out","usque"]}}}'
 	cleaned=$(json_remove_managed_xray_artifacts "$input")
 	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-retired" or $t == "tor-proxy" or $t == "warp-balancer")] | length')
 	direct_count=$(printf '%s' "$cleaned" | jq '[.xraySetting.outbounds[]? | select(.tag=="direct")] | length')
+	custom_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-custom" or $t == "tor-custom" or $t == "custom-balancer" or $t == "custom" or $t == "warp-custom-balancer" or $t == "tor-custom-balancer")] | length')
+	custom_subjects=$(printf '%s' "$cleaned" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
 	assert_eq 0 "$managed_count" "managed artifacts were not removed"
 	assert_eq 1 "$direct_count" "unmanaged outbound was removed"
+	assert_eq 6 "$custom_count" "unmanaged routing artifacts must be preserved"
+	assert_eq "custom-out,tor-custom,warp-custom" "$custom_subjects" "unmanaged observatory subjects must be preserved"
 }
 
 test_desired_clients_are_deterministic() {
-	local desired shared_email shared_sub shared_flow
+	local desired shared_email shared_sub shared_flow vision_flow xhttp_flow grpc_flow
 	export CLIENT_EMAIL_PREFIX=autogen
 	export CLIENT_SUB_ID=stable-sub
 	desired=$(build_desired_state)
 	shared_email=$(printf '%s' "$desired" | jq -r '.clients.shared.email')
 	shared_sub=$(printf '%s' "$desired" | jq -r '.clients.shared.subId')
 	shared_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.flow')
+	vision_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.visionFlow')
+	xhttp_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.xhttpFlow')
+	grpc_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.grpcFlow')
 	assert_eq autogen "$shared_email" "shared client email default mismatch"
 	assert_eq stable-sub "$shared_sub" "shared client sub id mismatch"
-	assert_eq "xtls-rprx-vision" "$shared_flow" "shared VLESS client flow mismatch"
+	assert_eq "" "$shared_flow" "shared first-class client flow must stay empty"
+	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision inbound client flow mismatch"
+	assert_eq "" "$xhttp_flow" "XHTTP VLESS client flow must stay empty"
+	assert_eq "" "$grpc_flow" "gRPC VLESS client flow must stay empty"
 }
 
 test_desired_inbound_remarks_use_country_flag() {
-	local desired vision_remark xhttp_remark
+	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark
 	export EMOJI_FLAG="🇩🇪"
 	desired=$(build_desired_state)
 	vision_remark=$(printf '%s' "$desired" | jq -r '.inbounds.vision.remark')
 	xhttp_remark=$(printf '%s' "$desired" | jq -r '.inbounds.xhttp.remark')
+	grpc_remark=$(printf '%s' "$desired" | jq -r '.inbounds.grpc.remark')
+	hysteria2_remark=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.remark')
 	assert_eq "🇩🇪 vless-tcp-reality" "$vision_remark" "vision inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-xhttp" "$xhttp_remark" "xhttp inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 vless-grpc-tls" "$grpc_remark" "gRPC inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 hysteria2" "$hysteria2_remark" "Hysteria2 inbound remark must use the detected country flag"
 	unset EMOJI_FLAG
+}
+
+test_runtime_env_preserves_explicit_optional_inbound_flags() {
+	local tmp old_pwd
+	tmp=$(mktemp -d)
+	old_pwd=$PWD
+	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
+	printf 'ENABLE_VLESS_GRPC=true\nENABLE_HYSTERIA2=false\n' >"$tmp/.env"
+	printf 'ENABLE_VLESS_GRPC="${ENABLE_VLESS_GRPC:-true}"\nENABLE_HYSTERIA2="${ENABLE_HYSTERIA2:-true}"\n' >"$tmp/3x-ui/3x-ui.env"
+	export ENABLE_VLESS_GRPC=false
+	export ENABLE_HYSTERIA2=true
+	cd "$tmp"
+	load_runtime_env "$tmp/runtime"
+	cd "$old_pwd"
+	assert_eq false "$ENABLE_VLESS_GRPC" "explicit gRPC flag must override env files"
+	assert_eq true "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag must override env files"
+	rm -rf "$tmp"
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+}
+
+test_runtime_env_normalizes_explicit_optional_inbound_flags() {
+	local tmp old_pwd
+	tmp=$(mktemp -d)
+	old_pwd=$PWD
+	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
+	printf 'ENABLE_VLESS_GRPC=false\nENABLE_HYSTERIA2=true\n' >"$tmp/.env"
+	printf 'ENABLE_VLESS_GRPC="${ENABLE_VLESS_GRPC:-false}"\nENABLE_HYSTERIA2="${ENABLE_HYSTERIA2:-true}"\n' >"$tmp/3x-ui/3x-ui.env"
+	export ENABLE_VLESS_GRPC=YES
+	export ENABLE_HYSTERIA2=0
+	cd "$tmp"
+	load_runtime_env "$tmp/runtime"
+	cd "$old_pwd"
+	assert_eq true "$ENABLE_VLESS_GRPC" "explicit gRPC flag aliases must normalize to true"
+	assert_eq false "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag aliases must normalize to false"
+	rm -rf "$tmp"
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
 }
 
 test_managed_inbound_remarks_include_legacy_names() {
@@ -140,8 +190,30 @@ test_country_flag_value_from_trace_extracts_loc() {
 	assert_eq "🇩🇪" "$flag" "Cloudflare trace fallback must convert loc to flag emoji"
 }
 
+test_client_vless_uuid_normalizes_api_variants() {
+	local from_uuid from_auth invalid invalid_random_secret
+	from_uuid=$(client_vless_uuid '{"uuid":"11111111-2222-3333-8444-555555555555","id":7}')
+	from_auth=$(client_vless_uuid '{"uuid":"","id":7,"auth":"5c06031be7354024b568009e0cb47422"}')
+	invalid=$(client_vless_uuid '{"id":7,"auth":""}' 2>/dev/null || true)
+	invalid_random_secret=$(client_vless_uuid '{"id":7,"uuid":"5c06031b-e735-e024-7568-009e0cb47422","password":"d9c67df9b9e4cd267c58c6cca150f1be","auth":"5c06031be735e0247568009e0cb47422"}' 2>/dev/null || true)
+	assert_eq "11111111-2222-3333-8444-555555555555" "$from_uuid" "client UUID field must be preferred"
+	assert_eq "5c06031b-e735-4024-b568-009e0cb47422" "$from_auth" "valid 32-hex auth fallback must normalize to UUID"
+	assert_eq "" "$invalid" "numeric row id must not be treated as VLESS UUID"
+	assert_eq "" "$invalid_random_secret" "random 32-hex secrets must not be treated as VLESS UUID"
+}
+
+test_inbound_vless_client_uuid_recovers_polluted_global_client() {
+	local recovered
+	inbound_by_id_json() {
+		printf '%s' '{"settings":{"clients":[{"email":"autogen","id":"5c06031b-e735-4024-b568-009e0cb47422","flow":"xtls-rprx-vision"}]}}'
+	}
+	recovered=$(inbound_vless_client_uuid 1 autogen)
+	unset -f inbound_by_id_json
+	assert_eq "5c06031b-e735-4024-b568-009e0cb47422" "$recovered" "VLESS UUID must recover from inbound settings"
+}
+
 test_resolve_panel_base_prioritizes_configured_web_port() {
-	local first_base
+	local first_base login_log
 	export USERNAME=admin PASSWORD=admin NEW_ADMIN_USERNAME='' NEW_ADMIN_PASSWORD=''
 	export webPort=52025 webBasePath=/panel WEBDOMAIN=example.test
 	HTTP_ATTEMPTS=4
@@ -150,21 +222,21 @@ test_resolve_panel_base_prioritizes_configured_web_port() {
 	HTTP_CONNECT_TIMEOUT=2
 	# shellcheck disable=SC2034 # resolve_panel_base reads/restores these globals dynamically
 	HTTP_MAX_TIME=8
+	login_log=$(mktemp)
 	xui_login() {
-		printf '%s\n' "$1" >>"$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+		printf '%s\n' "$1" >>"$login_log"
 		return 1
 	}
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
 	resolve_panel_base || true
-	first_base=$(head -n1 "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts")
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+	first_base=$(head -n1 "$login_log")
+	rm -f "$login_log"
 	assert_eq "https://127.0.0.1:52025/panel" "$first_base" "configured webPort was not tried first"
 	assert_eq 4 "$HTTP_ATTEMPTS" "HTTP_ATTEMPTS was not restored"
 	assert_eq 1 "$HTTP_LOG_FAILURES" "HTTP_LOG_FAILURES was not restored"
 }
 
 test_resolve_panel_base_tries_new_password_when_username_is_unchanged() {
-	local attempts
+	local attempts login_log
 	export USERNAME=admin PASSWORD=old-password NEW_ADMIN_USERNAME=admin NEW_ADMIN_PASSWORD=new-password
 	export webPort=52025 webBasePath=/panel WEBDOMAIN=example.test
 	HTTP_ATTEMPTS=4
@@ -173,14 +245,14 @@ test_resolve_panel_base_tries_new_password_when_username_is_unchanged() {
 	HTTP_CONNECT_TIMEOUT=2
 	# shellcheck disable=SC2034 # resolve_panel_base reads/restores these globals dynamically
 	HTTP_MAX_TIME=8
+	login_log=$(mktemp)
 	xui_login() {
-		printf '%s %s %s\n' "$1" "$2" "$3" >>"$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+		printf '%s %s %s\n' "$1" "$2" "$3" >>"$login_log"
 		[[ "$2" == "admin" && "$3" == "new-password" ]]
 	}
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
 	resolve_panel_base || fail "resolve_panel_base must try NEW_ADMIN_PASSWORD even when username is unchanged"
-	attempts=$(cat "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts")
-	rm -f "$ROOT_DIR/tests/3x-ui-scripts/.login-attempts"
+	attempts=$(cat "$login_log")
+	rm -f "$login_log"
 	grep -Fq "admin old-password" <<<"$attempts" || fail "old credential was not tried"
 	grep -Fq "admin new-password" <<<"$attempts" || fail "new credential was not tried"
 	assert_eq new-password "$PASSWORD" "resolved password must switch to NEW_ADMIN_PASSWORD"
@@ -244,46 +316,60 @@ test_panel_api_requests_use_bearer_token_when_configured() {
 		return 0
 	}
 	xui_list_inbounds
-	xui_add_inbound --data-urlencode "remark=test"
+	xui_add_inbound '{"remark":"test","port":443,"protocol":"vless","settings":{},"streamSettings":{},"sniffing":{}}'
 	xui_restart_xray
 	xui_get_panel_settings
 	auth_count=$(grep -Fc "Authorization: Bearer test-token" "$call_log")
 	path_count=$(grep -Fc "panel/api/inbounds" "$call_log")
 	grep -Fq "panel/api/server/restartXrayService" "$call_log" || fail "Xray restart must use the panel API server route"
-	settings_auth_count=$(grep -F "panel/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
+	settings_auth_count=$(grep -F "panel/api/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
+	legacy_settings_auth_count=$(grep -F "panel/setting/all" "$call_log" | grep -Fc "Authorization: Bearer test-token" || true)
 	rm -f "$call_log"
 	unset -f http_request
 	unset XUI_API_TOKEN
-	assert_eq 3 "$auth_count" "Bearer token must be sent on panel API requests"
+	assert_eq 4 "$auth_count" "Bearer token must be sent on panel API requests"
 	assert_eq 2 "$path_count" "inbound API requests were not captured"
-	assert_eq 0 "$settings_auth_count" "Bearer token must not be sent on non-/panel/api routes"
+	assert_eq 1 "$settings_auth_count" "Settings read must use canonical /panel/api/setting/all with Bearer"
+	assert_eq 0 "$legacy_settings_auth_count" "Legacy settings route must not be used when canonical succeeds"
 }
 
 test_client_api_uses_3x_ui_31_json_routes() {
-	local call_log add_has_json update_has_json add_path update_path list_path attach_path
+	local call_log add_has_json update_has_json add_path update_path list_path attach_path get_path
 	call_log=$(mktemp)
 	export XUI_API_TOKEN=test-token
 	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
 	URL_BASE_RESOLVED=http://127.0.0.1:2053/panel
 	http_request() {
 		printf '%s\n' "$*" >>"$call_log"
+		HTTP_CODE=200
+		HTTP_BODY_FILE=$(mktemp)
+		case "$2" in
+		*/clients/get/*)
+			printf '{"success":true,"obj":{"email":"a@example.test","subId":"old","limitIp":0,"totalGB":0,"expiryTime":0,"reset":0,"tgId":0,"comment":"","enable":true,"security":"auto","group":""}}' >"$HTTP_BODY_FILE"
+			;;
+		*)
+			printf '{"success":true}' >"$HTTP_BODY_FILE"
+			;;
+		esac
 		return 0
 	}
 	xui_add_client '{"client":{"email":"a@example.test"},"inboundIds":[1]}'
-	xui_update_client a@example.test '{"email":"a@example.test"}'
+	xui_update_client 'a@example.test' '{"email":"a@example.test","id":"11111111-2222-3333-8444-555555555555"}'
 	xui_list_clients
-	xui_attach_client a@example.test '{"inboundIds":[2]}'
+	xui_attach_client 'a@example.test' '{"inboundIds":[2]}'
 	add_path=$(grep -Fc "panel/api/clients/add" "$call_log" || true)
-	update_path=$(grep -Fc "panel/api/clients/update/a@example.test" "$call_log" || true)
+	update_path=$(grep -Fc "panel/api/clients/update/a%40example.test" "$call_log" || true)
+	get_path=$(grep -Fc "panel/api/clients/get/a%40example.test" "$call_log" || true)
 	list_path=$(grep -Fc "panel/api/clients/list" "$call_log" || true)
-	attach_path=$(grep -Fc "panel/api/clients/a@example.test/attach" "$call_log" || true)
+	attach_path=$(grep -Fc "panel/api/clients/a%40example.test/attach" "$call_log" || true)
 	add_has_json=$(grep -F "panel/api/clients/add" "$call_log" | grep -Fc "Content-Type: application/json" || true)
-	update_has_json=$(grep -F "panel/api/clients/update/a@example.test" "$call_log" | grep -Fc "Content-Type: application/json" || true)
+	update_has_json=$(grep -F "panel/api/clients/update/a%40example.test" "$call_log" | grep -Fc "Content-Type: application/json" || true)
 	rm -f "$call_log"
 	unset -f http_request
 	unset XUI_API_TOKEN
 	assert_eq 1 "$add_path" "3x-ui 3.1 add client route mismatch"
 	assert_eq 1 "$update_path" "3x-ui 3.1 update client route mismatch"
+	assert_eq 1 "$get_path" "3x-ui 3.7 update client must GET current object first"
 	assert_eq 1 "$list_path" "3x-ui 3.1 list clients route mismatch"
 	assert_eq 1 "$attach_path" "3x-ui 3.1 attach client route mismatch"
 	assert_eq 1 "$add_has_json" "3x-ui 3.1 add client must send JSON"
@@ -307,7 +393,7 @@ test_create_mutations_use_single_long_request() {
 		observed+=("$HTTP_ATTEMPTS:$HTTP_MAX_TIME:$2")
 		return 0
 	}
-	xui_add_inbound --data-urlencode "port=62093"
+	xui_add_inbound '{"port":62093,"protocol":"vless","remark":"test","settings":{},"streamSettings":{},"sniffing":{}}'
 	xui_add_client '{"client":{"email":"a@example.test"},"inboundIds":[1]}'
 	unset -f http_request xui_csrf_args
 	# shellcheck source=/dev/null
@@ -318,27 +404,25 @@ test_create_mutations_use_single_long_request() {
 	assert_eq 8 "$HTTP_MAX_TIME" "Mutation request must restore HTTP_MAX_TIME"
 }
 
-test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty() {
+test_panel_api_does_not_read_bearer_token_from_sqlite() {
 	local call_log auth_count
 	call_log=$(mktemp)
 	XUI_API_TOKEN=
-	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	XUI_API_TOKEN_RESOLVED=
 	URL_BASE_RESOLVED=http://127.0.0.1:2053
 	sqlite3() {
-		[[ "$1" == "/etc/x-ui/x-ui.db" ]] || fail "unexpected sqlite database path: $1"
-		[[ "$2" == "select value from settings where key='secret';" ]] || fail "unexpected sqlite query: $2"
-		printf '%s\n' db-token
+		fail "sqlite3 must not be used for Bearer token resolution on 3.7"
 	}
 	http_request() {
 		printf '%s\n' "$*" >>"$call_log"
 		return 0
 	}
 	xui_list_inbounds
-	auth_count=$(grep -Fc "Authorization: Bearer db-token" "$call_log")
+	auth_count=$(grep -Fc "Authorization: Bearer" "$call_log" || true)
 	rm -f "$call_log"
 	unset -f http_request sqlite3
-	unset XUI_API_TOKEN
-	assert_eq 1 "$auth_count" "Bearer token must fall back to the SQLite secret setting"
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED
+	assert_eq 0 "$auth_count" "Bearer token must not be sent when XUI_API_TOKEN is unset"
 }
 
 test_xui_login_replays_csrf_token() {
@@ -367,15 +451,17 @@ test_xui_login_replays_csrf_token() {
 	}
 	xui_login "http://127.0.0.1:25713/panel-base" admin admin || fail "xui_login fixture failed"
 	login_has_csrf=$(grep -F "/login" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	login_has_json=$(grep -F "/login" "$call_log" | grep -Fc "Content-Type: application/json" || true)
 	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
 	unset -f http_request
 	assert_eq 1 "$login_has_csrf" "login POST must include the minted CSRF token"
+	assert_eq 1 "$login_has_json" "login POST must use application/json body"
 }
 
 test_non_bearer_api_post_replays_csrf_token() {
 	local call_log settings_has_csrf
 	call_log=$(mktemp)
-	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED XUI_ROUTE_setting_all
 	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
 	URL_BASE_RESOLVED=http://127.0.0.1:25713/panel-base
 	http_request() {
@@ -387,7 +473,7 @@ test_non_bearer_api_post_replays_csrf_token() {
 			HTTP_BODY_FILE=$(mktemp)
 			printf '{"success":true,"obj":"csrf-fixture"}' >"$HTTP_BODY_FILE"
 			;;
-		*/panel/setting/all)
+		*/panel/api/setting/all|*/panel/setting/all)
 			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state
 			HTTP_CODE=200
 			HTTP_BODY_FILE=$(mktemp)
@@ -397,14 +483,47 @@ test_non_bearer_api_post_replays_csrf_token() {
 		return 0
 	}
 	xui_get_panel_settings || fail "xui_get_panel_settings fixture failed"
-	settings_has_csrf=$(grep -F "/panel/setting/all" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
+	settings_has_csrf=$(grep -E "/panel/(api/)?setting/all" "$call_log" | grep -Fc "X-CSRF-Token: csrf-fixture" || true)
 	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
 	unset -f http_request
 	assert_eq 1 "$settings_has_csrf" "non-Bearer POST requests must include a CSRF token"
 }
 
+test_panel_settings_fallback_to_legacy_route_on_404() {
+	local call_log canonical_hits legacy_hits
+	call_log=$(mktemp)
+	unset XUI_API_TOKEN XUI_API_TOKEN_RESOLVED XUI_ROUTE_setting_all
+	# shellcheck disable=SC2034 # xui_url reads URL_BASE_RESOLVED as a runtime global
+	URL_BASE_RESOLVED=http://127.0.0.1:25713/panel-base
+	http_request() {
+		printf '%s\n' "$*" >>"$call_log"
+		case "$2" in
+		*/panel/api/setting/all)
+			# shellcheck disable=SC2034 # dual-path helper reads HTTP_CODE as shared HTTP state
+			HTTP_CODE=404
+			HTTP_BODY_FILE=$(mktemp)
+			printf '' >"$HTTP_BODY_FILE"
+			;;
+		*/panel/setting/all)
+			HTTP_CODE=200
+			HTTP_BODY_FILE=$(mktemp)
+			printf '{"success":true,"obj":{"webPort":2053}}' >"$HTTP_BODY_FILE"
+			;;
+		esac
+		return 0
+	}
+	xui_get_panel_settings || fail "xui_get_panel_settings legacy fallback fixture failed"
+	http_success_json || fail "legacy settings route must return success JSON"
+	canonical_hits=$(grep -Fc "/panel/api/setting/all" "$call_log" || true)
+	legacy_hits=$(grep -Fc "/panel/setting/all" "$call_log" || true)
+	rm -f "$call_log" "${HTTP_BODY_FILE:-}"
+	unset -f http_request
+	assert_eq 1 "$canonical_hits" "canonical settings route must be attempted first"
+	assert_eq 1 "$legacy_hits" "legacy settings route must be used after canonical 404"
+}
+
 test_custom_geo_resources_default_to_requested_dat_files() {
-	local resources count first_type first_alias first_url fourth_type fourth_alias last_type last_alias
+	local resources count first_type first_alias first_url fourth_type fourth_alias last_type last_alias assets
 	unset CUSTOM_GEO_RESOURCES
 	resources=$(custom_geo_resources_json)
 	count=$(printf '%s' "$resources" | jq 'length')
@@ -413,16 +532,18 @@ test_custom_geo_resources_default_to_requested_dat_files() {
 	first_url=$(printf '%s' "$resources" | jq -r '.[0].url')
 	fourth_type=$(printf '%s' "$resources" | jq -r '.[3].type')
 	fourth_alias=$(printf '%s' "$resources" | jq -r '.[3].alias')
-	last_type=$(printf '%s' "$resources" | jq -r '.[6].type')
-	last_alias=$(printf '%s' "$resources" | jq -r '.[6].alias')
-	assert_eq 7 "$count" "default custom geo resource count mismatch"
-	assert_eq geosite "$first_type" "default first custom geo type mismatch"
-	assert_eq geosite_refilter "$first_alias" "default first custom geo alias mismatch"
-	assert_eq https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat "$first_url" "default first custom geo URL mismatch"
-	assert_eq geoip "$fourth_type" "default fourth custom geo type mismatch"
-	assert_eq geoip_zkeenip "$fourth_alias" "default fourth custom geo alias mismatch"
-	assert_eq geosite "$last_type" "default adlist custom geo type mismatch"
-	assert_eq adlist "$last_alias" "default adlist custom geo alias mismatch"
+	last_type=$(printf '%s' "$resources" | jq -r '.[7].type')
+	last_alias=$(printf '%s' "$resources" | jq -r '.[7].alias')
+	assets=$(geodata_assets_json "$resources")
+	assert_eq 8 "$count" "default geodata resource count mismatch"
+	assert_eq geosite "$first_type" "default first geodata type mismatch"
+	assert_eq geosite_refilter "$first_alias" "default first geodata alias mismatch"
+	assert_eq https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat "$first_url" "default first geodata URL mismatch"
+	assert_eq geoip "$fourth_type" "default fourth geodata type mismatch"
+	assert_eq geoip_zkeenip "$fourth_alias" "default fourth geodata alias mismatch"
+	assert_eq geosite "$last_type" "default geosite_RU type mismatch"
+	assert_eq geosite_RU "$last_alias" "default geosite_RU alias mismatch"
+	assert_eq geosite_RU.dat "$(printf '%s' "$assets" | jq -r '.[] | select(.file=="geosite_RU.dat") | .file')" "geodata assets must include geosite_RU.dat"
 }
 
 test_custom_geo_resources_parse_custom_entries() {
@@ -433,6 +554,7 @@ test_custom_geo_resources_parse_custom_entries() {
 	url=$(printf '%s' "$resources" | jq -r '.[1].url')
 	assert_eq 2 "$count" "custom geo parser resource count mismatch"
 	assert_eq https://example.test/ip.dat "$url" "custom geo parser URL mismatch"
+	unset CUSTOM_GEO_RESOURCES
 }
 
 test_panel_keys_restore_old_cert_fields() {
@@ -443,6 +565,36 @@ test_panel_keys_restore_old_cert_fields() {
 	grep -qx subClashEnable <<<"$keys" || fail "subClashEnable is missing from desired panel keys"
 	grep -qx subSupportUrl <<<"$keys" || fail "subSupportUrl is missing from desired panel keys"
 	grep -qx ldapEnable <<<"$keys" || fail "ldapEnable is missing from desired panel keys"
+	grep -qx panelOutbound <<<"$keys" || fail "panelOutbound is missing from desired panel keys"
+}
+
+test_panel_settings_json_defaults_panel_outbound() {
+	local body
+	unset panelOutbound
+	body=$(panel_settings_json '{"webPort":2053,"smtpPort":0,"tgBotEnable":false}')
+	assert_eq usque "$(printf '%s' "$body" | jq -r '.panelOutbound')" "panel settings JSON must default panelOutbound to usque"
+	assert_eq 587 "$(printf '%s' "$body" | jq -r '.smtpPort')" "panel settings JSON must normalize invalid smtpPort"
+	assert_eq number "$(printf '%s' "$body" | jq -r '.webPort | type')" "webPort must remain a JSON number for 3.7 AllSetting"
+	assert_eq boolean "$(printf '%s' "$body" | jq -r '.tgBotEnable | type')" "boolean AllSetting fields must remain JSON booleans"
+}
+
+test_geodata_block_uses_usque_outbound() {
+	local base assets updated outbound asset_count
+	unset CUSTOM_GEO_RESOURCES
+	base='{"xraySetting":{"outbounds":[{"tag":"direct"}]}}'
+	assets=$(geodata_assets_json)
+	updated=$(json_apply_geodata_block "$base" usque "$assets" "0 4 * * *")
+	outbound=$(printf '%s' "$updated" | jq -r '.xraySetting.geodata.outbound')
+	asset_count=$(printf '%s' "$updated" | jq '.xraySetting.geodata.assets | length')
+	assert_eq usque "$outbound" "geodata outbound tag mismatch"
+	assert_eq 8 "$asset_count" "geodata assets count mismatch"
+}
+
+test_inbound_components_json_preserves_nested_objects() {
+	local payload settings_type
+	payload=$(inbound_components_json '{"port":443,"protocol":"vless","remark":"t","settings":{"decryption":"none"},"streamSettings":{"network":"tcp"},"sniffing":{"enabled":true},"allocate":{}}')
+	settings_type=$(printf '%s' "$payload" | jq -r '.settings | type')
+	assert_eq object "$settings_type" "inbound API payload must keep nested settings object"
 }
 
 test_warp_domains_restore_old_ru_rules() {
@@ -491,7 +643,7 @@ test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs() {
 }
 
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
-	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls
+	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls penetrate ep_sni ep_fp ep_alpn ep_insecure
 	stream=$(build_xhttp_stream_json /xhttp screenhub.linkpc.net)
 	headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers')
 	server=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers.Server')
@@ -503,6 +655,11 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	access_headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers["Access-Control-Allow-Headers"]')
 	tproxy=$(printf '%s' "$stream" | jq -r '.sockopt.tproxy')
 	force_tls=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
+	penetrate=$(printf '%s' "$stream" | jq -r '.sockopt.penetrate')
+	ep_sni=$(printf '%s' "$stream" | jq -r '.externalProxy[0].sni')
+	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
+	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
+	ep_insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
 	assert_eq 3 "$(printf '%s' "$headers" | jq 'length')" "XHTTP headers should stay minimal"
 	assert_eq null "$server" "XHTTP headers must not spoof nginx Server"
 	assert_eq null "$content_type" "XHTTP headers must not force HTML content type"
@@ -513,6 +670,72 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	assert_eq "GET, POST" "$access_methods" "XHTTP CORS methods should match official transport guidance"
 	assert_eq tproxy "$tproxy" "old XHTTP sockopt tproxy was not restored"
 	assert_eq tls "$force_tls" "XHTTP externalProxy must publish TLS subscription links through Traefik"
+	assert_eq null "$penetrate" "XHTTP sockopt must not emit removed penetrate field"
+	assert_eq screenhub.linkpc.net "$ep_sni" "XHTTP externalProxy must publish SNI for TLS subscriptions"
+	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "XHTTP externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
+	assert_eq h2,http/1.1 "$ep_alpn" "XHTTP externalProxy must publish modern TLS ALPN hints"
+	assert_eq 0 "$ep_insecure" "XHTTP stream must not contain removed allowInsecure anywhere"
+}
+
+test_grpc_stream_uses_tls_backend_settings() {
+	local stream network security service_name alpn cert_file key_file scheme fp ep_sni ep_fp ep_alpn insecure
+	stream=$(build_grpc_stream_json /grpc screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key)
+	network=$(printf '%s' "$stream" | jq -r '.network')
+	security=$(printf '%s' "$stream" | jq -r '.security')
+	service_name=$(printf '%s' "$stream" | jq -r '.grpcSettings.serviceName')
+	alpn=$(printf '%s' "$stream" | jq -r '.tlsSettings.alpn | join(",")')
+	cert_file=$(printf '%s' "$stream" | jq -r '.tlsSettings.certificates[0].certificateFile')
+	key_file=$(printf '%s' "$stream" | jq -r '.tlsSettings.certificates[0].keyFile')
+	scheme=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
+	fp=$(printf '%s' "$stream" | jq -r '.tlsSettings.settings.fingerprint')
+	ep_sni=$(printf '%s' "$stream" | jq -r '.externalProxy[0].sni')
+	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
+	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
+	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
+	assert_eq grpc "$network" "gRPC stream must use grpc network"
+	assert_eq tls "$security" "gRPC stream must use TLS backend security"
+	assert_eq grpc "$service_name" "gRPC serviceName must strip the leading slash"
+	assert_eq h2 "$alpn" "gRPC backend TLS ALPN must prefer h2 only"
+	assert_eq /etc/x-ui/xray.crt "$cert_file" "gRPC TLS certificate path mismatch"
+	assert_eq /etc/x-ui/xray.key "$key_file" "gRPC TLS key path mismatch"
+	assert_eq tls "$scheme" "gRPC externalProxy must publish TLS links"
+	[[ "$fp" =~ ^(random|firefox|safari)$ ]] || fail "gRPC TLS fingerprint must be random/firefox/safari; got '$fp'"
+	assert_eq screenhub.linkpc.net "$ep_sni" "gRPC externalProxy must publish SNI for TLS subscriptions"
+	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "gRPC externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
+	assert_eq h2 "$ep_alpn" "gRPC externalProxy must publish h2 ALPN"
+	assert_eq 0 "$insecure" "gRPC stream must not contain removed allowInsecure anywhere"
+}
+
+test_hysteria2_stream_and_settings_use_required_auth() {
+	local stream settings components network security alpn masq_type masq_url auth stream_auth email protocol tg_id group comment
+	stream=$(build_hysteria2_stream_json screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key transport-auth)
+	settings=$(build_hysteria2_settings_json '' "$(build_desired_state)")
+	components=$(build_inbound_components_json hysteria2 "$(build_desired_state)")
+	network=$(printf '%s' "$stream" | jq -r '.network')
+	security=$(printf '%s' "$stream" | jq -r '.security')
+	alpn=$(printf '%s' "$stream" | jq -r '.tlsSettings.alpn | join(",")')
+	masq_type=$(printf '%s' "$stream" | jq -r '.hysteriaSettings.masquerade.type')
+	masq_url=$(printf '%s' "$stream" | jq -r '.hysteriaSettings.masquerade.url')
+	auth=$(printf '%s' "$settings" | jq -r '.clients[0].auth')
+	stream_auth=$(printf '%s' "$components" | jq -r '.streamSettings.hysteriaSettings.auth')
+	email=$(printf '%s' "$settings" | jq -r '.clients[0].email')
+	protocol=$(printf '%s' "$components" | jq -r '.protocol')
+	tg_id=$(printf '%s' "$settings" | jq -r '.clients[0].tgId')
+	group=$(printf '%s' "$settings" | jq -r '.clients[0].group')
+	comment=$(printf '%s' "$settings" | jq -r '.clients[0].comment')
+	assert_eq hysteria "$network" "Hysteria2 stream must use hysteria transport"
+	assert_eq tls "$security" "Hysteria2 stream must use TLS"
+	assert_eq h3 "$alpn" "Hysteria2 TLS ALPN must use h3"
+	assert_eq proxy "$masq_type" "Hysteria2 masquerade must proxy the public site"
+	assert_eq https://screenhub.linkpc.net/ "$masq_url" "Hysteria2 masquerade URL mismatch"
+	[[ -n "$auth" ]] || fail "Hysteria2 client auth must be generated"
+	[[ -n "$stream_auth" ]] || fail "Hysteria2 transport auth must match the managed client auth"
+	assert_eq "$(printf '%s' "$components" | jq -r '.settings.clients[0].auth')" "$stream_auth" "Hysteria2 transport auth must mirror inbound client auth"
+	assert_eq autogen "$email" "Hysteria2 must reuse the shared managed client email"
+	assert_eq hysteria "$protocol" "Hysteria2 inbound must use Xray hysteria protocol with version=2"
+	assert_eq 0 "$tg_id" "Hysteria2 client tgId must be numeric for 3x-ui 3.1 validation"
+	assert_eq "" "$group" "Hysteria2 client group must be present as an empty string"
+	assert_eq "" "$comment" "Hysteria2 client comment must be present as an empty string"
 }
 
 test_vision_stream_restores_old_reality_external_proxy() {
@@ -525,18 +748,44 @@ test_vision_stream_restores_old_reality_external_proxy() {
 }
 
 test_vision_stream_is_clean_self_steal() {
-	local stream show target target_xver server_name empty_short_ids
+	local stream show target target_xver server_name empty_short_ids max_time_diff legacy_max_timediff penetrate fp insecure
 	stream=$(build_vision_stream_json telemt:9443 screenhub.linkpc.net private public '["aa","bb"]' "$(build_sockopt_json false AsIs off)" '' '' 1)
 	show=$(printf '%s' "$stream" | jq -r '.realitySettings.show')
 	target=$(printf '%s' "$stream" | jq -r '.realitySettings.target // empty')
 	target_xver=$(printf '%s' "$stream" | jq -r '.realitySettings.xver')
 	server_name=$(printf '%s' "$stream" | jq -r '.realitySettings.serverNames[0]')
 	empty_short_ids=$(printf '%s' "$stream" | jq '[.realitySettings.shortIds[] | select(. == "")] | length')
+	max_time_diff=$(printf '%s' "$stream" | jq -r '.realitySettings.maxTimeDiff')
+	legacy_max_timediff=$(printf '%s' "$stream" | jq -r '.realitySettings.maxTimediff')
+	penetrate=$(printf '%s' "$stream" | jq -r '.sockopt.penetrate')
+	fp=$(printf '%s' "$stream" | jq -r '.realitySettings.settings.fingerprint')
+	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
 	assert_eq false "$show" "Reality show must be false for anti-probing clean install"
 	assert_eq telemt:9443 "$target" "Reality self-steal target must point to Telemt before Traefik"
 	assert_eq 1 "$target_xver" "Reality self-steal target must send PROXY protocol to Telemt"
 	assert_eq screenhub.linkpc.net "$server_name" "Reality serverNames must whitelist the public front domain"
 	assert_eq 0 "$empty_short_ids" "Reality shortIds must not contain empty example values"
+	assert_eq 0 "$max_time_diff" "Reality stream must use current maxTimeDiff field"
+	assert_eq null "$legacy_max_timediff" "Reality stream must not use legacy misspelled maxTimediff field"
+	assert_eq null "$penetrate" "Reality sockopt must not emit removed penetrate field"
+	[[ "$fp" =~ ^(random|firefox|safari)$ ]] || fail "Reality fingerprint must be random/firefox/safari; got '$fp'"
+	assert_eq 0 "$insecure" "Reality stream must not contain removed allowInsecure anywhere"
+}
+
+test_existing_vision_stream_is_sanitized_without_regenerating_keys() {
+	local current stream private_key public_key fingerprint insecure legacy_max_timediff
+	current='{"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"privateKey":"old-private","maxTimediff":0,"settings":{"publicKey":"old-public","fingerprint":"chrome","allowInsecure":false}},"sockopt":{"penetrate":true},"externalProxy":[{"forceTls":"same","dest":"screenhub.linkpc.net","port":443,"allowInsecure":false}]}}'
+	stream=$(build_inbound_stream_json vision "$current")
+	private_key=$(printf '%s' "$stream" | jq -r '.realitySettings.privateKey')
+	public_key=$(printf '%s' "$stream" | jq -r '.realitySettings.settings.publicKey')
+	fingerprint=$(printf '%s' "$stream" | jq -r '.realitySettings.settings.fingerprint')
+	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
+	legacy_max_timediff=$(printf '%s' "$stream" | jq -r '.realitySettings.maxTimediff')
+	assert_eq old-private "$private_key" "existing Vision private key must be preserved"
+	assert_eq old-public "$public_key" "existing Vision public key must be preserved"
+	[[ "$fingerprint" =~ ^(random|firefox|safari)$ ]] || fail "existing Vision fingerprint must be refreshed; got '$fingerprint'"
+	assert_eq 0 "$insecure" "existing Vision stream must be stripped from allowInsecure"
+	assert_eq null "$legacy_max_timediff" "existing Vision stream must drop legacy maxTimediff"
 }
 
 test_vision_settings_include_telemt_fallback_preserving_clients() {
@@ -557,19 +806,137 @@ test_vision_settings_include_telemt_fallback_preserving_clients() {
 }
 
 test_vless_client_api_payloads_match_3x_ui_31_contract() {
-	local client create_payload tg_id inbound_count create_email update_email legacy_settings
-	client=$(vless_client_api_json client-id a@example.test stable-sub xtls-rprx-vision)
+	local client create_payload tg_id group security inbound_count create_email update_email update_uuid update_auth update_password legacy_settings
+	client=$(vless_client_api_json client-id a@example.test stable-sub xtls-rprx-vision client-password client-auth)
 	create_payload=$(vless_client_create_payload_json '[12,13]' "$client")
 	tg_id=$(printf '%s' "$client" | jq -r '.tgId')
+	group=$(printf '%s' "$client" | jq -r '.group')
+	security=$(printf '%s' "$client" | jq -r '.security')
 	update_email=$(printf '%s' "$client" | jq -r '.email')
+	update_uuid=$(printf '%s' "$client" | jq -r '.uuid')
+	update_password=$(printf '%s' "$client" | jq -r '.password')
+	update_auth=$(printf '%s' "$client" | jq -r '.auth')
 	inbound_count=$(printf '%s' "$create_payload" | jq '.inboundIds | length')
 	create_email=$(printf '%s' "$create_payload" | jq -r '.client.email')
 	legacy_settings=$(printf '%s' "$create_payload" | jq -r '.settings // empty')
 	assert_eq 0 "$tg_id" "3x-ui 3.1 client tgId must be numeric"
+	assert_eq "" "$group" "3x-ui 3.1 client group must be present as an empty string"
+	assert_eq auto "$security" "3x-ui 3.1 client security must default to auto"
 	assert_eq a@example.test "$update_email" "3x-ui 3.1 update payload must be the direct client object"
+	assert_eq client-id "$update_uuid" "3x-ui 3.1 VLESS payload must include uuid as well as id"
+	assert_eq client-password "$update_password" "shared client payload must carry password for non-VLESS protocols"
+	assert_eq client-auth "$update_auth" "shared client payload must carry Hysteria auth"
 	assert_eq 2 "$inbound_count" "3x-ui 3.1 create payload must support shared client attachments"
 	assert_eq a@example.test "$create_email" "3x-ui 3.1 create payload must wrap client object"
 	assert_eq "" "$legacy_settings" "3x-ui 3.1 client create payload must not use legacy settings wrapper"
+}
+
+test_shared_client_create_still_syncs_vless_inbounds_without_grpc() {
+	local desired add_payload add_inbounds synced=()
+	export MODE=apply
+	export CLIENT_EMAIL_PREFIX=autogen
+	export CLIENT_SUB_ID=stable-sub
+	# shellcheck disable=SC2034 # record_change mutates this runtime global during the fixture.
+	CHANGE_COUNT=0
+	# shellcheck disable=SC2034 # ensure_shared_client mutates this runtime global during the fixture.
+	RESTART_XRAY_REQUIRED=0
+	desired=$(build_desired_state)
+	clients_json() {
+		printf '[]\n'
+	}
+	xui_add_client() {
+		add_payload=$1
+	}
+	xui_attach_client() {
+		fail "new shared client must not need a separate attach call"
+	}
+	http_success_json() {
+		return 0
+	}
+	repair_shared_client_db() {
+		return 0
+	}
+	ensure_vless_inbound_client() {
+		synced+=("$1:$4:$5")
+	}
+	ensure_vless_stream() {
+		return 0
+	}
+	ensure_shared_client 1 2 "" 4 "$desired"
+	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
+	assert_eq "1,2,4" "$add_inbounds" "shared client create must target Vision, XHTTP and Hysteria2 when gRPC is disabled"
+	assert_eq "1:xtls-rprx-vision:Vision" "${synced[0]}" "Vision inbound client must be explicitly synchronized after shared client create"
+	assert_eq "2::XHTTP" "${synced[1]}" "XHTTP inbound client must be explicitly synchronized after shared client create"
+	assert_eq 2 "${#synced[@]}" "only VLESS inbounds are synchronized inside ensure_shared_client"
+	[[ -n "$ENSURE_SHARED_CLIENT_ID" ]] || fail "shared client id must be available after create"
+	unset -f clients_json xui_add_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
+	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_existing_shared_client_with_invalid_uuid_is_repaired() {
+	local desired update_payload synced=()
+	export MODE=apply
+	export CLIENT_EMAIL_PREFIX=autogen
+	export CLIENT_SUB_ID=stable-sub
+	# shellcheck disable=SC2034 # record_change mutates this runtime global during the fixture.
+	CHANGE_COUNT=0
+	# shellcheck disable=SC2034 # ensure_shared_client mutates this runtime global during the fixture.
+	RESTART_XRAY_REQUIRED=0
+	desired=$(build_desired_state)
+	clients_json() {
+		printf '%s\n' '[{"id":1,"email":"autogen","subId":"old-sub","uuid":"5c06031b-e735-e024-7568-009e0cb47422","password":"d9c67df9b9e4cd267c58c6cca150f1be","auth":"5c06031be735e0247568009e0cb47422","flow":"","inboundIds":[1,2,4]}]'
+	}
+	inbound_vless_client_uuid() {
+		return 1
+	}
+	new_uuid() {
+		printf '%s' "87853b09-32fc-49e0-95ad-2651948b7e3e"
+	}
+	xui_update_client() {
+		update_payload=$2
+	}
+	xui_attach_client() {
+		fail "invalid UUID repair must not attach already attached inbounds"
+	}
+	http_success_json() {
+		return 0
+	}
+	repair_shared_client_db() {
+		return 0
+	}
+	ensure_vless_inbound_client() {
+		synced+=("$2:$5")
+	}
+	ensure_vless_stream() {
+		return 0
+	}
+	ensure_shared_client 1 2 "" 4 "$desired"
+	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.id')" "invalid first-class UUID must be replaced with a valid UUID"
+	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.uuid')" "update payload must carry matching uuid"
+	assert_eq 2 "${#synced[@]}" "repaired UUID must be synced to VLESS inbounds"
+	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e:Vision" "${synced[0]}" "Vision sync must use repaired UUID"
+	unset -f clients_json inbound_vless_client_uuid new_uuid xui_update_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
+	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_vless_inbound_client_sync_writes_uuid() {
+	local inbound desired current_settings desired_settings client_id
+	desired=$(build_desired_state)
+	client_id="f5382230-6a5e-aed7-357e-4578f8c53bdd"
+	inbound='{"settings":"{\"clients\":[{\"email\":\"autogen\",\"flow\":\"xtls-rprx-vision\"}],\"decryption\":\"none\",\"encryption\":\"none\"}"}'
+	current_settings=$(json_field_object "$inbound" settings)
+	desired_settings=$(jq -nc --argjson current "$current_settings" --argjson client "$(vless_client_api_json "$client_id" autogen stable-sub xtls-rprx-vision)" '
+      $current
+      | .decryption = "none"
+      | .encryption = "none"
+      | .clients = (((.clients // []) | map(select(.email != $client.email))) + [$client])
+    ')
+	assert_eq "$client_id" "$(printf '%s' "$desired_settings" | jq -r '.clients[0].id')" "synced VLESS inbound client must include UUID id"
+	assert_eq "$client_id" "$(printf '%s' "$desired_settings" | jq -r '.clients[0].uuid')" "synced VLESS inbound client must include uuid field"
+	assert_eq xtls-rprx-vision "$(printf '%s' "$desired_settings" | jq -r '.clients[0].flow')" "Vision flow must be preserved"
 }
 
 test_tor_balancer_uses_single_proxy_endpoint() {
@@ -618,6 +985,34 @@ test_warp_balancer_can_opt_in_console_warp() {
 	assert_eq "usque,warp" "$burst_subjects" "Console WARP opt-in burstObservatory selectors mismatch"
 }
 
+test_mihomo_outbound_and_terminal_rule_are_added_when_available() {
+	local base updated outbound_count last_rule_tag last_rule_network
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
+
+	updated=$(json_apply_managed_xray_state "$base" '[]' false false false '[]' "screenhub.linkpc.net" '[]' '' true '[{"tag":"mihomo","host":"mihomo","port":7890}]')
+	outbound_count=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="mihomo" and .protocol=="socks" and .settings.servers[0].address=="mihomo" and .settings.servers[0].port==7890 and (.settings.servers[0].users | length)==0)] | length')
+	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
+	last_rule_network=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].network')
+
+	assert_eq 1 "$outbound_count" "Mihomo SOCKS outbound must be added when endpoint is available"
+	assert_eq mihomo "$last_rule_tag" "Mihomo rule must be appended as the terminal routing rule"
+	assert_eq tcp,udp "$last_rule_network" "Mihomo terminal routing rule must cover TCP and UDP"
+}
+
+test_existing_mihomo_outbound_and_rule_are_preserved() {
+	local base updated port rule_index last_rule_tag
+	base='{"xraySetting":{"outbounds":[{"tag":"mihomo","protocol":"socks","settings":{"servers":[{"address":"custom-mihomo","port":17890,"users":[{"user":"kept"}]}]}}],"routing":{"rules":[{"type":"field","network":"tcp,udp","outboundTag":"mihomo"},{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
+
+	updated=$(json_apply_managed_xray_state "$base" '[]' false false false '[]' "screenhub.linkpc.net" '[]' '' true '[{"tag":"mihomo","host":"mihomo","port":7890}]')
+	port=$(printf '%s' "$updated" | jq -r '.xraySetting.outbounds[] | select(.tag=="mihomo") | .settings.servers[0].port')
+	rule_index=$(printf '%s' "$updated" | jq '.xraySetting.routing.rules | map((.outboundTag // "") == "mihomo") | index(true)')
+	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
+
+	assert_eq 17890 "$port" "existing Mihomo outbound must not be overwritten"
+	assert_eq 0 "$rule_index" "existing Mihomo routing rule must not be moved"
+	assert_eq blocked "$last_rule_tag" "existing terminal rule order must be preserved when Mihomo rule already exists"
+}
+
 test_managed_burst_observatory_preserves_custom_subjects() {
 	local base dns updated subjects custom_observatory
 	base='{"xraySetting":{"outbounds":[],"routing":{"rules":[],"balancers":[]},"burstObservatory":{"subjectSelector":["custom-out"],"pingConfig":{"destination":"https://old.example/204"}}}}'
@@ -627,6 +1022,19 @@ test_managed_burst_observatory_preserves_custom_subjects() {
 	custom_observatory=$(printf '%s' "$updated" | jq -r '.xraySetting.observatory')
 	assert_eq "custom-out,tor-proxy" "$subjects" "custom burstObservatory subjects were not preserved"
 	assert_eq null "$custom_observatory" "unexpected observatory object was created"
+}
+
+test_managed_xray_preserves_unmanaged_balancers_and_rules() {
+	local base dns updated custom_balancers custom_rules custom_outbounds
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"custom-proxy","protocol":"socks","settings":{"servers":[{"address":"custom","port":1080}]}}],"routing":{"rules":[{"type":"field","balancerTag":"custom-balancer","domain":["domain:example.com"]},{"type":"field","outboundTag":"custom-proxy","domain":["domain:direct.example"]}],"balancers":[{"tag":"custom-balancer","selector":["custom-proxy"],"strategy":{"type":"random"}}]},"burstObservatory":{"subjectSelector":["custom-proxy"],"pingConfig":{"destination":"https://old.example/204"}}}}'
+	dns='[]'
+	updated=$(json_apply_managed_xray_state "$(json_remove_managed_xray_artifacts "$base")" "$dns" true true false '[{"tag":"usque","host":"usque","port":1080}]' "screenhub.linkpc.net" '[{"tag":"tor-proxy","host":"tor-proxy","port":1080}]')
+	custom_balancers=$(printf '%s' "$updated" | jq '[.xraySetting.routing.balancers[] | select(.tag=="custom-balancer")] | length')
+	custom_rules=$(printf '%s' "$updated" | jq '[.xraySetting.routing.rules[] | select((.balancerTag // "")=="custom-balancer" or (.outboundTag // "")=="custom-proxy")] | length')
+	custom_outbounds=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[] | select(.tag=="custom-proxy")] | length')
+	assert_eq 1 "$custom_balancers" "custom balancer must survive managed Xray update"
+	assert_eq 2 "$custom_rules" "custom routing rules must survive managed Xray update"
+	assert_eq 1 "$custom_outbounds" "custom outbound must survive managed Xray update"
 }
 
 test_unhealthy_external_proxies_create_no_managed_xray_artifacts() {
@@ -687,6 +1095,68 @@ test_tor_proxy_probe_requires_confirmed_tor_route() {
 	unset -f curl
 }
 
+test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
+	local tmp seen_file
+	tmp=$(mktemp -d)
+	seen_file="$tmp/seen"
+	HTTP_BODY_FILE="$tmp/body.json"
+	# shellcheck disable=SC2034 # apply_managed_xray consumes this runtime global.
+	TMP_ROOT="$tmp"
+	export MODE=apply
+	export XRAY_MANAGED_DNS=false
+	export XRAY_MANAGED_WARP=true
+	export XRAY_MANAGED_TOR=false
+	export ENABLE_MIHOMO=true
+	export USQUE_HOST=usque
+	export USQUE_PORT=1080
+	export MIHOMO_PROXY_HOST=mihomo
+	export MIHOMO_PROXY_PORT=7890
+	export WEBDOMAIN=screenhub.linkpc.net
+	# shellcheck disable=SC2034 # record_change mutates this runtime global in apply fixtures.
+	CHANGE_COUNT=0
+	# shellcheck disable=SC2034 # apply_managed_xray mutates this runtime global when updates are applied.
+	RESTART_PANEL_REQUIRED=0
+	# shellcheck disable=SC2034 # apply_managed_xray mutates this runtime global when updates are applied.
+	RESTART_XRAY_REQUIRED=0
+	warp_proxy_available() {
+		return 1
+	}
+	xui_get_xray_settings() {
+		printf '%s\n' '{"obj":"{\"xraySetting\":{\"outbounds\":[],\"routing\":{\"rules\":[]}}}"}' >"$HTTP_BODY_FILE"
+	}
+	http_success_json() {
+		return 0
+	}
+	available_dns_servers() {
+		printf '[]'
+	}
+	tcp_endpoint_available() {
+		[[ "$1:$2" == "mihomo:7890" ]]
+	}
+	json_apply_managed_xray_state() {
+		printf '%s\n' "${11}" >>"$seen_file"
+		printf '%s' "$1"
+	}
+	plan_or_apply() {
+		return 1
+	}
+
+	apply_managed_xray
+
+	assert_eq '[{"tag":"mihomo","host":"mihomo","port":7890}]' "$(sed -n '1p' "$seen_file")" "reachable Mihomo endpoint must be passed to managed Xray state"
+	tcp_endpoint_available() {
+		return 1
+	}
+	: >"$seen_file"
+	apply_managed_xray
+	assert_eq '[]' "$(sed -n '1p' "$seen_file")" "unreachable Mihomo endpoint must not be passed to managed Xray state"
+	unset -f xui_get_xray_settings http_success_json available_dns_servers tcp_endpoint_available warp_proxy_available json_apply_managed_xray_state plan_or_apply
+	unset MODE XRAY_MANAGED_DNS XRAY_MANAGED_WARP XRAY_MANAGED_TOR ENABLE_MIHOMO MIHOMO_PROXY_HOST MIHOMO_PROXY_PORT WEBDOMAIN
+	rm -rf "$tmp"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
 test_afterstart_entrypoint_loads_runtime_modules() {
 	local script module function
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
@@ -696,7 +1166,7 @@ test_afterstart_entrypoint_loads_runtime_modules() {
 		grep -Fq ". \"\$LIB_DIR/$module.bash\"" "$script" ||
 			fail "after-start entrypoint must source $module.bash"
 	done
-	for function in record_change ensure_panel_settings ensure_inbound apply_managed_xray restart_if_needed; do
+	for function in record_change ensure_panel_settings ensure_inbound apply_managed_xray restart_xray_if_needed; do
 		if grep -Eq "^${function}\\(\\)" "$script"; then
 			fail "after-start entrypoint must not retain domain function: $function"
 		fi
@@ -715,21 +1185,39 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'resolve_panel_base || die "Could not resolve and login to 3x-ui panel."' \
 		'detect_country_flag || true' \
 		'desired=$(build_desired_state)' \
+		'apply_managed_xray' \
+		'restart_xray_if_needed' \
 		'ensure_panel_settings' \
 		'update_admin_credentials_if_needed' \
 		'resolve_panel_base || die "Could not login after panel settings update."' \
-		'ensure_custom_geo_resources' \
-		'update_builtin_geofiles_if_enabled' \
+		'repair_inbound_client_tg_ids_db' \
 		'ensure_inbound vision "$desired"' \
 		'ensure_inbound xhttp "$desired"' \
-		'ensure_shared_client "$vision_id" "$xhttp_id" "$desired"' \
-		'apply_managed_xray' \
-		'restart_if_needed'; do
+		'ensure_inbound grpc "$desired"' \
+		'ensure_inbound hysteria2 "$desired"' \
+		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"' \
+		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
+		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
+		'repair_shared_client_after_inbound_sync "$desired"' \
+		'update_builtin_geofiles_if_enabled' \
+		'restart_panel_if_needed'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
 		[[ -n "$line" && "$line" -gt "$previous" ]] ||
 			fail "after-start pipeline order changed near: $expression"
 		previous=$line
 	done
+}
+
+test_afterstart_entrypoint_initializes_optional_inbound_ids() {
+	local script main_decl
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	main_decl=$(sed -n '/^main()/,/TMP_ROOT=/p' "$script")
+	grep -Fq 'grpc_id=' <<<"$main_decl" ||
+		fail "gRPC inbound id must be initialized for ENABLE_VLESS_GRPC=false"
+	grep -Fq 'hysteria2_id=' <<<"$main_decl" ||
+		fail "Hysteria2 inbound id must be initialized for ENABLE_HYSTERIA2=false"
+	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
+		fail "gRPC must default to disabled in the runtime entrypoint"
 }
 
 test_afterstart_check_mode_bootstraps_without_apply() {
@@ -751,10 +1239,39 @@ test_xray_template_update_requests_core_restart() {
 test_panel_restart_does_not_suppress_xray_restart() {
 	local script block
 	script="$SCRIPTS_DIR/lib/xray_runtime.bash"
-	block=$(sed -n '/^restart_if_needed()/,/^}/p' "$script")
-	if grep -Fq 'elif ((RESTART_XRAY_REQUIRED == 1))' <<<"$block"; then
-		fail "panel restart must not suppress a required Xray core restart"
-	fi
+	block=$(sed -n '/^restart_xray_if_needed()/,/^}/p' "$script")
+	grep -Fq 'xui_restart_xray' <<<"$block" ||
+		fail "Xray restart helper must call panel restartXrayService API"
+	block=$(sed -n '/^restart_panel_if_needed()/,/^}/p' "$script")
+	grep -Fq 'xui_restart_panel' <<<"$block" ||
+		fail "panel restart helper must remain separate from Xray restart"
+}
+
+test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
+	local checks joined
+	checks=()
+	export ENABLE_HYSTERIA2=true
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_HYSTERIA=3443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	wait_tcp_port() {
+		checks+=("tcp:$2:$4")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1:$3")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
+	assert_eq "tcp:1443:Vision inbound 1443 tcp:2443:XHTTP inbound 2443 udp:3443:Hysteria2 inbound 3443/udp" "$joined" "managed port wait must include Hysteria2 UDP listener"
+	unset -f wait_tcp_port wait_udp_port_listener
+	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
 }
 
 test_warp_outbound_from_registration_prefers_panel_host_endpoint() {
@@ -782,7 +1299,7 @@ test_xray_api_inbound_uses_documented_dokodemo_protocol() {
 }
 
 test_lampac_hide_interface_waits_for_lampa_global() {
-	local file="$ROOT_DIR/docker-proxy/lampac-docker/plugins/override/hide_interface.js"
+	local file="$ROOT_DIR/docker-proxy/lampac/wwwroot/js/hide_interface.js"
 	grep -Fq "function waitForLampa()" "$file" || fail "hide_interface must wait for window.Lampa"
 	grep -Fq "typeof window.Lampa !== 'undefined'" "$file" || fail "hide_interface must check window.Lampa before init"
 	if grep -Fq "if (typeof Lampa !== 'undefined')" "$file" || grep -Fq "Lampa.Listener.follow('app', function" "$file"; then
@@ -795,11 +1312,15 @@ test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
 test_remove_managed_xray_artifacts_only_removes_our_tags
 test_desired_clients_are_deterministic
+test_runtime_env_preserves_explicit_optional_inbound_flags
+test_runtime_env_normalizes_explicit_optional_inbound_flags
 test_desired_inbound_remarks_use_country_flag
 test_managed_inbound_remarks_include_legacy_names
 test_country_flag_sources_include_iso_code_fallbacks
 test_country_code_to_flag_converts_iso_alpha2
 test_country_flag_value_from_trace_extracts_loc
+test_client_vless_uuid_normalizes_api_variants
+test_inbound_vless_client_uuid_recovers_polluted_global_client
 test_resolve_panel_base_prioritizes_configured_web_port
 test_resolve_panel_base_tries_new_password_when_username_is_unchanged
 test_normalize_base_path_accepts_empty_input
@@ -807,33 +1328,49 @@ test_http_request_temp_files_are_created_under_tmp_root
 test_panel_api_requests_use_bearer_token_when_configured
 test_client_api_uses_3x_ui_31_json_routes
 test_create_mutations_use_single_long_request
-test_panel_api_requests_read_bearer_token_from_sqlite_when_env_is_empty
+test_panel_api_does_not_read_bearer_token_from_sqlite
 test_xui_login_replays_csrf_token
 test_non_bearer_api_post_replays_csrf_token
+test_panel_settings_fallback_to_legacy_route_on_404
 test_custom_geo_resources_default_to_requested_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields
+test_panel_settings_json_defaults_panel_outbound
+test_geodata_block_uses_usque_outbound
+test_inbound_components_json_preserves_nested_objects
 test_warp_domains_restore_old_ru_rules
 test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt
+test_grpc_stream_uses_tls_backend_settings
+test_hysteria2_stream_and_settings_use_required_auth
 test_vision_stream_restores_old_reality_external_proxy
 test_vision_stream_is_clean_self_steal
+test_existing_vision_stream_is_sanitized_without_regenerating_keys
 test_vision_settings_include_telemt_fallback_preserving_clients
 test_vless_client_api_payloads_match_3x_ui_31_contract
+test_shared_client_create_still_syncs_vless_inbounds_without_grpc
+test_existing_shared_client_with_invalid_uuid_is_repaired
+test_vless_inbound_client_sync_writes_uuid
 test_tor_balancer_uses_single_proxy_endpoint
 test_warp_balancer_uses_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp
+test_mihomo_outbound_and_terminal_rule_are_added_when_available
+test_existing_mihomo_outbound_and_rule_are_preserved
 test_managed_burst_observatory_preserves_custom_subjects
+test_managed_xray_preserves_unmanaged_balancers_and_rules
 test_unhealthy_external_proxies_create_no_managed_xray_artifacts
 test_only_healthy_external_proxies_enter_xray_state
 test_runtime_does_not_probe_legacy_torproxy_endpoint
 test_warp_proxy_probe_requires_confirmed_warp_route
 test_tor_proxy_probe_requires_confirmed_tor_route
+test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable
 test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
+test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
+test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol

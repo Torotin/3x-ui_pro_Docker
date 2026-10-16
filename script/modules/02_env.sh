@@ -81,6 +81,16 @@ escape_toml_basic_string_value() {
 	printf '%s' "$value"
 }
 
+detect_docker_socket_gid() {
+	if getent group docker >/dev/null 2>&1; then
+		getent group docker | awk -F: '{print $3}'
+	elif [[ -S /var/run/docker.sock ]]; then
+		stat -c '%g' /var/run/docker.sock
+	else
+		printf '0\n'
+	fi
+}
+
 ensure_env_defaults() {
 	: "${WEBDOMAIN:=example.invalid}"
 	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
@@ -107,11 +117,13 @@ ensure_env_defaults() {
 	: "${URI_JSON_PATH:=$(generate_random_string 12 16)}"
 	: "${URI_CLASH_PATH:=$(generate_random_string 12 16)}"
 	: "${URI_VLESS_XHTTP:=$(generate_random_string 12 16)}"
+	: "${URI_VLESS_GRPC:=$(generate_random_string 12 16)}"
 	: "${URI_SUB2SING:=$(generate_random_string 12 16)}"
 	: "${URI_ADGUARD_PANEL:=$(generate_random_string 12 16)}"
 	: "${URI_ADGUARD_DOH:=$(generate_random_string 12 16)}"
 	: "${URI_HOMEPAGE:=$(generate_random_string 12 16)}"
 	: "${URI_TELEMT_PANEL:=$(generate_random_string 12 16)}"
+	: "${URI_MIHOMO:=$(generate_random_string 12 16)}"
 	: "${URI_TEST:=$(generate_random_string 12 16)}"
 	: "${PORT_LOCAL_CADDYWEB:=$(generate_random_port)}"
 	: "${PORT_LOCAL_SUB2SING:=$(generate_random_port)}"
@@ -120,6 +132,8 @@ ensure_env_defaults() {
 	: "${PORT_LOCAL_VLESS_PANEL:=$(generate_random_port)}"
 	: "${PORT_LOCAL_XHTTP:=$(generate_random_port)}"
 	: "${PORT_LOCAL_VISION:=$(generate_random_port)}"
+	: "${PORT_LOCAL_GRPC:=$(generate_random_port)}"
+	: "${PORT_LOCAL_HYSTERIA:=443}"
 	: "${PORT_LOCAL_TELEMT_PROXY:=9443}"
 	: "${PORT_LOCAL_TELEMT_API:=9091}"
 	: "${PORT_LOCAL_TELEMT_METRICS:=9090}"
@@ -132,12 +146,17 @@ ensure_env_defaults() {
 	: "${CROWDSEC_API_KEY_CADDY:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_TRAEFIK:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_FIREWALL:=$(generate_random_string 32 48)}"
+	: "${ENABLE_LAMPAC:=false}"
+	: "${ENABLE_TELEMT:=false}"
+	: "${ENABLE_MIHOMO:=false}"
+	: "${MIHOMO_SECRET:=$(generate_hex_secret 32)}"
 	: "${TELEMT_API_AUTH_HEADER:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_JWT_SECRET:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_PASSWORD_HASH:=}"
 	: "${TELEMT_BOOTSTRAP_USER:=bootstrap}"
 	: "${TELEMT_BOOTSTRAP_SECRET_HEX:=$(generate_hex_secret 16)}"
-	: "${TELEMT_PANEL_VERSION:=latest}"
+	: "${TELEMT_STACK_IMAGE:=torotin/telemt-stack:latest}"
+	: "${DOCKER_SOCKET_GID:=$(detect_docker_socket_gid)}"
 	: "${TELEMT_TUNING_PROFILE:=balanced}"
 	: "${TELEMT_MIDDLE_PROXY_NAT_PROBE:=true}"
 	: "${TELEMT_STUN_NAT_PROBE_CONCURRENCY:=16}"
@@ -188,16 +207,37 @@ ensure_env_defaults() {
 	: "${TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS:=30000}"
 	: "${HT_PASS_ENCODED:=}"
 	: "${ADGUARD_ADMIN_HASH:=}"
+	: "${ENABLE_VLESS_GRPC:=false}"
+	: "${ENABLE_HYSTERIA2:=true}"
+	install_normalize_global_bool_env
+	: "${XRAY_TLS_CERT_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}"
+	: "${XRAY_TLS_KEY_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
+	: "${HYSTERIA2_MASQ_URL:=https://${WEBDOMAIN}/}"
+	if install_telemt_enabled; then
+		: "${VISION_FALLBACK_HOST:=telemt}"
+		: "${VISION_FALLBACK_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
+		: "${VISION_FALLBACK_XVER:=1}"
+		: "${REALITY_TARGET_HOST:=telemt}"
+		: "${REALITY_TARGET_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
+		: "${REALITY_TARGET_XVER:=1}"
+	else
+		: "${VISION_FALLBACK_HOST:=traefik}"
+		: "${VISION_FALLBACK_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
+		: "${VISION_FALLBACK_XVER:=1}"
+		: "${REALITY_TARGET_HOST:=traefik}"
+		: "${REALITY_TARGET_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
+		: "${REALITY_TARGET_XVER:=1}"
+	fi
 	export WEBDOMAIN PUBLIC_IPV4 PUBLIC_IPV6 USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
 	export URI_TRAEFIK_DASHBOARD URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
-	export URI_VLESS_XHTTP URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_TEST
+	export URI_VLESS_XHTTP URI_VLESS_GRPC URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_MIHOMO URI_TEST
 	export PORT_LOCAL_CADDYWEB PORT_LOCAL_SUB2SING PORT_LOCAL_DOZZLE PORT_LOCAL_VLESS_SUBSCRIBE
-	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_TELEMT_PROXY
+	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_GRPC PORT_LOCAL_HYSTERIA PORT_LOCAL_TELEMT_PROXY
 	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_CROWDSEC_API
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	export TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_PANEL_VERSION
+	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
 	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
 	export TELEMT_ME_KEEPALIVE_ENABLED TELEMT_ME_KEEPALIVE_INTERVAL_SECS TELEMT_ME_KEEPALIVE_JITTER_SECS
 	export TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC TELEMT_ME_RECONNECT_BACKOFF_BASE_MS TELEMT_ME_RECONNECT_BACKOFF_CAP_MS TELEMT_ME_RECONNECT_FAST_RETRY_COUNT
@@ -210,6 +250,8 @@ ensure_env_defaults() {
 	export TELEMT_MAX_CONNECTIONS TELEMT_ACCEPT_PERMIT_TIMEOUT_MS TELEMT_MASK_SHAPE_HARDENING TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE
 	export TELEMT_MASK_SHAPE_BUCKET_FLOOR_BYTES TELEMT_MASK_SHAPE_BUCKET_CAP_BYTES TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR TELEMT_MASK_RELAY_MAX_BYTES
 	export TELEMT_MASK_RELAY_TIMEOUT_MS TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS
+	export ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
+	export VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
 }
 
 generate_htpasswd_if_needed() {
@@ -274,6 +316,7 @@ generate_adguard_hash_from_htpasswd() {
 }
 
 generate_telemt_panel_hash_if_needed() {
+	install_telemt_enabled || return 0
 	[[ -n "${USER_WEB:-}" ]] || return 0
 	[[ -z "${TELEMT_PANEL_PASSWORD_HASH:-}" ]] || return 0
 	[[ -n "${PASS_WEB:-}" ]] || die "PASS_WEB is required to generate TELEMT_PANEL_PASSWORD_HASH"
@@ -303,6 +346,7 @@ escape_env_double_quoted_value() {
 
 render_telemt_configs() {
 	local templates telemt_config telemt_panel_config
+	install_telemt_enabled || return 0
 	templates=$(template_dir)
 	telemt_config="$INSTALL_ROOT/telemt/config/config.toml"
 	telemt_panel_config="$INSTALL_ROOT/telemt-panel/config/config.toml"
@@ -313,6 +357,19 @@ render_telemt_configs() {
 	render_env_template "$templates/telemt.config.toml.template" "$telemt_config"
 	render_env_template "$templates/telemt-panel.config.toml.template" "$telemt_panel_config"
 	chmod 0600 "$telemt_config" "$telemt_panel_config" 2>/dev/null || true
+}
+
+render_mihomo_config() {
+	local templates mihomo_config
+	install_mihomo_enabled || return 0
+	templates=$(template_dir)
+	mihomo_config="$INSTALL_ROOT/mihomo/config.yaml"
+	backup_file "$mihomo_config"
+	render_env_template "$templates/mihomo.config.yaml.template" "$mihomo_config"
+	if grep -Fq '${MIHOMO_SECRET}' "$mihomo_config"; then
+		die "Mihomo config still contains an unsubstituted MIHOMO_SECRET placeholder"
+	fi
+	chmod 0600 "$mihomo_config" 2>/dev/null || true
 }
 
 install_env_command() {
@@ -340,6 +397,13 @@ install_env_command() {
 	render_env_template "$templates/install.env.template" "$install_env"
 	render_env_template "$templates/docker.env.template" "$compose_env"
 	render_telemt_configs
+	render_mihomo_config
 	run_cmd env.render printf 'rendered env files\n'
-	printf 'rendered:\n- %s\n- %s\n- %s\n- %s\n' "$install_env" "$compose_env" "$INSTALL_ROOT/telemt/config/config.toml" "$INSTALL_ROOT/telemt-panel/config/config.toml"
+	printf 'rendered:\n- %s\n- %s\n' "$install_env" "$compose_env"
+	if install_telemt_enabled; then
+		printf -- '- %s\n- %s\n' "$INSTALL_ROOT/telemt/config/config.toml" "$INSTALL_ROOT/telemt-panel/config/config.toml"
+	fi
+	if install_mihomo_enabled; then
+		printf -- '- %s\n' "$INSTALL_ROOT/mihomo/config.yaml"
+	fi
 }

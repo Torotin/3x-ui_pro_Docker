@@ -18,6 +18,36 @@ load_env_file() {
 	((nounset_was_on == 1)) && set -u
 }
 
+normalize_bool_value() {
+	local name=$1 value=${2:-}
+	value=${value,,}
+	case "$value" in
+	1 | true | yes | y | on | enabled)
+		printf 'true\n'
+		;;
+	0 | false | no | n | off | disabled)
+		printf 'false\n'
+		;;
+	*)
+		die "$name must be boolean: true/false, yes/no, on/off, enabled/disabled, or 1/0"
+		;;
+	esac
+}
+
+normalize_bool_var() {
+	local name=$1 value
+	value=$(normalize_bool_value "$name" "${!name-}")
+	printf -v "$name" '%s' "$value"
+	export "${name?}"
+}
+
+normalize_runtime_bool_env() {
+	local name
+	for name in ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_MIHOMO; do
+		normalize_bool_var "$name"
+	done
+}
+
 # Задает значения runtime-параметров, если они не были переданы окружением.
 init_defaults() {
 	: "${MODE:=apply}"
@@ -26,6 +56,8 @@ init_defaults() {
 	: "${NEW_ADMIN_USERNAME:=}"
 	: "${NEW_ADMIN_PASSWORD:=}"
 	: "${XUI_API_TOKEN:=}"
+	: "${TWO_FACTOR_CODE:=}"
+	: "${panelOutbound:=}"
 	: "${WEBDOMAIN:=}"
 	: "${webListen:=0.0.0.0}"
 	: "${webDomain:=}"
@@ -45,7 +77,7 @@ init_defaults() {
 	: "${REALITY_TARGET_XVER:=1}"
 	: "${URI_VLESS_XHTTP:=}"
 	: "${URI_CLASH_PATH:=}"
-	: "${CLIENT_EMAIL_PREFIX:=autogen}"
+	: "${CLIENT_EMAIL_PREFIX:=${WEBDOMAIN:+${WEBDOMAIN}-}autogen}"
 	: "${CLIENT_EMAIL_SHARED:=$CLIENT_EMAIL_PREFIX}"
 	: "${CLIENT_EMAIL_VISION:=${CLIENT_EMAIL_PREFIX}-vision}"
 	: "${CLIENT_EMAIL_XHTTP:=${CLIENT_EMAIL_PREFIX}-xhttp}"
@@ -57,20 +89,30 @@ init_defaults() {
 	: "${XRAY_MANAGED_WARP:=true}"
 	: "${XRAY_MANAGED_WARP_CONSOLE:=false}"
 	: "${XRAY_MANAGED_TOR:=true}"
+	: "${ENABLE_MIHOMO:=false}"
 	: "${WARP_REUSE_PANEL_CONFIG:=false}"
 	: "${WARP_ENDPOINT_HOST:=engage.cloudflareclient.com:2408}"
 	: "${USQUE_HOST:=usque}"
 	: "${USQUE_PORT:=1080}"
 	: "${EXTERNAL_PROXY_PROBE_TIMEOUT:=10}"
 	: "${WARP_PROXY_PROBE_URL:=https://www.cloudflare.com/cdn-cgi/trace}"
+	if [[ "${XRAY_TLS_CERT_FILE:-}" == "/etc/x-ui/xray-managed.crt" || -z "${XRAY_TLS_CERT_FILE:-}" ]]; then
+		XRAY_TLS_CERT_FILE="/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem"
+	fi
+	if [[ "${XRAY_TLS_KEY_FILE:-}" == "/etc/x-ui/xray-managed.key" || -z "${XRAY_TLS_KEY_FILE:-}" ]]; then
+		XRAY_TLS_KEY_FILE="/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem"
+	fi
 	: "${TOR_PROXY_PROBE_URL:=https://check.torproject.org/api/ip}"
 	: "${TOR_PROXY_HOST:=tor-proxy}"
 	: "${TOR_PROXY_PORT:=1080}"
-	: "${CUSTOM_GEO_API_ENABLED:=true}"
-	: "${CUSTOM_GEO_UPDATE_ALL_ON_START:=true}"
-	: "${GEOFILES_UPDATE_ON_START:=true}"
 	: "${CUSTOM_GEO_RESOURCES:=}"
+	: "${GEODATA_CRON:=0 4 * * *}"
+	: "${GEOFILES_UPDATE_ON_START:=true}"
 	: "${DOWNLOAD_GEO_DIRECT:=false}"
+	: "${DOWNLOAD_TRANSPORTS:=}"
+	: "${DOWNLOAD_URL_FALLBACKS:=}"
+	: "${DOWNLOAD_CONNECT_TIMEOUT:=5}"
+	: "${DOWNLOAD_MAX_TIME:=120}"
 	: "${XRAY_RESTART_SETTLE_SECONDS:=5}"
 	: "${XRAY_RESTART_PORT_TIMEOUT:=30}"
 }
@@ -78,9 +120,21 @@ init_defaults() {
 # Объединяет локальное и смонтированное окружение, затем дополняет его значениями по умолчанию.
 load_runtime_env() {
 	local script_dir=$1
+	local name
+	local -A preserved_env=()
+	for name in MODE ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_MIHOMO; do
+		if [[ ${!name+x} ]]; then
+			preserved_env[$name]=${!name}
+		fi
+	done
 	load_env_file "$PWD/.env"
 	load_env_file "$script_dir/../../3x-ui.env"
+	for name in "${!preserved_env[@]}"; do
+		printf -v "$name" '%s' "${preserved_env[$name]}"
+		export "${name?}"
+	done
 	init_defaults
+	normalize_runtime_bool_env
 }
 
 # Проверяет наличие утилит, требуемых сценарию после запуска контейнера.

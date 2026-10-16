@@ -1,16 +1,18 @@
 services:
   telemt:
-    image: ghcr.io/telemt/telemt:latest
+    image: ${TELEMT_STACK_IMAGE:-torotin/telemt-stack:latest}
     container_name: telemt
     restart: unless-stopped
+    init: true
     depends_on:
       adguard:
         condition: service_healthy
     env_file:
       - ./.env
     user: "1000:1000"
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
     working_dir: /var/lib/telemt
-    command: ["/etc/telemt/config.toml"]
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.15
@@ -21,6 +23,9 @@ services:
     volumes:
       - ../telemt/config:/etc/telemt:rw
       - ../telemt/data:/var/lib/telemt:rw
+      - ../telemt-panel/config:/etc/telemt-panel:ro
+      - ../telemt-panel/data:/var/lib/telemt-panel:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     cap_drop:
@@ -31,43 +36,9 @@ services:
       - "${PORT_LOCAL_TELEMT_PROXY:-9443}"
       - "${PORT_LOCAL_TELEMT_API:-9091}"
       - "${PORT_LOCAL_TELEMT_METRICS:-9090}"
-    healthcheck:
-      test: ["CMD", "/app/telemt", "healthcheck", "/etc/telemt/config.toml", "--mode", "liveness"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-
-  telemt-panel:
-    build:
-      context: ../telemt-panel
-      args:
-        TELEMT_PANEL_VERSION: ${TELEMT_PANEL_VERSION:-latest}
-    container_name: telemt-panel
-    restart: unless-stopped
-    depends_on:
-      telemt:
-        condition: service_healthy
-    env_file:
-      - ./.env
-    networks:
-      traefik-proxy:
-        ipv4_address: 172.18.0.16
-      dns-net:
-        ipv4_address: 172.19.0.16
-    dns:
-      - 172.19.0.10
-    volumes:
-      - ../telemt-panel/config:/etc/telemt-panel:ro
-      - ../telemt-panel/data:/var/lib/telemt-panel:rw
-      - ../telemt/config:/etc/telemt:rw
-    command: ["--config", "/etc/telemt-panel/config.toml"]
-    security_opt:
-      - no-new-privileges=true
-    expose:
       - "${PORT_LOCAL_TELEMT_PANEL:-8080}"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/${URI_TELEMT_PANEL}/ >/dev/null"]
+      test: ["CMD-SHELL", "/usr/local/bin/telemt healthcheck /etc/telemt/config.toml --mode liveness && curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/${URI_TELEMT_PANEL}/ >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3

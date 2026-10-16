@@ -9,6 +9,12 @@ import *.caddy
 
 	auto_https off
 
+	# Traefik terminates TLS and proxies here; without trusted_proxies,
+	# crowdsec/appsec attributes Traefik's Docker IP (172.18.0.6) instead of ClientHost.
+	servers {
+		trusted_proxies static 172.18.0.0/24 172.19.0.0/24
+	}
+
 	# snippets
 	import crowdsec_config
 	import logs_global

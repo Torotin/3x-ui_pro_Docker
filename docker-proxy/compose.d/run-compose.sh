@@ -25,8 +25,9 @@ fi
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-docker-proxy}"
 PULL_BEFORE_UP="${PULL_BEFORE_UP:-0}"
 PULL_ON_REBUILD="${PULL_ON_REBUILD:-1}"
-RETRY_COUNT="${RETRY_COUNT:-3}"
-RETRY_DELAY="${RETRY_DELAY:-5}"
+RETRY_COUNT="${RETRY_COUNT:-5}"
+RETRY_DELAY="${RETRY_DELAY:-30}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-600}"
 RESTART_WITH_DEPS="${RESTART_WITH_DEPS:-0}"
 CLEAN_UNHEALTHY="${CLEAN_UNHEALTHY:-0}"
 PROJECT_ROOT=
@@ -42,6 +43,7 @@ COMPOSE_ENV_UNSET=(
 	URI_JSON_PATH
 	URI_CLASH_PATH
 	URI_VLESS_XHTTP
+	URI_VLESS_GRPC
 )
 
 log() {
@@ -51,7 +53,7 @@ log() {
 usage() {
 	cat <<'USAGE'
 Usage:
-  run-compose.sh [up|-d args...]          Safe docker compose up -d by default.
+  run-compose.sh [up|-d args...]          Safe docker compose up -d --wait by default.
   run-compose.sh validate                 Run docker compose config.
   run-compose.sh list-files               Print active compose files in order.
   run-compose.sh restart [--logs] SERVICE [SERVICE...]
@@ -68,6 +70,7 @@ Environment:
   RESTART_WITH_DEPS=1
   PULL_BEFORE_UP=1
   PULL_ON_REBUILD=0
+  WAIT_TIMEOUT=600
   CLEAN_UNHEALTHY=1
   CLEAR_SCREEN=1
 USAGE
@@ -100,10 +103,83 @@ setup_runtime_paths() {
 }
 
 collect_compose_files() {
-	mapfile -d '' -t COMPOSE_FILES < <(
+	local file
+	COMPOSE_FILES=()
+	while IFS= read -r -d '' file; do
+		if [[ "$(basename "$file")" =~ ^14-lampac[.]ya?ml$ ]] && ! lampac_compose_enabled; then
+			continue
+		fi
+		if [[ "$(basename "$file")" =~ ^15-telemt[.]ya?ml$ ]] && ! telemt_compose_enabled; then
+			continue
+		fi
+		if [[ "$(basename "$file")" =~ ^16-mihomo[.]ya?ml$ ]] && ! mihomo_compose_enabled; then
+			continue
+		fi
+		COMPOSE_FILES+=("$file")
+	done < <(
 		find "$ACTIVE_COMPOSE_DIR" -maxdepth 1 -type f \( -name "*.yml" -o -name "*.yaml" \) -print0 |
 			LC_ALL=C sort -z
 	)
+}
+
+env_file_value() {
+	local key=$1 file=${ENV_FILE:-}
+	[[ -f "$file" ]] || return 1
+	awk -F= -v k="$key" '
+		$1 == k {
+			value = substr($0, length(k) + 2)
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+			if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) {
+				value = substr(value, 2, length(value) - 2)
+			}
+			print value
+			found = 1
+		}
+		END { exit found ? 0 : 1 }
+	' "$file"
+}
+
+compose_env_value() {
+	local key=$1 value
+	if [[ -n "${!key+x}" ]]; then
+		printf '%s\n' "${!key}"
+		return 0
+	fi
+	if value=$(env_file_value "$key"); then
+		printf '%s\n' "$value"
+		return 0
+	fi
+	return 1
+}
+
+compose_bool_is_false() {
+	local value=${1:-}
+	value=${value,,}
+	case "$value" in
+	0 | false | no | off | disabled) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+telemt_compose_enabled() {
+	local value
+	value=$(compose_env_value ENABLE_TELEMT || true)
+	[[ -n "$value" ]] || value=false
+	! compose_bool_is_false "$value"
+}
+
+lampac_compose_enabled() {
+	local value
+	value=$(compose_env_value ENABLE_LAMPAC || true)
+	[[ -n "$value" ]] || value=false
+	! compose_bool_is_false "$value"
+}
+
+mihomo_compose_enabled() {
+	local value
+	value=$(compose_env_value ENABLE_MIHOMO || true)
+	[[ -n "$value" ]] || value=false
+	! compose_bool_is_false "$value"
 }
 
 pick_compose_command() {
@@ -296,10 +372,11 @@ remove_unhealthy_containers() {
 
 run_up_with_retries() {
 	local attempts="$RETRY_COUNT" delay="$RETRY_DELAY" attempt
+	local wait_timeout="$WAIT_TIMEOUT"
 	preflight_container_name_conflicts "$@"
 	for ((attempt = 1; attempt <= attempts; attempt++)); do
-		log "Попытка ${attempt}/${attempts}: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} up -d $*"
-		if run_compose up -d "$@"; then
+		log "Попытка ${attempt}/${attempts}: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} up -d --wait --wait-timeout ${wait_timeout} $*"
+		if run_compose up -d --wait --wait-timeout "$wait_timeout" "$@"; then
 			return 0
 		fi
 		if [[ "$CLEAN_UNHEALTHY" == "1" ]]; then

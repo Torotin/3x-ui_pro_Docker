@@ -1,18 +1,31 @@
 #!/usr/bin/env bash
 
-# Готовит form-urlencoded параметры панели из env или сохраненных значений.
-panel_settings_args() {
-	local current=$1 var env_val value args=()
+# Строит полный объект AllSetting для POST /panel/api/setting/update (3.7 JSON).
+# 3x-ui 3.5+ validates the complete settings blob; partial updates fail validation.
+# Overlay env onto AllSetting while preserving JSON types required by 3.7 (webPort int, flags bool).
+panel_settings_json() {
+	local current=$1 var env_val merged
+	merged=$current
 	while IFS= read -r var; do
 		env_val=${!var-}
-		if [[ -n "$env_val" ]]; then
-			value=$env_val
-		else
-			value=$(jq -r --arg key "$var" 'if .[$key] == null then "" else .[$key] end' <<<"$current")
-		fi
-		args+=(--data-urlencode "$var=$value")
+		[[ -n "$env_val" ]] || continue
+		merged=$(jq -c --arg key "$var" --arg value "$env_val" '
+          .[$key] = (
+            if (.[$key] | type) == "number" then ($value | tonumber)
+            elif (.[$key] | type) == "boolean" then (
+              ($value | ascii_downcase) as $v
+              | ($v == "true" or $v == "1" or $v == "yes" or $v == "on")
+            )
+            else $value
+            end
+          )
+        ' <<<"$merged")
 	done < <(desired_panel_keys)
-	printf '%s\0' "${args[@]}"
+	merged=$(jq -c 'if ((.smtpPort|tostring|tonumber?) // 0) < 1 then .smtpPort = 587 else . end' <<<"$merged")
+	if [[ -z "${panelOutbound:-}" ]]; then
+		merged=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$merged")
+	fi
+	printf '%s' "$merged"
 }
 
 # Строит сравнимый JSON желаемых настроек панели из окружения и текущего состояния.
@@ -27,6 +40,9 @@ panel_desired_json() {
 		fi
 		desired=$(jq -c --arg key "$var" --arg value "$value" '.[$key] = $value' <<<"$desired")
 	done < <(desired_panel_keys)
+	if [[ -z "${panelOutbound:-}" ]]; then
+		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$desired")
+	fi
 	printf '%s' "$desired"
 }
 
@@ -42,7 +58,7 @@ panel_current_managed_json() {
 
 # Сверяет управляемые настройки панели и применяет только фактическое расхождение.
 ensure_panel_settings() {
-	local current current_projected desired args
+	local current current_projected desired body
 	xui_get_panel_settings || die "Failed to read panel settings."
 	http_success_json || die "Panel settings API failed: $(http_body)"
 	current=$(api_obj_json)
@@ -52,10 +68,10 @@ ensure_panel_settings() {
 		log INFO "Panel settings already match desired state."
 		return 0
 	fi
-	mapfile -d '' -t args < <(panel_settings_args "$current")
+	body=$(panel_settings_json "$current")
 
 	if plan_or_apply "panel settings updated"; then
-		xui_update_panel_settings "${args[@]}" || die "Failed to update panel settings."
+		xui_update_panel_settings "$body" || die "Failed to update panel settings."
 		http_success_json || die "Panel settings update failed: $(http_body)"
 		# shellcheck disable=SC2034 # флаг рестарта читается entrypoint/Xray-модулем
 		RESTART_PANEL_REQUIRED=1
@@ -78,65 +94,6 @@ update_admin_credentials_if_needed() {
 		USERNAME=$NEW_ADMIN_USERNAME
 		PASSWORD=$NEW_ADMIN_PASSWORD
 		export USERNAME PASSWORD
-	fi
-}
-
-# Получает массив пользовательских geo-ресурсов из ответа панели.
-custom_geo_list_json() {
-	xui_custom_geo_list || die "Failed to list custom geo resources."
-	http_success_json || die "Custom geo list API failed: $(http_body)"
-	jq -c '.obj // []' "$HTTP_BODY_FILE"
-}
-
-# Синхронизирует список пользовательских geo-файлов через API панели.
-ensure_custom_geo_resources() {
-	local desired existing count index type alias url match id current_url
-	[[ "$CUSTOM_GEO_API_ENABLED" == "true" ]] || {
-		log INFO "Custom geo API management skipped."
-		return 0
-	}
-
-	desired=$(custom_geo_resources_json)
-	count=$(jq 'length' <<<"$desired")
-	if ((count == 0)); then
-		log INFO "Custom geo API management skipped: no resources configured."
-		return 0
-	fi
-
-	existing=$(custom_geo_list_json)
-	# Каждый ресурс сопоставляется по типу и alias, поэтому изменение URL обновляется на месте.
-	for ((index = 0; index < count; index++)); do
-		type=$(jq -r ".[$index].type" <<<"$desired")
-		alias=$(jq -r ".[$index].alias" <<<"$desired")
-		url=$(jq -r ".[$index].url" <<<"$desired")
-		match=$(jq -c --arg type "$type" --arg alias "$alias" '.[] | select(.type == $type and .alias == $alias)' <<<"$existing" | head -n1)
-		if [[ -n "$match" ]]; then
-			id=$(jq -r '.id' <<<"$match")
-			current_url=$(jq -r '.url // ""' <<<"$match")
-			if [[ "$current_url" == "$url" ]]; then
-				log INFO "custom geo already exists type=$type alias=$alias id=$id."
-				continue
-			fi
-			if plan_or_apply "custom geo updated type=$type alias=$alias"; then
-				xui_custom_geo_update "$id" "$type" "$alias" "$url" || die "Failed to update custom geo alias=$alias."
-				http_success_json || die "Custom geo update failed alias=$alias: $(http_body)"
-			fi
-		else
-			if plan_or_apply "custom geo added type=$type alias=$alias"; then
-				xui_custom_geo_add "$type" "$alias" "$url" || die "Failed to add custom geo alias=$alias."
-				http_success_json || die "Custom geo add failed alias=$alias: $(http_body)"
-			fi
-		fi
-	done
-
-	if [[ "$MODE" == "apply" && "$CUSTOM_GEO_UPDATE_ALL_ON_START" == "true" ]]; then
-		if xui_custom_geo_update_all && http_success_json; then
-			log INFO "Custom geo resources refreshed through panel API."
-		else
-			log WARN "Custom geo update-all skipped: $(http_body)"
-		fi
-	elif [[ "$MODE" == "plan" && "$CUSTOM_GEO_UPDATE_ALL_ON_START" == "true" ]]; then
-		log INFO "PLAN: custom geo update-all would be requested."
 	fi
 }
 

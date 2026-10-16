@@ -43,6 +43,24 @@ services:
     image: amir20/dozzle:latest
     container_name: dozzle
 YAML
+	cat >"$tmpdir/compose.d/14-lampac.yml" <<'YAML'
+services:
+  lampac:
+    image: lampac:test
+    container_name: lampac
+YAML
+	cat >"$tmpdir/compose.d/15-telemt.yml" <<'YAML'
+services:
+  telemt:
+    image: telemt:test
+    container_name: telemt
+YAML
+	cat >"$tmpdir/compose.d/16-mihomo.yml" <<'YAML'
+services:
+  mihomo:
+    image: metacubex/mihomo:latest
+    container_name: mihomo
+YAML
 	cat >"$tmpdir/compose.d/99-disabled.yml.disable" <<'YAML'
 services:
   disabled:
@@ -56,8 +74,8 @@ YAML
 set -euo pipefail
 printf '%s\n' "$*" >>"${DOCKER_LOG:?}"
 if [[ "${1:-}" == "compose" ]]; then
-	printf 'env HT_PASS_ENCODED=%s URI_SUB_PATH=%s URI_JSON_PATH=%s URI_CLASH_PATH=%s URI_VLESS_XHTTP=%s\n' \
-		"${HT_PASS_ENCODED-}" "${URI_SUB_PATH-}" "${URI_JSON_PATH-}" "${URI_CLASH_PATH-}" "${URI_VLESS_XHTTP-}" >>"${DOCKER_LOG:?}"
+	printf 'env HT_PASS_ENCODED=%s URI_SUB_PATH=%s URI_JSON_PATH=%s URI_CLASH_PATH=%s URI_VLESS_XHTTP=%s URI_VLESS_GRPC=%s\n' \
+		"${HT_PASS_ENCODED-}" "${URI_SUB_PATH-}" "${URI_JSON_PATH-}" "${URI_CLASH_PATH-}" "${URI_VLESS_XHTTP-}" "${URI_VLESS_GRPC-}" >>"${DOCKER_LOG:?}"
 	shift
 	case "$*" in
 		*version*) echo "Docker Compose version v2.0.0"; exit 0 ;;
@@ -134,7 +152,7 @@ test_restart_logs_is_explicit() {
 test_up_is_safe_by_default() {
 	make_fixture
 	run_runner up
-	assert_contains "up -d" "$tmpdir/docker.log" "up must run detached by default"
+	assert_contains "up -d --wait --wait-timeout 600" "$tmpdir/docker.log" "up must wait for services to become running/healthy"
 	assert_not_contains " pull" "$tmpdir/docker.log" "safe up must not pull by default"
 	assert_not_contains "rm --stop --force" "$tmpdir/docker.log" "safe up must not remove containers"
 }
@@ -146,8 +164,9 @@ test_compose_invocation_sanitizes_transformed_environment() {
 		URI_JSON_PATH=noslash-json \
 		URI_CLASH_PATH=noslash-clash \
 		URI_VLESS_XHTTP=noslash-xhttp \
+		URI_VLESS_GRPC=noslash-grpc \
 		run_runner validate
-	assert_contains "env HT_PASS_ENCODED= URI_SUB_PATH= URI_JSON_PATH= URI_CLASH_PATH= URI_VLESS_XHTTP=" "$tmpdir/docker.log" "run-compose must let --env-file provide transformed variables"
+	assert_contains "env HT_PASS_ENCODED= URI_SUB_PATH= URI_JSON_PATH= URI_CLASH_PATH= URI_VLESS_XHTTP= URI_VLESS_GRPC=" "$tmpdir/docker.log" "run-compose must let --env-file provide transformed variables"
 }
 
 test_legacy_docker_compose_is_rejected() {
@@ -223,6 +242,57 @@ test_list_files_excludes_disabled_files() {
 	fi
 }
 
+test_telemt_compose_file_follows_enable_switch() {
+	make_fixture
+	output=$(run_runner list-files)
+	if grep -Fq "15-telemt.yml" <<<"$output"; then
+		fail "Telemt compose file must be disabled by default"
+	fi
+	printf 'ENABLE_TELEMT=true\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
+	if ! grep -Fq "15-telemt.yml" <<<"$output"; then
+		fail "Telemt compose file must be included when ENABLE_TELEMT=true"
+	fi
+	output=$(ENABLE_TELEMT=false run_runner list-files)
+	if grep -Fq "15-telemt.yml" <<<"$output"; then
+		fail "environment ENABLE_TELEMT=false must override enabled env file"
+	fi
+}
+
+test_lampac_compose_file_follows_enable_switch() {
+	make_fixture
+	output=$(run_runner list-files)
+	if grep -Fq "14-lampac.yml" <<<"$output"; then
+		fail "Lampac compose file must be disabled by default"
+	fi
+	printf 'ENABLE_LAMPAC=true\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
+	if ! grep -Fq "14-lampac.yml" <<<"$output"; then
+		fail "Lampac compose file must be included when ENABLE_LAMPAC=true"
+	fi
+	output=$(ENABLE_LAMPAC=false run_runner list-files)
+	if grep -Fq "14-lampac.yml" <<<"$output"; then
+		fail "environment ENABLE_LAMPAC=false must override enabled env file"
+	fi
+}
+
+test_mihomo_compose_file_follows_enable_switch() {
+	make_fixture
+	output=$(run_runner list-files)
+	if grep -Fq "16-mihomo.yml" <<<"$output"; then
+		fail "Mihomo compose file must be disabled by default"
+	fi
+	printf 'ENABLE_MIHOMO=true\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
+	if ! grep -Fq "16-mihomo.yml" <<<"$output"; then
+		fail "Mihomo compose file must be included when ENABLE_MIHOMO=true"
+	fi
+	output=$(ENABLE_MIHOMO=false run_runner list-files)
+	if grep -Fq "16-mihomo.yml" <<<"$output"; then
+		fail "environment ENABLE_MIHOMO=false must override enabled env file"
+	fi
+}
+
 test_list_files_does_not_require_env_file() {
 	make_fixture
 	rm -f "$tmpdir/compose.d/.env"
@@ -240,10 +310,13 @@ test_maintenance_prune_keeps_networks_and_volumes() {
 	run_runner maintenance prune >/tmp/run-compose-maintenance.out 2>&1
 	assert_contains "container prune --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune stopped containers"
 	assert_contains "builder prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune build cache"
+	assert_contains "buildx prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune buildx cache"
 	assert_contains "image prune --all --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune unused images"
+	assert_contains "network prune --force --filter until=168h" "$tmpdir/docker.log" "maintenance must prune unused networks"
 	assert_not_contains "system prune" "$tmpdir/docker.log" "maintenance must not use docker system prune because it removes unused external networks"
-	assert_not_contains "network prune" "$tmpdir/docker.log" "maintenance must not prune Docker networks"
 	assert_not_contains "volume prune" "$tmpdir/docker.log" "maintenance must not prune Docker volumes"
+	assert_not_contains "io.containerd.content.v1.content" "$ROOT_DIR/docker-proxy/compose.d/docker-maintenance.sh" "maintenance must not delete containerd content blobs by filesystem path"
+	assert_not_contains "/var/lib/containerd/io.containerd.content" "$ROOT_DIR/docker-proxy/compose.d/docker-maintenance.sh" "maintenance must not touch containerd content store by filesystem path"
 }
 
 test_up_reports_foreign_container_name_conflict() {
@@ -303,6 +376,9 @@ test_default_env_and_lock_follow_active_compose_dir
 test_rebuild_is_destructive_explicitly
 test_missing_explicit_env_file_fails
 test_list_files_excludes_disabled_files
+test_telemt_compose_file_follows_enable_switch
+test_lampac_compose_file_follows_enable_switch
+test_mihomo_compose_file_follows_enable_switch
 test_list_files_does_not_require_env_file
 test_maintenance_prune_keeps_networks_and_volumes
 test_up_reports_foreign_container_name_conflict

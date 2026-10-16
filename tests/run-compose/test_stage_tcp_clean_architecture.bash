@@ -49,8 +49,18 @@ traefik_compose = load_yaml("docker-proxy/compose.d/06-traefik.yml")
 traefik_service = traefik_compose["services"]["traefik"]
 traefik_ports = [str(port) for port in (traefik_service.get("ports") or [])]
 assert_true(traefik_ports == ["80:80"], f"Traefik must publish only 80:80, got {traefik_ports}")
-file_middlewares = (load_yaml("docker-proxy/traefik/dynamic/crowdsec.yml").get("http") or {}).get("middlewares") or {}
+file_http = load_yaml("docker-proxy/traefik/dynamic/crowdsec.yml").get("http") or {}
+file_middlewares = file_http.get("middlewares") or {}
+file_transports = file_http.get("serversTransports") or {}
 assert_true("admin-security-headers" in file_middlewares, "admin-security-headers must be defined by the file provider")
+assert_true(
+    (file_transports.get("grpc3xui-transport") or {}).get("insecureSkipVerify") is True,
+    "VLESS gRPC serversTransport must be defined by the file provider",
+)
+assert_true(
+    (file_transports.get("grpc3xui-transport") or {}).get("serverName") == '{{ env "WEBDOMAIN" }}',
+    "VLESS gRPC serversTransport must use the managed domain as upstream SNI",
+)
 
 traefik_static = load_yaml("docker-proxy/traefik/traefik.yml")
 entrypoints = traefik_static.get("entryPoints") or {}
@@ -97,11 +107,46 @@ assert_true(
     traefik_homepage_widget.get("username") == "{{HOMEPAGE_VAR_USER_WEB}}" and traefik_homepage_widget.get("password") == "{{HOMEPAGE_VAR_PASS_WEB}}",
     "Homepage Traefik widget must authenticate through the existing web credentials",
 )
+telemt_homepage_card = find_homepage_service("Admin", "Telemt Panel")
+assert_true(
+    telemt_homepage_card.get("container") == "telemt",
+    "Homepage Telemt card must follow the bundled panel container",
+)
+mihomo_homepage_card = find_homepage_service("Network & Security", "Mihomo")
+assert_true(
+    mihomo_homepage_card.get("href") == "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_MIHOMO}}/ui/",
+    "Homepage Mihomo card must point to the routed Zashboard UI",
+)
+assert_true(
+    "{{HOMEPAGE_VAR_MIHOMO_SECRET}}" in mihomo_homepage_card.get("description", ""),
+    "Homepage Mihomo card must expose the controller secret for copy-paste",
+)
+assert_true(
+    mihomo_homepage_card.get("container") == "mihomo",
+    "Homepage Mihomo card must follow the bundled Mihomo container",
+)
+homepage_env = homepage_compose["services"]["homepage"].get("environment") or {}
+assert_true(
+    homepage_env.get("HOMEPAGE_VAR_URI_MIHOMO") == "${URI_MIHOMO}",
+    "Homepage must receive the generated Mihomo route prefix",
+)
+assert_true(
+    homepage_env.get("HOMEPAGE_VAR_MIHOMO_SECRET") == "${MIHOMO_SECRET}",
+    "Homepage must receive the generated Mihomo controller secret",
+)
 
 xui_compose = load_yaml("docker-proxy/compose.d/12-3x-ui.yml")
 xui_service = xui_compose["services"]["3x-ui"]
 xui_ports = [str(port) for port in (xui_service.get("ports") or [])]
-assert_true(xui_ports == ["443:${PORT_LOCAL_VISION:-443}/tcp"], f"3x-ui must publish only Xray 443/tcp, got {xui_ports}")
+assert_true(
+    xui_ports == ["443:${PORT_LOCAL_VISION:-443}/tcp", "443:${PORT_LOCAL_HYSTERIA:-443}/udp"],
+    f"3x-ui must publish Xray 443/tcp and accepted Hysteria2 443/udp, got {xui_ports}",
+)
+xui_volumes = [str(volume) for volume in (xui_service.get("volumes") or [])]
+assert_true(
+    "../traefik/pem:/etc/traefik/pem:ro" in xui_volumes,
+    "3x-ui must mount exported Traefik PEM certificates read-only",
+)
 xui_labels = labels_for(xui_service)
 for key, value in xui_labels.items():
     assert_true("traefik.tcp." not in key, f"3x-ui Traefik TCP label must be removed: {key}")
@@ -121,18 +166,55 @@ assert_true(xui_labels.get("traefik.http.routers.3xui-api.service", "") == "3xui
 assert_true(xui_labels.get("traefik.http.routers.3xui-api.entrypoints", "") == "websecure", "3x-ui API router must use websecure")
 assert_true(xui_labels.get("traefik.http.routers.3xui-api.tls.certresolver", "") == "le", "3x-ui API router must use TLS certificate resolver")
 assert_true(api_priority > panel_priority, "3x-ui Bearer API router must outrank the BasicAuth panel router")
+assert_true(
+    xui_labels.get("traefik.http.services.grpc3xui-svc.loadbalancer.server.port") == "${PORT_LOCAL_GRPC}",
+    "VLESS gRPC Traefik service must target the managed gRPC backend port",
+)
+assert_true(
+    xui_labels.get("traefik.http.services.grpc3xui-svc.loadbalancer.server.scheme") == "https",
+    "VLESS gRPC Traefik service must use HTTPS upstream to Xray",
+)
+assert_true(
+    xui_labels.get("traefik.http.services.grpc3xui-svc.loadbalancer.serverstransport") == "grpc3xui-transport@file",
+    "VLESS gRPC service must use the file-provider serversTransport",
+)
+grpc_rule = xui_labels.get("traefik.http.routers.grpc3xui.rule", "")
+assert_true(
+    grpc_rule == "Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_GRPC}`)",
+    "VLESS gRPC router must use the generated gRPC path",
+)
+assert_true(xui_labels.get("traefik.http.routers.grpc3xui.service") == "grpc3xui-svc", "VLESS gRPC router must use grpc3xui-svc")
 
 telemt_compose = load_yaml("docker-proxy/compose.d/15-telemt.yml")
+assert_true("telemt-panel" not in telemt_compose["services"], "Telemt panel must run inside the single telemt container")
 telemt_service = telemt_compose["services"]["telemt"]
 telemt_ports = [str(port) for port in (telemt_service.get("ports") or [])]
 telemt_expose = [str(port) for port in (telemt_service.get("expose") or [])]
 assert_true(not telemt_ports, f"Telemt must not publish host ports, got {telemt_ports}")
-assert_true("${PORT_LOCAL_TELEMT_PROXY:-9443}" in telemt_expose, "Telemt must expose only the internal MTProxy port")
-
-telemt_panel = telemt_compose["services"]["telemt-panel"]
-telemt_panel_ports = [str(port) for port in (telemt_panel.get("ports") or [])]
-assert_true(not telemt_panel_ports, f"Telemt panel must not publish host ports, got {telemt_panel_ports}")
-telemt_labels = labels_for(telemt_panel)
+assert_true(
+    telemt_service.get("image") == "${TELEMT_STACK_IMAGE:-torotin/telemt-stack:latest}",
+    "Telemt must use the AutoDockerBuilder stack image with an env override",
+)
+assert_true("build" not in telemt_service, "Telemt stack must not build a local panel image")
+assert_true(telemt_service.get("init") is True, "Telemt stack must use an init process for its bundled children")
+assert_true("${DOCKER_SOCKET_GID:-0}" in [str(group) for group in (telemt_service.get("group_add") or [])], "Telemt stack must join the Docker socket group for panel Logs UI")
+assert_true(
+    set(telemt_expose) == {
+        "${PORT_LOCAL_TELEMT_PROXY:-9443}",
+        "${PORT_LOCAL_TELEMT_API:-9091}",
+        "${PORT_LOCAL_TELEMT_METRICS:-9090}",
+        "${PORT_LOCAL_TELEMT_PANEL:-8080}",
+    },
+    f"Telemt must expose only its four internal endpoints, got {telemt_expose}",
+)
+telemt_volumes = [str(volume) for volume in (telemt_service.get("volumes") or [])]
+assert_true("../telemt-panel/config:/etc/telemt-panel:ro" in telemt_volumes, "Bundled panel must receive its rendered config")
+assert_true("../telemt-panel/data:/var/lib/telemt-panel:rw" in telemt_volumes, "Bundled panel must retain persistent data")
+assert_true("/var/run/docker.sock:/var/run/docker.sock:ro" in telemt_volumes, "Bundled panel Logs UI must receive read-only Docker socket access")
+telemt_healthcheck = " ".join(str(part) for part in ((telemt_service.get("healthcheck") or {}).get("test") or []))
+assert_true("/usr/local/bin/telemt healthcheck /etc/telemt/config.toml --mode liveness" in telemt_healthcheck, "Telemt stack healthcheck must verify Telemt liveness")
+assert_true("curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/${URI_TELEMT_PANEL}/" in telemt_healthcheck, "Telemt stack healthcheck must verify bundled panel readiness")
+telemt_labels = labels_for(telemt_service)
 telemt_panel_rule = telemt_labels.get("traefik.http.routers.telemt-panel.rule", "")
 telemt_panel_middlewares = telemt_labels.get("traefik.http.routers.telemt-panel.middlewares", "")
 assert_true("Host(`${WEBDOMAIN}`)" in telemt_panel_rule and "PathPrefix(`/${URI_TELEMT_PANEL}`)" in telemt_panel_rule, "Telemt panel must be routed by WEBDOMAIN path")
@@ -157,14 +239,29 @@ assert_true('inline_conntrack_control = false' in telemt_template and 'mode = "t
 assert_true('mask_shape_hardening = ${TELEMT_MASK_SHAPE_HARDENING}' in telemt_template, "Telemt balanced tuning must expose mask hardening")
 assert_true('[[upstreams]]' in telemt_template and 'type = "direct"' in telemt_template, "Telemt must explicitly define direct upstream")
 
+telemt_panel_template = (root / "script/template/telemt-panel.config.toml.template").read_text(encoding="utf-8")
+assert_true('container_name = "telemt"' in telemt_panel_template, "Bundled panel Logs UI must target the telemt Docker container")
+assert_true('binary_path = "/usr/local/bin/telemt"' in telemt_panel_template, "Bundled panel must use the image-provided Telemt binary")
+assert_true('binary_path = "/usr/local/bin/telemt-panel"' in telemt_panel_template, "Bundled panel must record the image-provided panel binary")
+
 install_env_template = (root / "script/template/install.env.template").read_text(encoding="utf-8")
 docker_env_template = (root / "script/template/docker.env.template").read_text(encoding="utf-8")
 for env_template_name, env_template in [("install.env.template", install_env_template), ("docker.env.template", docker_env_template)]:
+    assert_true("TELEMT_STACK_IMAGE=${TELEMT_STACK_IMAGE}" in env_template, f"{env_template_name} must persist the telemt-stack image override")
+    assert_true("DOCKER_SOCKET_GID=${DOCKER_SOCKET_GID}" in env_template, f"{env_template_name} must persist the Docker socket group id")
+    assert_true("TELEMT_PANEL_VERSION=" not in env_template, f"{env_template_name} must not persist the retired panel build version")
     assert_true("TELEMT_TUNING_PROFILE=${TELEMT_TUNING_PROFILE}" in env_template, f"{env_template_name} must persist TELEMT_TUNING_PROFILE")
     assert_true("TELEMT_MIDDLE_PROXY_POOL_SIZE=${TELEMT_MIDDLE_PROXY_POOL_SIZE}" in env_template, f"{env_template_name} must persist ME pool size")
     assert_true('TELEMT_STUN_SERVERS_JSON="${TELEMT_STUN_SERVERS_JSON_ENV}"' in env_template, f"{env_template_name} must persist STUN server list as dotenv-safe quoted JSON")
     assert_true("TELEMT_MASK_RELAY_TIMEOUT_MS=${TELEMT_MASK_RELAY_TIMEOUT_MS}" in env_template, f"{env_template_name} must persist mask relay timeout")
     assert_true("TELEMT_MAX_CONNECTIONS=${TELEMT_MAX_CONNECTIONS}" in env_template, f"{env_template_name} must persist max_connections")
+    assert_true("URI_VLESS_GRPC=" in env_template, f"{env_template_name} must persist VLESS gRPC path")
+    assert_true("PORT_LOCAL_GRPC=${PORT_LOCAL_GRPC}" in env_template, f"{env_template_name} must persist VLESS gRPC backend port")
+    assert_true("PORT_LOCAL_HYSTERIA=${PORT_LOCAL_HYSTERIA}" in env_template, f"{env_template_name} must persist Hysteria2 UDP port")
+    assert_true("ENABLE_VLESS_GRPC=${ENABLE_VLESS_GRPC}" in env_template, f"{env_template_name} must persist VLESS gRPC enable flag")
+    assert_true("ENABLE_HYSTERIA2=${ENABLE_HYSTERIA2}" in env_template, f"{env_template_name} must persist Hysteria2 enable flag")
+    assert_true("XRAY_TLS_CERT_FILE=${XRAY_TLS_CERT_FILE}" in env_template, f"{env_template_name} must persist Xray TLS cert path")
+    assert_true("XRAY_TLS_KEY_FILE=${XRAY_TLS_KEY_FILE}" in env_template, f"{env_template_name} must persist Xray TLS key path")
 
 lampac_compose = load_yaml("docker-proxy/compose.d/14-lampac.yml")
 lampac_service = lampac_compose["services"]["lampac"]
@@ -242,7 +339,7 @@ admin_cases = [
     ("12-3x-ui.yml", "3x-ui", "traefik.http.routers.3xui-panel.middlewares"),
     ("13-homepage.yml", "homepage", "traefik.http.routers.homepage-router.middlewares"),
     ("14-lampac.yml", "lampac", "traefik.http.routers.lampac-sensitive.middlewares"),
-    ("15-telemt.yml", "telemt-panel", "traefik.http.routers.telemt-panel.middlewares"),
+    ("15-telemt.yml", "telemt", "traefik.http.routers.telemt-panel.middlewares"),
 ]
 admin_domains = [
     "TRAEFIK_ADMIN_DOMAIN",
@@ -302,7 +399,8 @@ for file_name, service_name, key in [
     ("12-3x-ui.yml", "3x-ui", "traefik.http.routers.3xui-panel.rule"),
     ("13-homepage.yml", "homepage", "traefik.http.routers.homepage-router.rule"),
     ("14-lampac.yml", "lampac", "traefik.http.routers.lampac-sensitive.rule"),
-    ("15-telemt.yml", "telemt-panel", "traefik.http.routers.telemt-panel.rule"),
+    ("15-telemt.yml", "telemt", "traefik.http.routers.telemt-panel.rule"),
+    ("16-mihomo.yml", "mihomo", "traefik.http.routers.mihomo-ui.rule"),
 ]:
     service_labels = labels_for(load_yaml(f"docker-proxy/compose.d/{file_name}")["services"][service_name])
     rule = service_labels.get(key, "")
@@ -310,12 +408,92 @@ for file_name, service_name, key in [
     for admin_domain in admin_domains:
         assert_true(admin_domain not in rule, f"{key} must not use separate admin subdomains")
 
+mihomo_labels = labels_for(load_yaml("docker-proxy/compose.d/16-mihomo.yml")["services"]["mihomo"])
+mihomo_template = (root / "script/template/mihomo.config.yaml.template").read_text(encoding="utf-8")
+assert_true("secret: ${MIHOMO_SECRET}" in mihomo_template, "Mihomo config template must render the generated controller secret")
+assert_true("MyStrongSecret123" not in mihomo_template, "Mihomo config template must not contain the old static secret")
+assert_true(mihomo_labels.get("traefik.enable") == "true", "Mihomo must enable Traefik explicitly")
+assert_true(mihomo_labels.get("traefik.docker.network") == "traefik-proxy", "Mihomo must pin Traefik to traefik-proxy")
+assert_true(mihomo_labels.get("traefik.tags") == "traefik", "Mihomo must match the Docker provider constraint")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui.entrypoints") == "websecure", "Mihomo UI must use websecure")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui.tls.certresolver") == "le", "Mihomo UI must use the LE resolver")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui.service") == "mihomo-ui-svc", "Mihomo UI router must target the named service")
+assert_true(mihomo_labels.get("traefik.http.services.mihomo-ui-svc.loadbalancer.server.port") == "9090", "Mihomo UI service must point to controller port 9090")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-manifest.rule") == "Host(`${WEBDOMAIN}`) && PathRegexp(`/${URI_MIHOMO}/ui/.*manifest(\\.webmanifest|\\.json)$$`)", "Mihomo manifest router must match UI manifests")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-manifest.entrypoints") == "websecure", "Mihomo manifest router must use websecure")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-manifest.middlewares") == "mihomo-manifest-chain", "Mihomo manifest router must use manifest chain")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-manifest.tls.certresolver") == "le", "Mihomo manifest router must use the LE resolver")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-manifest.service") == "mihomo-ui-svc", "Mihomo manifest router must target the named service")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-manifest.priority") == "974", "Mihomo manifest router must outrank UI slash/static routers")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-static.rule") == "Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_MIHOMO}/ui`)", "Mihomo static UI router must match /ui assets")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-static.entrypoints") == "websecure", "Mihomo static UI router must use websecure")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-static.middlewares") == "mihomo-static-chain", "Mihomo static UI router must use the static chain")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-static.tls.certresolver") == "le", "Mihomo static UI router must use the LE resolver")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-static.service") == "mihomo-ui-svc", "Mihomo static UI router must target the named service")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-static.priority") == "972", "Mihomo static UI router must outrank root and API routers")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-slash.rule") == "Host(`${WEBDOMAIN}`) && Path(`/${URI_MIHOMO}/ui`)", "Mihomo UI slash router must match only /ui without trailing slash")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-slash.entrypoints") == "websecure", "Mihomo UI slash router must use websecure")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-slash.middlewares") == "mihomo-ui-slash-chain", "Mihomo UI slash router must use the slash redirect chain")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-slash.tls.certresolver") == "le", "Mihomo UI slash router must use the LE resolver")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-slash.service") == "mihomo-ui-svc", "Mihomo UI slash router must target the named service")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-slash.priority") == "973", "Mihomo UI slash router must outrank static UI router")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-root.rule") == "Host(`${WEBDOMAIN}`) && (Path(`/${URI_MIHOMO}`) || Path(`/${URI_MIHOMO}/`))", "Mihomo root router must match only the prefixed root")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-root.entrypoints") == "websecure", "Mihomo root redirect must use websecure")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-root.middlewares") == "mihomo-root-chain", "Mihomo root redirect must use the root redirect chain")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-root.tls.certresolver") == "le", "Mihomo root redirect must use the LE resolver")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-root.service") == "mihomo-ui-svc", "Mihomo root redirect must target the named service")
+assert_true(mihomo_labels.get("traefik.http.routers.mihomo-ui-root.priority") == "971", "Mihomo root redirect must outrank the API/UI prefix router")
+assert_true(mihomo_labels.get("traefik.http.middlewares.mihomo-ui-redirect.redirectRegex.regex") == "^https?://([^/]+)/${URI_MIHOMO}/?$$", "Mihomo root redirect regex must match only the prefixed root")
+assert_true(mihomo_labels.get("traefik.http.middlewares.mihomo-ui-redirect.redirectRegex.replacement") == "https://${WEBDOMAIN}/${URI_MIHOMO}/ui/#/setup?hostname=${WEBDOMAIN}&port=443&secondaryPath=/${URI_MIHOMO}", "Mihomo root redirect must point to Zashboard setup with secondaryPath")
+assert_true(mihomo_labels.get("traefik.http.middlewares.mihomo-ui-redirect.redirectRegex.permanent") == "true", "Mihomo root redirect must be permanent")
+mihomo_root_chain = mihomo_labels.get("traefik.http.middlewares.mihomo-root-chain.chain.middlewares", "")
+assert_true("bouncer@file" in mihomo_root_chain, "Mihomo root chain must include CrowdSec bouncer")
+assert_true("mihomo-basic-auth" in mihomo_root_chain, "Mihomo root chain must include BasicAuth")
+assert_true("mihomo-rate-limit" in mihomo_root_chain, "Mihomo root chain must include rate limiting")
+assert_true("admin-security-headers@file" in mihomo_root_chain, "Mihomo root chain must include admin security headers")
+assert_true("mihomo-ui-redirect" in mihomo_root_chain, "Mihomo root chain must redirect to /ui/")
+assert_true("mihomo-strip" not in mihomo_root_chain, "Mihomo root redirect must run before stripPrefix")
+mihomo_ui_slash_chain = mihomo_labels.get("traefik.http.middlewares.mihomo-ui-slash-chain.chain.middlewares", "")
+assert_true("bouncer@file" in mihomo_ui_slash_chain, "Mihomo UI slash chain must include CrowdSec bouncer")
+assert_true("mihomo-basic-auth" in mihomo_ui_slash_chain, "Mihomo UI slash chain must include BasicAuth")
+assert_true("mihomo-rate-limit" in mihomo_ui_slash_chain, "Mihomo UI slash chain must include rate limiting")
+assert_true("admin-security-headers@file" in mihomo_ui_slash_chain, "Mihomo UI slash chain must include admin security headers")
+assert_true("mihomo-ui-slash-redirect" in mihomo_ui_slash_chain, "Mihomo UI slash chain must redirect to external /ui/")
+assert_true("mihomo-strip" not in mihomo_ui_slash_chain, "Mihomo UI slash redirect must run before stripPrefix")
+assert_true(mihomo_labels.get("traefik.http.middlewares.mihomo-ui-slash-redirect.redirectRegex.regex") == "^https?://([^/]+)/${URI_MIHOMO}/ui$$", "Mihomo UI slash redirect regex must match only external /ui")
+assert_true(mihomo_labels.get("traefik.http.middlewares.mihomo-ui-slash-redirect.redirectRegex.replacement") == "https://${WEBDOMAIN}/${URI_MIHOMO}/ui/", "Mihomo UI slash redirect must preserve the route prefix")
+assert_true(mihomo_labels.get("traefik.http.middlewares.mihomo-ui-slash-redirect.redirectRegex.permanent") == "true", "Mihomo UI slash redirect must be permanent")
+mihomo_manifest_chain = mihomo_labels.get("traefik.http.middlewares.mihomo-manifest-chain.chain.middlewares", "")
+assert_true("bouncer@file" in mihomo_manifest_chain, "Mihomo manifest chain must include CrowdSec bouncer")
+assert_true("mihomo-basic-auth" not in mihomo_manifest_chain, "Mihomo manifests must not require BasicAuth")
+assert_true("mihomo-rate-limit" in mihomo_manifest_chain, "Mihomo manifest chain must include rate limiting")
+assert_true("admin-security-headers@file" in mihomo_manifest_chain, "Mihomo manifest chain must include admin security headers")
+assert_true("mihomo-strip" in mihomo_manifest_chain, "Mihomo manifest chain must strip the route prefix")
+assert_true("mihomo-compress" in mihomo_manifest_chain, "Mihomo manifest chain must include compression")
+mihomo_static_chain = mihomo_labels.get("traefik.http.middlewares.mihomo-static-chain.chain.middlewares", "")
+assert_true("bouncer@file" in mihomo_static_chain, "Mihomo static chain must include CrowdSec bouncer")
+assert_true("mihomo-basic-auth" in mihomo_static_chain, "Mihomo static UI assets must require BasicAuth")
+assert_true("mihomo-rate-limit" in mihomo_static_chain, "Mihomo static chain must include rate limiting")
+assert_true("admin-security-headers@file" in mihomo_static_chain, "Mihomo static chain must include admin security headers")
+assert_true("mihomo-strip" in mihomo_static_chain, "Mihomo static chain must strip the route prefix")
+assert_true("mihomo-compress" in mihomo_static_chain, "Mihomo static chain must include compression")
+mihomo_chain = mihomo_labels.get("traefik.http.middlewares.mihomo-chain.chain.middlewares", "")
+assert_true("bouncer@file" in mihomo_chain, "Mihomo UI chain must include CrowdSec bouncer")
+assert_true("mihomo-basic-auth" not in mihomo_chain, "Mihomo API chain must not block Bearer auth with BasicAuth")
+assert_true("mihomo-rate-limit" in mihomo_chain, "Mihomo UI chain must include rate limiting")
+assert_true("admin-security-headers@file" in mihomo_chain, "Mihomo UI chain must include admin security headers")
+assert_true("mihomo-compress" in mihomo_chain, "Mihomo UI chain must include compression")
+
 for compose_path in sorted((root / "docker-proxy/compose.d").glob("*.yml")):
     data = load_yaml(compose_path.relative_to(root))
     for service_name, service in (data.get("services") or {}).items():
         ports = [str(port) for port in (service.get("ports") or [])]
         for port in ports:
-            assert_true("/udp" not in port or not port.startswith("443:"), f"443/udp must be unused before an accepted UDP stage: {compose_path}:{service_name}:{port}")
+            if port.startswith("443:") and "/udp" in port:
+                assert_true(
+                    compose_path.name == "12-3x-ui.yml" and service_name == "3x-ui" and port == "443:${PORT_LOCAL_HYSTERIA:-443}/udp",
+                    f"443/udp must belong only to accepted Hysteria2 stage: {compose_path}:{service_name}:{port}",
+                )
 
 print("stage tcp clean architecture assertions OK")
 PY
