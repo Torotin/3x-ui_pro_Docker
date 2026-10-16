@@ -19,6 +19,71 @@ assert_not_contains() {
 	! grep -Fq -- "$needle" "$file" || fail "$message; unexpected: $needle"
 }
 
+# Extract doctor step-matrix lines only (from banner through line before next-actions).
+extract_doctor_matrix_block() {
+	local file=$1 dest=$2
+	awk '
+		/^doctor: step matrix$/ { grab=1 }
+		/^doctor: next actions/ { if (grab) exit }
+		grab { print }
+	' "$file" >"$dest"
+	[[ -s "$dest" ]] || fail "doctor matrix block missing (expected doctor: step matrix .. doctor: next actions)"
+}
+
+# Grep ordered line-start needles inside a section file (matrix-scoped).
+assert_ordered_line_starts() {
+	local file=$1
+	shift
+	local -a expected=("$@")
+	local line idx=0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		((idx < ${#expected[@]})) || break
+		case "$line" in
+		"${expected[$idx]}" | "${expected[$idx]}"[[:space:]]*)
+			idx=$((idx + 1))
+			;;
+		esac
+	done <"$file"
+	((idx == ${#expected[@]})) || fail "ordered matrix rows incomplete in $file; missing from '${expected[$idx]}' onward (matched $idx/${#expected[@]})"
+}
+
+# Assert step matrix content + footer order (matrix before next actions before footer).
+assert_doctor_step_matrix() {
+	local stdout=$1
+	local footer=${2:-WARN}
+	local matrix=$tmpdir/doctor_matrix.txt
+	extract_doctor_matrix_block "$stdout" "$matrix"
+
+	assert_contains "STEP" "$matrix" "doctor matrix header must include STEP"
+	assert_contains "STATUS" "$matrix" "doctor matrix header must include STATUS"
+	assert_contains "SUMMARY" "$matrix" "doctor matrix header must include SUMMARY"
+	assert_contains "NEXT" "$matrix" "doctor matrix header must include NEXT"
+	grep -Eq '^STEP[[:space:]]+STATUS' "$matrix" || fail "doctor matrix must have STEP/STATUS column header line"
+
+	assert_ordered_line_starts "$matrix" \
+		dnscrypt apt env docker user firewall ssh network compose final
+
+	# Footer must appear after next-actions (which itself is after the matrix block).
+	awk -v footer="doctor: $footer" '
+		/^doctor: step matrix$/ { seen_matrix=1; next }
+		/^doctor: next actions/ {
+			if (!seen_matrix) { print "next actions before step matrix"; exit 2 }
+			seen_next=1
+			next
+		}
+		$0 == footer {
+			if (!seen_next) { print "footer before next actions"; exit 3 }
+			seen_footer=1
+			next
+		}
+		END {
+			if (!seen_matrix) { print "missing step matrix"; exit 4 }
+			if (!seen_next) { print "missing next actions"; exit 5 }
+			if (!seen_footer) { print "missing footer " footer; exit 6 }
+		}
+	' "$stdout" || fail "doctor matrix/footer order invalid for footer=$footer"
+}
+
 make_fixture() {
 	tmpdir=$(mktemp -d)
 	export INSTALL_MOCK=1
@@ -45,6 +110,7 @@ make_fixture() {
 	unset TELEMT_MASK_SHAPE_HARDENING TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR
 	unset VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER
 	unset REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
+	unset INSTALL_MOCK_DOCTOR_PHASE
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -61,17 +127,101 @@ run_installer() {
 test_doctor_is_mock_only_and_reports_supported_os() {
 	make_fixture
 	run_installer doctor
-	assert_contains "doctor: checking installer, dependencies and stack status" "$tmpdir/stdout" "doctor must describe expanded checks"
+	assert_contains "doctor: profile=" "$tmpdir/stdout" "doctor must print profile= in banner"
+	assert_contains "phase=" "$tmpdir/stdout" "doctor must print phase= in banner"
 	assert_contains "OK: OS is Debian/Ubuntu compatible" "$tmpdir/stdout" "doctor must report supported OS"
 	assert_contains "OK: commands:" "$tmpdir/stdout" "doctor must summarize command checks by default"
 	assert_contains "WARN: stack checks skipped in mock mode" "$tmpdir/stdout" "doctor must skip stack checks in mock mode"
-	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor must report success on Ubuntu fixture"
+	assert_doctor_step_matrix "$tmpdir/stdout" WARN
 	assert_not_contains "OK: command available: bash" "$tmpdir/stdout" "doctor must not spam individual successful commands by default"
 	assert_contains "doctor.command command -v apt-get" "$INSTALL_COMMAND_LOG" "doctor must check required commands through runner in mock mode"
 	assert_contains "doctor.command command -v docker" "$INSTALL_COMMAND_LOG" "doctor must check Docker command through runner in mock mode"
 	assert_not_contains "apt-get install" "$INSTALL_COMMAND_LOG" "doctor must not install apt packages"
 	assert_not_contains "systemctl restart" "$INSTALL_COMMAND_LOG" "doctor must not restart services"
-	assert_not_contains "/etc/" "$INSTALL_COMMAND_LOG" "doctor must not mutate /etc"
+	assert_not_contains "sysctl -p" "$INSTALL_COMMAND_LOG" "doctor must not apply sysctl"
+	assert_not_contains "ufw --force" "$INSTALL_COMMAND_LOG" "doctor must not mutate ufw"
+}
+
+test_doctor_rejects_unknown_profile() {
+	make_fixture
+	if run_installer doctor nope; then
+		fail "doctor must reject unknown profile token"
+	fi
+	assert_contains "unknown doctor profile: nope" "$tmpdir/stderr" "doctor must explain unknown profile"
+}
+
+test_doctor_host_and_stack_profiles_parse() {
+	make_fixture
+	run_installer doctor host
+	assert_contains "profile=host" "$tmpdir/stdout" "doctor host must set profile=host"
+	assert_contains "doctor: WARN" "$tmpdir/stdout" "doctor host must complete in mock with WARN footer"
+
+	make_fixture
+	run_installer doctor stack
+	assert_contains "profile=stack" "$tmpdir/stdout" "doctor stack must set profile=stack"
+	assert_contains "DOCTOR_EXPECT_STACK=1" "$tmpdir/stdout" "doctor stack must state forced stack-expected severity"
+	assert_contains "doctor: WARN" "$tmpdir/stdout" "doctor stack must complete in mock with WARN footer (stack skipped)"
+}
+
+test_doctor_host_skips_stack() {
+	make_fixture
+	run_installer doctor host
+	assert_contains "profile=host" "$tmpdir/stdout" "doctor host must set profile=host"
+	assert_contains "SKIP: compose checks skipped (profile=host)" "$tmpdir/stdout" "doctor host must SKIP compose for profile"
+	assert_contains "SKIP: container checks skipped (profile=host)" "$tmpdir/stdout" "doctor host must SKIP containers for profile"
+	assert_doctor_step_matrix "$tmpdir/stdout" WARN
+	grep -Eq '^compose[[:space:]]+SKIP' "$tmpdir/doctor_matrix.txt" || fail "doctor host matrix must include compose SKIP row"
+	assert_not_contains "compose configuration validates" "$tmpdir/stdout" "doctor host must not run compose validate"
+	assert_not_contains "run-compose.sh validate" "$INSTALL_COMMAND_LOG" "doctor host must not attempt compose validate via command log"
+	assert_not_contains "compose.validate" "$INSTALL_COMMAND_LOG" "doctor host must not log compose.validate"
+}
+
+test_doctor_stack_profile_sets_expect() {
+	make_fixture
+	run_installer doctor stack
+	assert_contains "profile=stack" "$tmpdir/stdout" "doctor stack must set profile=stack"
+	assert_contains "DOCTOR_EXPECT_STACK=1" "$tmpdir/stdout" "doctor stack must print DOCTOR_EXPECT_STACK=1"
+	assert_contains "stack profile forces stack-expected severity" "$tmpdir/stdout" "doctor stack must state forced severity"
+	assert_contains "SKIP: state checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP host state checks"
+	assert_contains "SKIP: dnscrypt checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP dnscrypt host checks"
+	assert_contains "SKIP: APT package checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP apt host checks"
+	assert_contains "SKIP: Docker engine checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP docker engine host checks"
+	assert_contains "SKIP: user checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP user host checks"
+	assert_contains "SKIP: firewall checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP firewall host checks"
+	assert_contains "SKIP: ssh checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP ssh host checks"
+	assert_contains "SKIP: network checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP network host checks"
+	assert_contains "SKIP: final checks skipped (profile=stack)" "$tmpdir/stdout" "doctor stack must SKIP final host checks"
+	assert_doctor_step_matrix "$tmpdir/stdout" WARN
+	grep -Eq '^dnscrypt[[:space:]]+SKIP' "$tmpdir/doctor_matrix.txt" || fail "doctor stack matrix must include dnscrypt SKIP row"
+	grep -Eq '^user[[:space:]]+SKIP' "$tmpdir/doctor_matrix.txt" || fail "doctor stack matrix must include user SKIP row"
+}
+
+test_doctor_host_checks_user_firewall_matrix() {
+	make_fixture
+	run_installer doctor host
+	assert_contains "doctor.user.id" "$INSTALL_COMMAND_LOG" "doctor host must probe user via doctor.user.id"
+	assert_contains "doctor.firewall" "$INSTALL_COMMAND_LOG" "doctor host must probe firewall via doctor.firewall"
+	assert_contains "doctor.ssh.listen" "$INSTALL_COMMAND_LOG" "doctor host must probe ssh listen via doctor.ssh.listen"
+	assert_contains "doctor.network.sysctl" "$INSTALL_COMMAND_LOG" "doctor host must probe network via doctor.network.sysctl"
+	assert_doctor_step_matrix "$tmpdir/stdout" WARN
+	grep -Eq '^user[[:space:]]+(OK|WARN|FAIL)' "$tmpdir/doctor_matrix.txt" || fail "doctor host matrix user STATUS must be recorded (not only not checked)"
+	! grep -Eq '^user[[:space:]]+SKIP[[:space:]]+not checked' "$tmpdir/doctor_matrix.txt" || fail "doctor host matrix user must not stay 'not checked'"
+	grep -Eq '^firewall[[:space:]]+(OK|WARN|FAIL|SKIP)' "$tmpdir/doctor_matrix.txt" || fail "doctor host matrix firewall STATUS must be recorded"
+	! grep -Eq '^firewall[[:space:]]+SKIP[[:space:]]+not checked' "$tmpdir/doctor_matrix.txt" || fail "doctor host matrix firewall must not stay 'not checked'"
+	grep -Eq '^final[[:space:]]+(OK|WARN|SKIP)' "$tmpdir/doctor_matrix.txt" || fail "doctor host matrix final STATUS must be recorded"
+	! grep -Eq '^final[[:space:]]+SKIP[[:space:]]+not checked' "$tmpdir/doctor_matrix.txt" || fail "doctor host matrix final must not stay 'not checked'"
+	assert_not_contains "sysctl -p" "$INSTALL_COMMAND_LOG" "doctor host checks must not apply sysctl"
+	assert_not_contains "ufw --force" "$INSTALL_COMMAND_LOG" "doctor host checks must not mutate ufw"
+	assert_not_contains "systemctl restart" "$INSTALL_COMMAND_LOG" "doctor host checks must not restart services"
+}
+
+test_doctor_strict_flag_parses() {
+	make_fixture
+	if run_installer doctor --strict; then
+		fail "doctor --strict must exit nonzero when WARNs are present"
+	fi
+	assert_contains "doctor: profile=" "$tmpdir/stdout" "doctor --strict must parse and run"
+	assert_contains "doctor: FAILED" "$tmpdir/stdout" "doctor --strict with WARNs must print FAILED footer"
 }
 
 test_doctor_verbose_keeps_detailed_success_output() {
@@ -79,13 +229,156 @@ test_doctor_verbose_keeps_detailed_success_output() {
 	run_installer doctor --verbose
 	assert_contains "OK: command available: bash" "$tmpdir/stdout" "doctor --verbose must show individual successful command checks"
 	assert_contains "OK: path exists:" "$tmpdir/stdout" "doctor --verbose must show individual successful path checks"
-	assert_contains "doctor: OK" "$tmpdir/stdout" "doctor --verbose must still report success"
+	assert_contains "doctor: WARN" "$tmpdir/stdout" "doctor --verbose must still aggregate WARN footer in mock"
 }
 
 test_doctor_inventory_uses_bundled_telemt_panel_healthcheck() {
-	assert_contains 'containers+=(telemt)' "$ROOT_DIR/script/modules/00_common.sh" "doctor must check the bundled Telemt container"
-	assert_contains 'install_telemt_enabled' "$ROOT_DIR/script/modules/00_common.sh" "doctor must gate Telemt checks on ENABLE_TELEMT"
-	assert_not_contains 'containers+=(telemt telemt-panel)' "$ROOT_DIR/script/modules/00_common.sh" "doctor must not expect a retired standalone panel container"
+	assert_contains 'containers+=(telemt)' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must check the bundled Telemt container"
+	assert_contains 'install_telemt_enabled' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must gate Telemt checks on ENABLE_TELEMT"
+	assert_not_contains 'containers+=(telemt telemt-panel)' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must not expect a retired standalone panel container"
+	assert_contains 'containers+=(mihomo)' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must check the Mihomo container when gated"
+	assert_contains 'install_mihomo_enabled' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must gate Mihomo checks on ENABLE_MIHOMO"
+}
+
+# --- Phase 7: doctor exit-matrix (plan IDs T-preflight-default .. T-os) ---
+
+# T-preflight-default: bare doctor mock → exit 0; WARN ok; missing stack not FAIL
+test_doctor_exit_preflight_default() {
+	make_fixture
+	run_installer doctor || fail "T-preflight-default: bare doctor mock must exit 0"
+	assert_contains "doctor: WARN" "$tmpdir/stdout" "T-preflight-default: mock full must print WARN footer"
+	assert_not_contains "doctor: FAILED" "$tmpdir/stdout" "T-preflight-default: WARN-only mock must not print FAILED"
+	assert_contains "WARN: stack checks skipped in mock mode" "$tmpdir/stdout" "T-preflight-default: missing stack must WARN in mock"
+	assert_not_contains "FAIL: compose" "$tmpdir/stdout" "T-preflight-default: missing stack must not FAIL compose"
+	assert_not_contains "FAIL: container" "$tmpdir/stdout" "T-preflight-default: missing stack must not FAIL containers"
+	assert_doctor_step_matrix "$tmpdir/stdout" WARN
+}
+
+# T-host: doctor host → exit 0; compose SKIP; not FAIL for down stack
+test_doctor_exit_host() {
+	make_fixture
+	run_installer doctor host || fail "T-host: doctor host mock must exit 0"
+	assert_contains "profile=host" "$tmpdir/stdout" "T-host: must set profile=host"
+	assert_contains "doctor: WARN" "$tmpdir/stdout" "T-host: mock host must print WARN footer"
+	assert_not_contains "doctor: FAILED" "$tmpdir/stdout" "T-host: down/missing stack must not FAILED"
+	assert_contains "SKIP: compose checks skipped (profile=host)" "$tmpdir/stdout" "T-host: compose must SKIP"
+	assert_doctor_step_matrix "$tmpdir/stdout" WARN
+	grep -Eq '^compose[[:space:]]+SKIP' "$tmpdir/doctor_matrix.txt" || fail "T-host: matrix compose STATUS must be SKIP"
+	assert_not_contains "FAIL: compose" "$tmpdir/stdout" "T-host: must not FAIL compose for down stack"
+	assert_not_contains "compose.validate" "$INSTALL_COMMAND_LOG" "T-host: must not run compose validate"
+}
+
+# T-stack-fail: mockable FAIL via --strict and/or INSTALL_MOCK_DOCTOR_PHASE + doctor_issue path
+test_doctor_exit_stack_fail() {
+	make_fixture
+	if run_installer doctor stack --strict; then
+		fail "T-stack-fail: doctor stack --strict with mock WARNs must exit nonzero"
+	fi
+	assert_contains "profile=stack" "$tmpdir/stdout" "T-stack-fail: stack --strict must parse profile=stack"
+	assert_contains "doctor: FAILED" "$tmpdir/stdout" "T-stack-fail: stack --strict must print FAILED footer"
+
+	# Force a real FAIL (not only strict-promoted WARN) via expect-stack + soft ssh issue.
+	make_fixture
+	unset PORT_REMOTE_SSH
+	export INSTALL_MOCK_DOCTOR_PHASE=stack_expected
+	if run_installer doctor; then
+		fail "T-stack-fail: stack_expected + missing PORT_REMOTE_SSH must exit nonzero"
+	fi
+	assert_contains "phase=stack_expected" "$tmpdir/stdout" "T-stack-fail: INSTALL_MOCK_DOCTOR_PHASE must force stack_expected"
+	assert_contains "FAIL: PORT_REMOTE_SSH is not set" "$tmpdir/stdout" "T-stack-fail: doctor_issue must harden to FAIL when expect-stack"
+	assert_contains "doctor: FAILED" "$tmpdir/stdout" "T-stack-fail: real FAIL must print FAILED footer"
+}
+
+# T-strict: WARN-only + --strict → nonzero FAILED
+test_doctor_exit_strict() {
+	make_fixture
+	if run_installer doctor --strict; then
+		fail "T-strict: WARN-only + --strict must exit nonzero"
+	fi
+	assert_contains "doctor: FAILED" "$tmpdir/stdout" "T-strict: --strict must print doctor: FAILED"
+	assert_contains "WARN: stack checks skipped in mock mode" "$tmpdir/stdout" "T-strict: underlying WARN must still be visible"
+}
+
+# T-warn-ne-fail: without strict, WARN footer exit 0
+test_doctor_exit_warn_ne_fail() {
+	make_fixture
+	run_installer doctor || fail "T-warn-ne-fail: WARN without --strict must exit 0"
+	assert_contains "doctor: WARN" "$tmpdir/stdout" "T-warn-ne-fail: must print doctor: WARN"
+	assert_not_contains "doctor: FAILED" "$tmpdir/stdout" "T-warn-ne-fail: WARN must not be FAILED without --strict"
+}
+
+# T-mock-skip: mutation guards (apt/systemctl/sysctl/ufw) stay asserted
+test_doctor_exit_mock_skip() {
+	make_fixture
+	run_installer doctor || fail "T-mock-skip: mock doctor must exit 0"
+	assert_contains "WARN: stack checks skipped in mock mode" "$tmpdir/stdout" "T-mock-skip: stack must be skipped in mock"
+	assert_not_contains "apt-get install" "$INSTALL_COMMAND_LOG" "T-mock-skip: must not install apt packages"
+	assert_not_contains "systemctl restart" "$INSTALL_COMMAND_LOG" "T-mock-skip: must not restart services"
+	assert_not_contains "sysctl -p" "$INSTALL_COMMAND_LOG" "T-mock-skip: must not apply sysctl"
+	assert_not_contains "ufw --force" "$INSTALL_COMMAND_LOG" "T-mock-skip: must not mutate ufw"
+	assert_not_contains "compose.validate" "$INSTALL_COMMAND_LOG" "T-mock-skip: must not validate compose via docker"
+}
+
+# T-docker-tier: missing docker is soft (doctor_issue), not hard doctor_fail; mock run_cmd always succeeds
+test_doctor_exit_docker_tier() {
+	make_fixture
+	run_installer doctor || fail "T-docker-tier: mock doctor must exit 0"
+	# Mock run_cmd always succeeds command -v probes, so docker is reported available.
+	assert_not_contains "FAIL: command missing: docker" "$tmpdir/stdout" "T-docker-tier: mock must not hard-FAIL missing docker"
+	assert_contains "doctor.command command -v docker" "$INSTALL_COMMAND_LOG" "T-docker-tier: docker must still be probed via runner"
+
+	local doctor_src="$ROOT_DIR/script/modules/08_doctor.sh"
+	local cmds_fn=$tmpdir/doctor_check_commands.sh
+	sed -n '/^install_doctor_check_commands()/,/^}/p' "$doctor_src" >"$cmds_fn"
+	[[ -s "$cmds_fn" ]] || fail "T-docker-tier: install_doctor_check_commands not found"
+	# docker belongs to installer_commands (soft doctor_issue), not bootstrap (hard doctor_fail).
+	awk '
+		/bootstrap_commands=\(/ { tier="bootstrap"; next }
+		/installer_commands=\(/ { tier="installer"; next }
+		tier == "bootstrap" && /^[[:space:]]*\)/ { tier="" }
+		tier == "installer" && /^[[:space:]]*\)/ { tier="" }
+		tier == "bootstrap" && $1 == "docker" { boot=1 }
+		tier == "installer" && $1 == "docker" { inst=1 }
+		END { exit (inst && !boot) ? 0 : 1 }
+	' "$cmds_fn" || fail "T-docker-tier: docker must be in installer_commands soft tier, not bootstrap"
+	assert_contains 'doctor_issue commands "command missing: $cmd"' "$cmds_fn" "T-docker-tier: installer missing cmds must use doctor_issue"
+	# Bootstrap hard-fail path must not name docker specifically.
+	! grep -Eq 'doctor_fail.*"command missing: docker"' "$doctor_src" || fail "T-docker-tier: must not hard-code doctor_fail for docker"
+}
+
+# T-telemt-gate / T-mihomo-gate: inventory source gates (extend inventory asserts)
+test_doctor_exit_telemt_mihomo_gates() {
+	local doctor_src="$ROOT_DIR/script/modules/08_doctor.sh"
+	assert_contains 'install_telemt_enabled' "$doctor_src" "T-telemt-gate: Telemt container checks must gate on ENABLE_TELEMT"
+	assert_contains 'containers+=(telemt)' "$doctor_src" "T-telemt-gate: Telemt container must be inventoried when enabled"
+	assert_not_contains 'containers+=(telemt telemt-panel)' "$doctor_src" "T-telemt-gate: retired telemt-panel must not be expected"
+	assert_contains 'install_mihomo_enabled' "$doctor_src" "T-mihomo-gate: Mihomo container checks must gate on ENABLE_MIHOMO"
+	assert_contains 'containers+=(mihomo)' "$doctor_src" "T-mihomo-gate: Mihomo container must be inventoried when enabled"
+	# Gate helpers must appear before the push into the inventory list (source order).
+	awk '
+		/install_telemt_enabled/ { telemt_gate=NR }
+		/containers\+=\(telemt\)/ { telemt_push=NR }
+		/install_mihomo_enabled/ { mihomo_gate=NR }
+		/containers\+=\(mihomo\)/ { mihomo_push=NR }
+		END {
+			if (!(telemt_gate && telemt_push && telemt_gate < telemt_push)) exit 2
+			if (!(mihomo_gate && mihomo_push && mihomo_gate < mihomo_push)) exit 3
+		}
+	' "$doctor_src" || fail "T-telemt/mihomo-gate: enable gates must precede containers+=(…) inventory pushes"
+}
+
+# T-os: unsupported OS already covered by test_doctor_rejects_unsupported_os; keep exit-matrix alias assert
+test_doctor_exit_unsupported_os() {
+	make_fixture
+	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
+ID=fedora
+VERSION_ID=40
+OS
+	if run_installer doctor; then
+		fail "T-os: doctor must reject unsupported OS"
+	fi
+	assert_contains "unsupported OS" "$tmpdir/stderr" "T-os: doctor must explain unsupported OS"
+	assert_not_contains "doctor: WARN" "$tmpdir/stdout" "T-os: unsupported OS must die before WARN footer"
 }
 
 test_exit_resets_script_and_project_permissions() {
@@ -677,30 +970,30 @@ test_uninstall_can_remove_docker_engine_with_explicit_flag() {
 
 test_self_update_check_persists_branch_without_applying() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.6.0
-	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.6.0 - 2026-10-17\n- Новая проверка\n\n## 0.5.0 - 2026-10-16\n- Текущая версия'
+	export INSTALL_MOCK_REMOTE_VERSION=0.7.0
+	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.7.0 - 2026-10-17\n- Новая проверка\n\n## 0.6.0 - 2026-10-16\n- Текущая версия'
 	run_installer self-update --branch feature/install --check
 	assert_contains "update.branch=feature/install" "$INSTALL_STATE_DIR/config" "branch must be persisted"
 	assert_contains "self-update.check" "$INSTALL_COMMAND_LOG" "self-update check must be routed through runner"
-	assert_contains "self-update: update available: 0.5.0 -> 0.6.0" "$tmpdir/stdout" "check must report newer remote version"
-	assert_contains "## 0.6.0" "$tmpdir/stdout" "check must print newer changelog section"
-	assert_not_contains "## 0.5.0" "$tmpdir/stdout" "check must not print current version changelog section"
+	assert_contains "self-update: update available: 0.6.0 -> 0.7.0" "$tmpdir/stdout" "check must report newer remote version"
+	assert_contains "## 0.7.0" "$tmpdir/stdout" "check must print newer changelog section"
+	assert_not_contains "## 0.6.0" "$tmpdir/stdout" "check must not print current version changelog section"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "check must not apply files"
 }
 
 test_self_update_apply_tolerates_diff_changes() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.6.0
+	export INSTALL_MOCK_REMOTE_VERSION=0.7.0
 	run_installer self-update --branch feature/install --yes
 	assert_contains "self-update.diff" "$INSTALL_COMMAND_LOG" "self-update must record diff"
 	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "self-update must continue to apply when diff reports changes"
-	assert_contains "self-update: applied feature/install (0.5.0 -> 0.6.0)" "$tmpdir/stdout" "self-update must print applied version range"
+	assert_contains "self-update: applied feature/install (0.6.0 -> 0.7.0)" "$tmpdir/stdout" "self-update must print applied version range"
 }
 
 test_self_update_equal_version_does_not_apply_without_force() {
 	make_fixture
 	run_installer self-update --branch feature/install --yes
-	assert_contains "self-update: up to date (0.5.0)" "$tmpdir/stdout" "equal version must be treated as up to date"
+	assert_contains "self-update: up to date (0.6.0)" "$tmpdir/stdout" "equal version must be treated as up to date"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "equal version must not apply without --force"
 }
 
@@ -708,25 +1001,25 @@ test_self_update_force_applies_equal_version() {
 	make_fixture
 	run_installer self-update --branch feature/install --yes --force
 	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "force must apply even when versions are equal"
-	assert_contains "self-update: applied feature/install (0.5.0 -> 0.5.0)" "$tmpdir/stdout" "force apply must print version range"
+	assert_contains "self-update: applied feature/install (0.6.0 -> 0.6.0)" "$tmpdir/stdout" "force apply must print version range"
 }
 
 test_wizard_offers_update_and_uses_same_dispatcher() {
 	make_fixture
 	printf 'env\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Update check: installer is up to date (0.5.0)" "$tmpdir/stdout" "wizard must report up-to-date installer without update prompt"
+	assert_contains "Update check: installer is up to date (0.6.0)" "$tmpdir/stdout" "wizard must report up-to-date installer without update prompt"
 	assert_not_contains "Run self-update now?" "$tmpdir/stdout" "wizard must not prompt when no newer version exists"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard env selection must use command dispatcher"
 }
 
 test_wizard_offers_update_only_when_newer_version_exists() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.6.0
-	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.6.0 - 2026-10-17\n- Новая версия wizard\n\n## 0.5.0 - 2026-10-16\n- Текущая версия'
+	export INSTALL_MOCK_REMOTE_VERSION=0.7.0
+	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.7.0 - 2026-10-17\n- Новая версия wizard\n\n## 0.6.0 - 2026-10-16\n- Текущая версия'
 	printf 'n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Update available: 0.5.0 -> 0.6.0" "$tmpdir/stdout" "wizard must show newer installer version"
-	assert_contains "## 0.6.0" "$tmpdir/stdout" "wizard must show newer changelog section"
-	assert_not_contains "## 0.5.0" "$tmpdir/stdout" "wizard must not show current changelog section"
+	assert_contains "Update available: 0.6.0 -> 0.7.0" "$tmpdir/stdout" "wizard must show newer installer version"
+	assert_contains "## 0.7.0" "$tmpdir/stdout" "wizard must show newer changelog section"
+	assert_not_contains "## 0.6.0" "$tmpdir/stdout" "wizard must not show current changelog section"
 	assert_contains "Run self-update now?" "$tmpdir/stdout" "wizard must prompt only for newer version"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "declined wizard update must not apply"
 }
@@ -1109,8 +1402,23 @@ OS
 }
 
 test_doctor_is_mock_only_and_reports_supported_os
+test_doctor_rejects_unknown_profile
+test_doctor_host_and_stack_profiles_parse
+test_doctor_host_skips_stack
+test_doctor_stack_profile_sets_expect
+test_doctor_host_checks_user_firewall_matrix
+test_doctor_strict_flag_parses
 test_doctor_verbose_keeps_detailed_success_output
 test_doctor_inventory_uses_bundled_telemt_panel_healthcheck
+test_doctor_exit_preflight_default
+test_doctor_exit_host
+test_doctor_exit_stack_fail
+test_doctor_exit_strict
+test_doctor_exit_warn_ne_fail
+test_doctor_exit_mock_skip
+test_doctor_exit_docker_tier
+test_doctor_exit_telemt_mihomo_gates
+test_doctor_exit_unsupported_os
 test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
 test_compose_installs_docker_maintenance_timer

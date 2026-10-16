@@ -77,7 +77,7 @@ Installer хранится отдельно от Docker-стека:
 ## Команды installer
 
 ```bash
-script/install.sh doctor
+script/install.sh doctor [host|stack] [--verbose] [--strict]
 script/install.sh wizard
 script/install.sh run <step...> [--destroy-docker-data] [--apply] [--yes]
 script/install.sh self-update [--branch <branch>] [--check] [--yes] [--force]
@@ -92,11 +92,42 @@ dnscrypt apt env docker user firewall ssh network compose final uninstall
 
 Назначение основных команд:
 
-- `doctor` — read-only диагностика ОС, команд, зависимостей, state, Docker, Compose и контейнеров.
+- `doctor` / `doctor host` / `doctor stack` — read-only диагностика (см. раздел ниже).
 - `wizard` — интерактивная установка с numbered menu и потоковым выводом операций.
 - `run` — batch-запуск шагов.
 - `self-update` — обновление installer из выбранной git-ветки по версии.
 - `uninstall` — план или выполнение удаления проекта.
+
+## Doctor
+
+`doctor` не меняет окружение. Его можно запускать до и после установки.
+
+```bash
+script/install.sh doctor              # full: preflight + host + stack
+script/install.sh doctor host         # только host/preflight
+script/install.sh doctor stack        # только stack (ожидание стека принудительно)
+script/install.sh doctor --verbose    # детальные OK-строки
+script/install.sh doctor --strict     # любой WARN → exit 1
+```
+
+Профили:
+
+- `doctor` (full) — preflight + host + stack; severity стека зависит от ожидания (`DOCTOR_EXPECT_STACK`).
+- `doctor host` — только host/preflight; проверки контейнеров/compose пропускаются (SKIP).
+- `doctor stack` — только stack; host-шаги в matrix помечаются SKIP; severity стека принудительно ожидаемая.
+
+Флаги:
+
+- `--verbose` — печатать отдельные OK detail lines (по умолчанию успешные проверки сворачиваются).
+- `--strict` — любой WARN даёт exit **1** и footer `doctor: FAILED`.
+
+Exit и footer:
+
+- **FAIL** → всегда ненулевой exit, footer `doctor: FAILED`.
+- **WARN** → exit **0** и footer `doctor: WARN`, если нет `--strict`.
+- Без WARN/FAIL → exit **0**, footer `doctor: OK`.
+
+Отчёт включает header (`profile` / `phase`), секции проверок, matrix `STEP STATUS SUMMARY NEXT`, блок next-actions и footer. `run doctor` — алиас полного `doctor`.
 
 ## Установка через wizard
 
@@ -175,8 +206,6 @@ Destructive и host-mutating действия требуют явного opt-in
 - Uninstall purge: отдельные `--purge-*` флаги.
 
 SSH apply логирует выбранный auth mode, пользователя, порт, backup, systemd unit, результат `sshd -t`, reload/restart и проверку listening port. Сначала применяется `systemctl reload`, restart используется только если reload не поднял новый порт или сервис требует полного перезапуска.
-
-`doctor` не меняет окружение. Его можно запускать для диагностики до и после установки.
 
 ## Удаление
 

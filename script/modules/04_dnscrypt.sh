@@ -1739,54 +1739,51 @@ install_dnscrypt_command() {
 }
 
 install_doctor_check_dnscrypt() {
-	local status=0
 	local binary="$DNSCRYPT_INSTALL_DIR/dnscrypt-proxy"
 	local resolv_file=${INSTALL_TEST_RESOLV_CONF:-$DNSCRYPT_RESOLV_CONF}
 	local module_file="$SCRIPT_DIR/modules/04_dnscrypt.sh"
+	local next_action="run dnscrypt --apply --yes"
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		if [[ -f "$module_file" ]] && declare -F install_dnscrypt_command >/dev/null 2>&1; then
 			doctor_ok_detail "dnscrypt module: $module_file"
+			doctor_record dnscrypt OK "dnscrypt: module present (runtime checks skipped in mock)"
 		else
-			doctor_fail "dnscrypt module missing or incomplete: $module_file" || status=1
+			doctor_record dnscrypt FAIL "dnscrypt module missing or incomplete: $module_file" "$next_action"
 		fi
 		run_cmd doctor.dnscrypt.binary test -x "$binary" || true
 		run_cmd doctor.dnscrypt.service systemctl is-active dnscrypt-proxy || true
-		((status == 0)) && doctor_ok "dnscrypt: module present (runtime checks skipped in mock)"
-		return "$status"
+		return 0
 	fi
 	if [[ -x "$binary" ]]; then
 		local version
 		version=$("$binary" -version 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
-		doctor_ok "dnscrypt binary: $binary${version:+ ($version)}"
+		doctor_record dnscrypt OK "dnscrypt binary: $binary${version:+ ($version)}"
 		if systemctl is-active --quiet dnscrypt-proxy 2>/dev/null; then
-			doctor_ok "dnscrypt-proxy service is active"
+			doctor_record dnscrypt OK "dnscrypt-proxy service is active"
 		else
-			doctor_warn "dnscrypt-proxy service is not active"
-			status=1
+			doctor_issue dnscrypt "dnscrypt-proxy service is not active" "$next_action"
 		fi
 		if systemctl is-enabled --quiet dnscrypt-proxy 2>/dev/null; then
 			doctor_ok_detail "dnscrypt-proxy service is enabled"
 		else
-			doctor_warn "dnscrypt-proxy service is not enabled"
+			doctor_issue dnscrypt "dnscrypt-proxy service is not enabled" "$next_action"
 		fi
 		if [[ -r "$resolv_file" ]] && grep -Eq 'nameserver[[:space:]]+(127\.0\.0\.1|::1)([[:space:]]|$)' "$resolv_file"; then
-			doctor_ok "resolv.conf points to localhost DNS"
+			doctor_record dnscrypt OK "resolv.conf points to localhost DNS"
 		else
-			doctor_warn "resolv.conf does not clearly point to 127.0.0.1/::1"
-			status=1
+			doctor_issue dnscrypt "resolv.conf does not clearly point to 127.0.0.1/::1" "$next_action"
 		fi
 		if command -v dig >/dev/null 2>&1; then
 			if dig +time=2 +tries=1 +short example.com @127.0.0.1 >/dev/null 2>&1; then
 				doctor_ok_detail "dig @127.0.0.1 succeeded"
 			else
-				doctor_warn "dig @127.0.0.1 failed"
-				status=1
+				doctor_issue dnscrypt "dig @127.0.0.1 failed" "$next_action"
 			fi
 		fi
 	else
-		doctor_warn "dnscrypt binary missing: $binary (run: install.sh run dnscrypt --apply --yes)"
+		doctor_issue dnscrypt "dnscrypt binary missing: $binary ($next_action)" "$next_action"
 	fi
-	return "$status"
+	return 0
 }
 
 uninstall_purge_dnscrypt() {
