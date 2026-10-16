@@ -39,6 +39,7 @@ make_fixture() {
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 STRICT_DNS_CHECK STRICT_ACME_CHECK
+	unset DNSCRYPT_VERSION
 	unset TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_ME_KEEPALIVE_ENABLED TELEMT_HARDSWAP
 	unset TELEMT_PROXY_SECRET_ROTATE_RUNTIME TELEMT_STUN_USE TELEMT_STUN_TCP_FALLBACK
 	unset TELEMT_MASK_SHAPE_HARDENING TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR
@@ -53,7 +54,8 @@ OS
 }
 
 run_installer() {
-	"$INSTALLER" "$@" >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	# Invoke via bash so Samba/WSL execute-bit quirks do not break mock tests.
+	bash "$INSTALLER" "$@" >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 }
 
 test_doctor_is_mock_only_and_reports_supported_os() {
@@ -158,6 +160,7 @@ ENV
 
 test_env_renders_mihomo_config_with_generated_secret() {
 	make_fixture
+	export ENABLE_MIHOMO=true
 	run_installer run env
 	local config_file="$INSTALL_ROOT/mihomo/config.yaml"
 	[[ -f "$config_file" ]] || fail "env must render Mihomo config"
@@ -322,6 +325,7 @@ USER_SSH=deployer
 PASS_SSH=secret
 SSH_PBK=ssh-ed25519-mock
 PORT_REMOTE_SSH=22022
+ENABLE_TELEMT=true
 TELEMT_STUN_SERVERS_JSON='["stun1.l.google.com:19302", "stun2.l.google.com:19302"]'
 TELEMT_HTTP_IP_DETECT_URLS_JSON='["https://api.ipify.org", "https://ifconfig.me/ip"]'
 TELEMT_PANEL_VERSION=v-retired
@@ -422,7 +426,7 @@ users:
 auth_attempts: 5
 YAML
 	YQ_LOG="$tmpdir/yq.log" PATH="$tmpdir/bin:/usr/bin:/bin" ADGUARD_CONF="$conf" USER_WEB=admin PASS_WEB=secret HT_PASS_ENCODED='admin:$$2y$$05$$abc' \
-		"$ROOT_DIR/docker-proxy/adguard/update-pass.sh" >"$tmpdir/adguard.out" 2>"$tmpdir/adguard.err"
+		bash "$ROOT_DIR/docker-proxy/adguard/update-pass.sh" >"$tmpdir/adguard.out" 2>"$tmpdir/adguard.err"
 	assert_contains '  - name: "admin"' "$conf" "AdGuard password updater must preserve username"
 	assert_contains '    password: "$2y$05$abc"' "$conf" "AdGuard password updater must derive raw hash from escaped htpasswd"
 	assert_not_contains "Installing apache2-utils" "$tmpdir/adguard.out" "AdGuard password updater must not install htpasswd when hash is precomputed"
@@ -447,7 +451,7 @@ users:
 auth_attempts: 5
 YAML
 	PATH="$tmpdir/bin:/usr/bin:/bin" ADGUARD_CONF="$conf" USER_WEB=admin PASS_WEB=secret HT_PASS_ENCODED='admin:$$2y$$05$$abc' \
-		"$ROOT_DIR/docker-proxy/adguard/update-pass.sh" >"$tmpdir/adguard.out" 2>"$tmpdir/adguard.err"
+		bash "$ROOT_DIR/docker-proxy/adguard/update-pass.sh" >"$tmpdir/adguard.out" 2>"$tmpdir/adguard.err"
 	assert_contains '  - name: "admin"' "$conf" "AdGuard password updater must write user without yq"
 	assert_contains '    password: "$2y$05$abc"' "$conf" "AdGuard password updater must write raw hash without yq"
 	assert_contains "auth_attempts: 5" "$conf" "AdGuard password updater must keep following YAML keys"
@@ -587,7 +591,7 @@ test_docker_repo_and_daemon_config_are_safe() {
 	export DOCKER_ENABLE_IPV6=0
 	run_installer run docker --destroy-docker-data
 	assert_contains "docker.repo.gpg printf" "$INSTALL_COMMAND_LOG" "docker repo key install must log a non-executing pipeline in mock mode"
-	assert_contains "curl -fsSL %s | gpg --dearmor -o %s" "$INSTALL_COMMAND_LOG" "docker repo key install must show the intended pipeline"
+	assert_contains "curl\\ -fsSL\\ %s\\ \\|\\ gpg\\ --dearmor\\ -o\\ %s" "$INSTALL_COMMAND_LOG" "docker repo key install must show the intended pipeline"
 	assert_contains "docker.repo.update apt-get update" "$INSTALL_COMMAND_LOG" "docker repo update must not pass -y"
 	assert_not_contains "docker.repo.update apt-get update -y" "$INSTALL_COMMAND_LOG" "docker repo update must not use unsupported -y"
 	assert_contains "docker.daemon.backup printf backup\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker daemon mock backup must not copy a missing host file"
@@ -658,6 +662,7 @@ ENV
 	assert_contains "ssh.restore" "$INSTALL_COMMAND_LOG" "ssh purge must be explicit"
 	assert_contains "network.restore" "$INSTALL_COMMAND_LOG" "network purge must be explicit"
 	assert_contains "project.remove" "$INSTALL_COMMAND_LOG" "project root removal must be explicit"
+	assert_not_contains "dnscrypt.purge" "$INSTALL_COMMAND_LOG" "default uninstall apply must not purge dnscrypt without flag"
 }
 
 test_uninstall_can_remove_docker_engine_with_explicit_flag() {
@@ -672,30 +677,30 @@ test_uninstall_can_remove_docker_engine_with_explicit_flag() {
 
 test_self_update_check_persists_branch_without_applying() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.3.0
-	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.3.0 - 2026-05-10\n- Новая проверка\n\n## 0.2.0 - 2026-05-09\n- Текущая версия'
+	export INSTALL_MOCK_REMOTE_VERSION=0.6.0
+	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.6.0 - 2026-10-17\n- Новая проверка\n\n## 0.5.0 - 2026-10-16\n- Текущая версия'
 	run_installer self-update --branch feature/install --check
 	assert_contains "update.branch=feature/install" "$INSTALL_STATE_DIR/config" "branch must be persisted"
 	assert_contains "self-update.check" "$INSTALL_COMMAND_LOG" "self-update check must be routed through runner"
-	assert_contains "self-update: update available: 0.2.0 -> 0.3.0" "$tmpdir/stdout" "check must report newer remote version"
-	assert_contains "## 0.3.0" "$tmpdir/stdout" "check must print newer changelog section"
-	assert_not_contains "## 0.2.0" "$tmpdir/stdout" "check must not print current version changelog section"
+	assert_contains "self-update: update available: 0.5.0 -> 0.6.0" "$tmpdir/stdout" "check must report newer remote version"
+	assert_contains "## 0.6.0" "$tmpdir/stdout" "check must print newer changelog section"
+	assert_not_contains "## 0.5.0" "$tmpdir/stdout" "check must not print current version changelog section"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "check must not apply files"
 }
 
 test_self_update_apply_tolerates_diff_changes() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.3.0
+	export INSTALL_MOCK_REMOTE_VERSION=0.6.0
 	run_installer self-update --branch feature/install --yes
 	assert_contains "self-update.diff" "$INSTALL_COMMAND_LOG" "self-update must record diff"
 	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "self-update must continue to apply when diff reports changes"
-	assert_contains "self-update: applied feature/install (0.2.0 -> 0.3.0)" "$tmpdir/stdout" "self-update must print applied version range"
+	assert_contains "self-update: applied feature/install (0.5.0 -> 0.6.0)" "$tmpdir/stdout" "self-update must print applied version range"
 }
 
 test_self_update_equal_version_does_not_apply_without_force() {
 	make_fixture
 	run_installer self-update --branch feature/install --yes
-	assert_contains "self-update: up to date (0.2.0)" "$tmpdir/stdout" "equal version must be treated as up to date"
+	assert_contains "self-update: up to date (0.5.0)" "$tmpdir/stdout" "equal version must be treated as up to date"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "equal version must not apply without --force"
 }
 
@@ -703,40 +708,41 @@ test_self_update_force_applies_equal_version() {
 	make_fixture
 	run_installer self-update --branch feature/install --yes --force
 	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "force must apply even when versions are equal"
-	assert_contains "self-update: applied feature/install (0.2.0 -> 0.2.0)" "$tmpdir/stdout" "force apply must print version range"
+	assert_contains "self-update: applied feature/install (0.5.0 -> 0.5.0)" "$tmpdir/stdout" "force apply must print version range"
 }
 
 test_wizard_offers_update_and_uses_same_dispatcher() {
 	make_fixture
-	printf 'env\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Update check: installer is up to date (0.2.0)" "$tmpdir/stdout" "wizard must report up-to-date installer without update prompt"
+	printf 'env\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Update check: installer is up to date (0.5.0)" "$tmpdir/stdout" "wizard must report up-to-date installer without update prompt"
 	assert_not_contains "Run self-update now?" "$tmpdir/stdout" "wizard must not prompt when no newer version exists"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard env selection must use command dispatcher"
 }
 
 test_wizard_offers_update_only_when_newer_version_exists() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.3.0
-	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.3.0 - 2026-05-10\n- Новая версия wizard\n\n## 0.2.0 - 2026-05-09\n- Текущая версия'
-	printf 'n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Update available: 0.2.0 -> 0.3.0" "$tmpdir/stdout" "wizard must show newer installer version"
-	assert_contains "## 0.3.0" "$tmpdir/stdout" "wizard must show newer changelog section"
-	assert_not_contains "## 0.2.0" "$tmpdir/stdout" "wizard must not show current changelog section"
+	export INSTALL_MOCK_REMOTE_VERSION=0.6.0
+	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.6.0 - 2026-10-17\n- Новая версия wizard\n\n## 0.5.0 - 2026-10-16\n- Текущая версия'
+	printf 'n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Update available: 0.5.0 -> 0.6.0" "$tmpdir/stdout" "wizard must show newer installer version"
+	assert_contains "## 0.6.0" "$tmpdir/stdout" "wizard must show newer changelog section"
+	assert_not_contains "## 0.5.0" "$tmpdir/stdout" "wizard must not show current changelog section"
 	assert_contains "Run self-update now?" "$tmpdir/stdout" "wizard must prompt only for newer version"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "declined wizard update must not apply"
 }
 
 test_wizard_menu_accepts_numbered_choices() {
 	make_fixture
-	printf '2\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "1. apt" "$tmpdir/stdout" "wizard must show apt as first numbered step"
+	printf '2\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "0. dnscrypt" "$tmpdir/stdout" "wizard must show dnscrypt as first step"
+	assert_contains "1. apt" "$tmpdir/stdout" "wizard must show apt as numbered step"
 	assert_contains "2. env" "$tmpdir/stdout" "wizard must show numbered menu"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard must dispatch numbered choices"
 }
 
 test_wizard_toggles_optional_feature_flags_and_renders_env() {
 	make_fixture
-	printf 't\n1\n2\n3\n4\n5\na\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 't\n1\n2\n3\n4\n5\na\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "t. toggles" "$tmpdir/stdout" "wizard must expose feature toggles"
 	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must have a clear heading"
 	assert_contains "1. ENABLE_LAMPAC" "$tmpdir/stdout" "toggle screen must show Lampac flag"
@@ -760,7 +766,7 @@ test_wizard_toggles_optional_feature_flags_and_renders_env() {
 
 test_wizard_toggle_exit_does_not_persist_changes() {
 	make_fixture
-	printf 't\n1\nx\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 't\n1\nx\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must render before exit"
 	assert_not_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "exiting toggles without apply must not persist changes"
 	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "exiting toggles without apply must not render env"
@@ -768,7 +774,7 @@ test_wizard_toggle_exit_does_not_persist_changes() {
 
 test_wizard_removes_html_and_shows_last_status() {
 	make_fixture
-	printf '2\n\n9\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '2\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: OK env" "$tmpdir/stdout" "wizard must show final status for previous operation"
 	assert_contains "9. final" "$tmpdir/stdout" "wizard final step must be menu item 9"
 	assert_not_contains "html" "$tmpdir/stdout" "wizard must not show removed html step"
@@ -777,7 +783,7 @@ test_wizard_removes_html_and_shows_last_status() {
 
 test_wizard_rejects_unknown_menu_choice_without_exit() {
 	make_fixture
-	printf '99\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '99\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: INVALID 99" "$tmpdir/stdout" "wizard must report invalid menu choices"
 	assert_contains "Unknown menu item: 99" "$tmpdir/stdout" "wizard must explain invalid menu choice"
 	assert_contains "Available steps:" "$tmpdir/stdout" "wizard must continue after invalid menu choice"
@@ -785,7 +791,7 @@ test_wizard_rejects_unknown_menu_choice_without_exit() {
 
 test_wizard_streams_output_and_waits_for_enter() {
 	make_fixture
-	printf '7\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '7\ny\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Running network..." "$tmpdir/stdout" "wizard must start step output immediately"
 	assert_contains "net.ipv4.tcp_keepalive_time" "$tmpdir/stdout" "wizard must stream step output to the console"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must pause after completed operation"
@@ -794,7 +800,7 @@ test_wizard_streams_output_and_waits_for_enter() {
 
 test_wizard_apt_step_streams_and_uses_confirmation() {
 	make_fixture
-	printf '1\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '1\ny\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Running apt..." "$tmpdir/stdout" "wizard must show step start before apt output"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must wait after apt step"
 	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "apt wizard step must run apt update through runner"
@@ -838,7 +844,7 @@ test_html_step_is_removed_from_cli_dispatch() {
 test_wizard_collects_required_variables_before_menu() {
 	make_fixture
 	unset WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
-	printf 'wizard.example.test\nwizard-user\nwizard-pass\nweb-user\nweb-pass\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'wizard.example.test\nwizard-user\nwizard-pass\nweb-user\nweb-pass\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Required installer variables" "$tmpdir/stdout" "wizard must collect required variables before menu"
 	assert_contains "Web domain" "$tmpdir/stdout" "wizard must prompt for WEBDOMAIN"
 	assert_contains "SSH username" "$tmpdir/stdout" "wizard must prompt for USER_SSH"
@@ -852,7 +858,7 @@ test_wizard_collects_required_variables_before_menu() {
 test_wizard_persists_required_variables_before_env_step() {
 	make_fixture
 	unset WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
-	printf 'persist.example.test\npersist-ssh\nssh-pass\npersist-web\nweb-pass\nssh-ed25519 persist-key\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'persist.example.test\npersist-ssh\nssh-pass\npersist-web\nweb-pass\nssh-ed25519 persist-key\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains 'WEBDOMAIN="persist.example.test"' "$INSTALL_STATE_DIR/install.env" "wizard must persist WEBDOMAIN immediately"
 	assert_contains 'USER_SSH="persist-ssh"' "$INSTALL_STATE_DIR/install.env" "wizard must persist USER_SSH immediately"
 	assert_contains 'PASS_SSH="ssh-pass"' "$INSTALL_STATE_DIR/install.env" "wizard must persist PASS_SSH immediately"
@@ -868,6 +874,105 @@ test_batch_requires_ssh_and_web_credentials() {
 		fail "batch run must require SSH/Web credentials"
 	fi
 	assert_contains "USER_SSH is required" "$tmpdir/stderr" "batch must require USER_SSH first"
+}
+
+test_dnscrypt_requires_apply_confirmation() {
+	make_fixture
+	if run_installer run dnscrypt; then
+		fail "dnscrypt without --apply --yes must fail"
+	fi
+	assert_contains "requires explicit opt-in" "$tmpdir/stderr" "dnscrypt must require --apply"
+	assert_not_contains "dnscrypt.deps" "$INSTALL_COMMAND_LOG" "dnscrypt must not install without opt-in"
+}
+
+test_dnscrypt_mock_install_logs_intent_without_host_mutation() {
+	make_fixture
+	run_installer run dnscrypt --apply --yes
+	assert_contains "dnscrypt.mode" "$INSTALL_COMMAND_LOG" "dnscrypt must log install mode"
+	assert_contains "dnscrypt.deps" "$INSTALL_COMMAND_LOG" "dnscrypt must log dependency install"
+	assert_contains "dnscrypt.resolve.latest" "$INSTALL_COMMAND_LOG" "dnscrypt must resolve latest release by default"
+	assert_contains "dnscrypt.download" "$INSTALL_COMMAND_LOG" "dnscrypt must log binary download intent"
+	assert_contains "dnscrypt.config" "$INSTALL_COMMAND_LOG" "dnscrypt must log config write"
+	assert_contains "dnscrypt.unit" "$INSTALL_COMMAND_LOG" "dnscrypt must log unit write"
+	assert_contains "dnscrypt.resolved" "$INSTALL_COMMAND_LOG" "dnscrypt must log resolved drop-in"
+	assert_contains "dnscrypt.service.enable" "$INSTALL_COMMAND_LOG" "dnscrypt must log service enable"
+	assert_contains "dnscrypt.dig" "$INSTALL_COMMAND_LOG" "dnscrypt must log dig readiness check"
+	assert_not_contains "vendor/" "$INSTALL_COMMAND_LOG" "dnscrypt must not reference a vendor path"
+	assert_not_contains "chattr +i" "$INSTALL_COMMAND_LOG" "mock dnscrypt must not lock resolv.conf"
+}
+
+test_dnscrypt_forwards_force_flag() {
+	make_fixture
+	run_installer run dnscrypt --apply --yes --force
+	assert_contains "dnscrypt.mode" "$INSTALL_COMMAND_LOG" "dnscrypt must log mode for --force"
+	assert_contains "--force" "$INSTALL_COMMAND_LOG" "dnscrypt must record --force in mode log"
+	assert_not_contains "vendor/" "$INSTALL_COMMAND_LOG" "dnscrypt --force must not reference a vendor path"
+}
+
+test_dnscrypt_pins_version_flag() {
+	make_fixture
+	run_installer run dnscrypt --apply --yes --version 2.1.14
+	assert_contains "dnscrypt.resolve.pinned" "$INSTALL_COMMAND_LOG" "dnscrypt must log pinned version resolve"
+	assert_contains "2.1.14" "$INSTALL_COMMAND_LOG" "dnscrypt must record --version value"
+	assert_contains "dnscrypt-proxy-2.1.14" "$INSTALL_COMMAND_LOG" "dnscrypt download label must use pinned version"
+	assert_not_contains "dnscrypt.resolve.latest" "$INSTALL_COMMAND_LOG" "pinned version must not query GitHub latest"
+}
+
+test_dnscrypt_decide_mode_matches_original_semver_rules() {
+	make_fixture
+	# shellcheck source=script/modules/00_common.sh
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=script/modules/04_dnscrypt.sh
+	source "$ROOT_DIR/script/modules/04_dnscrypt.sh"
+	DNSCRYPT_VERSION=2.1.18
+	DNSCRYPT_FORCE_REINSTALL=0
+	DNSCRYPT_RECONFIGURE_ONLY=0
+	DNSCRYPT_EXISTING_BINARY=1
+	DNSCRYPT_EXISTING_UNIT=1
+	DNSCRYPT_EXISTING_ACTIVE=1
+	DNSCRYPT_EXISTING_ENABLED=1
+	DNSCRYPT_INSTALLED_VERSION=2.1.18
+	dnscrypt_is_healthy_install() { return 0; }
+	dnscrypt_decide_mode >/dev/null
+	[[ "$DNSCRYPT_MODE" == "skip" ]] || fail "same healthy version must skip (got $DNSCRYPT_MODE)"
+	((DNSCRYPT_SKIP_HEALTHY == 1)) || fail "skip flag must be set for healthy install"
+	dnscrypt_is_healthy_install() { return 1; }
+	dnscrypt_decide_mode >/dev/null
+	[[ "$DNSCRYPT_MODE" == "reconfigure" ]] || fail "same version but unhealthy must reconfigure (got $DNSCRYPT_MODE)"
+	DNSCRYPT_INSTALLED_VERSION=2.1.14
+	dnscrypt_decide_mode >/dev/null
+	[[ "$DNSCRYPT_MODE" == "upgrade" ]] || fail "older version must upgrade (got $DNSCRYPT_MODE)"
+	DNSCRYPT_FORCE_REINSTALL=1
+	dnscrypt_decide_mode >/dev/null
+	[[ "$DNSCRYPT_MODE" == "install" ]] || fail "--force must install (got $DNSCRYPT_MODE)"
+}
+
+test_dnscrypt_appears_in_usage_and_wizard() {
+	make_fixture
+	run_installer help
+	assert_contains "dnscrypt apt env docker" "$tmpdir/stdout" "usage must list dnscrypt before apt"
+	printf '0\nn\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "0. dnscrypt" "$tmpdir/stdout" "wizard must list dnscrypt"
+	assert_contains "DNSCrypt install skipped" "$tmpdir/stdout" "wizard must allow skipping dnscrypt"
+	assert_not_contains "dnscrypt.deps" "$INSTALL_COMMAND_LOG" "declined dnscrypt must not install"
+}
+
+test_uninstall_purge_dnscrypt_is_explicit() {
+	make_fixture
+	run_installer uninstall --plan
+	assert_not_contains "Remove host DNSCrypt" "$tmpdir/stdout" "default uninstall plan must not purge dnscrypt"
+	run_installer uninstall --plan --purge-dnscrypt
+	assert_contains "Remove host DNSCrypt" "$tmpdir/stdout" "plan with --purge-dnscrypt must mention DNSCrypt removal"
+	run_installer uninstall --apply --yes --purge-dnscrypt
+	assert_contains "dnscrypt.purge.stop" "$INSTALL_COMMAND_LOG" "purge-dnscrypt must stop service through runner"
+	assert_contains "dnscrypt.purge.resolv" "$INSTALL_COMMAND_LOG" "purge-dnscrypt must restore public DNS"
+	assert_contains "dnscrypt.purge.dir" "$INSTALL_COMMAND_LOG" "purge-dnscrypt must remove install dir"
+}
+
+test_final_summary_mentions_host_dnscrypt() {
+	make_fixture
+	run_installer run env final
+	assert_contains "Host DNS         : DNSCrypt/DoH via 127.0.0.1:53" "$tmpdir/stdout" "final summary must mention host DNSCrypt"
 }
 
 test_apt_detects_country_specific_mirror_list() {
@@ -901,7 +1006,7 @@ test_apt_falls_back_when_selected_mirror_update_fails() {
 
 test_wizard_skips_docker_wipe_when_user_declines() {
 	make_fixture
-	printf 'docker\nn\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'docker\nn\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Docker wipe/reinstall skipped" "$tmpdir/stdout" "wizard must keep running when docker wipe is declined"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must pause after skipped operation"
 	assert_not_contains "docker.system.prune" "$INSTALL_COMMAND_LOG" "wizard must not wipe Docker when user declines"
@@ -909,7 +1014,7 @@ test_wizard_skips_docker_wipe_when_user_declines() {
 
 test_wizard_confirms_apply_steps() {
 	make_fixture
-	printf 'firewall\ny\n\nssh\ny\n\nnetwork\ny\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'firewall\ny\n\nssh\ny\n\nnetwork\ny\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to firewall"
 	assert_contains "ssh.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to ssh"
 	assert_contains "network.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to network"
@@ -918,7 +1023,7 @@ test_wizard_confirms_apply_steps() {
 test_wizard_prompts_for_missing_user() {
 	make_fixture
 	unset USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
-	printf 'wizard-user\nwizard-pass\nweb-user\nweb-pass\n\nuser\n\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 'wizard-user\nwizard-pass\nweb-user\nweb-pass\n\nuser\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "SSH username" "$tmpdir/stdout" "wizard must prompt for missing USER_SSH"
 	assert_contains "user.ensure useradd -m -d /home/wizard-user -s /bin/bash wizard-user" "$INSTALL_COMMAND_LOG" "wizard must pass prompted user to user step"
 }
@@ -973,6 +1078,7 @@ test_compose_uses_installer_state_lock() {
 
 test_final_summary_prints_details() {
 	make_fixture
+	export ENABLE_MIHOMO=true
 	run_installer run env final
 	assert_contains "INSTALLATION SUMMARY" "$tmpdir/stdout" "final step must print summary"
 	assert_contains "Domain           : example.test" "$tmpdir/stdout" "final summary must include domain"
@@ -1059,6 +1165,14 @@ test_html_step_is_removed_from_cli_dispatch
 test_wizard_collects_required_variables_before_menu
 test_wizard_persists_required_variables_before_env_step
 test_batch_requires_ssh_and_web_credentials
+test_dnscrypt_requires_apply_confirmation
+test_dnscrypt_mock_install_logs_intent_without_host_mutation
+test_dnscrypt_forwards_force_flag
+test_dnscrypt_pins_version_flag
+test_dnscrypt_decide_mode_matches_original_semver_rules
+test_dnscrypt_appears_in_usage_and_wizard
+test_uninstall_purge_dnscrypt_is_explicit
+test_final_summary_mentions_host_dnscrypt
 test_apt_detects_country_specific_mirror_list
 test_apt_installs_required_dependencies
 test_apt_falls_back_when_selected_mirror_update_fails

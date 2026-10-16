@@ -7,6 +7,7 @@ install_wizard_print_menu() {
 	fi
 	cat <<'MENU'
 Available steps:
+  0. dnscrypt  Install DNSCrypt as system DNS (DoH/DNSCrypt)
   1. apt       Select APT mirror and update OS packages
   2. env       Render installer and compose env files
   3. docker    Install/prepare Docker resources
@@ -28,6 +29,7 @@ install_wizard_print_status() {
 
 wizard_normalize_step() {
 	case "$1" in
+	0) printf 'dnscrypt\n' ;;
 	1) printf 'apt\n' ;;
 	2) printf 'env\n' ;;
 	3) printf 'docker\n' ;;
@@ -250,6 +252,15 @@ wizard_confirm() {
 wizard_dispatch_step() {
 	local input=$1
 	case "$input" in
+	dnscrypt)
+		if wizard_confirm "Install DNSCrypt as system DNS (DoH/DNSCrypt)?"; then
+			wizard_execute_step dnscrypt dispatch_step dnscrypt --apply --yes
+		else
+			WIZARD_LAST_STATUS="SKIPPED dnscrypt"
+			printf '\nDNSCrypt install skipped\n'
+			wizard_wait_continue
+		fi
+		;;
 	apt)
 		if wizard_confirm "Select fastest APT mirror and update OS packages?"; then
 			wizard_execute_step apt dispatch_step apt --apply --yes

@@ -10,6 +10,7 @@ Project:
   Compose directory: ${SUMMARY_COMPOSE_DIR}
   Compose env      : ${SUMMARY_COMPOSE_ENV}
   Update branch    : ${SUMMARY_UPDATE_BRANCH}
+  Host DNS         : DNSCrypt/DoH via 127.0.0.1:53 (/opt/dnscrypt-proxy)
 
 SSH access:
   Target           : ${SUMMARY_SSH_TARGET}

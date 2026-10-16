@@ -2,11 +2,12 @@
 # Common runtime: logging, config/state, runner, validation, random helpers.
 
 install_prepare_state() {
-	mkdir -p "$INSTALL_STATE_DIR" "$(dirname "$INSTALL_LOG_FILE")" "$(dirname "$INSTALL_COMMAND_LOG")"
+	# Soft-fail mkdir/touch so non-root /opt targets can reach require_writable_target with a clear error.
+	mkdir -p "$INSTALL_STATE_DIR" "$(dirname "$INSTALL_LOG_FILE")" "$(dirname "$INSTALL_COMMAND_LOG")" 2>/dev/null || true
 	if [[ "$INSTALL_STATE_DIR" != "$INSTALL_LEGACY_STATE_DIR" && -d "$INSTALL_LEGACY_STATE_DIR" && ! -e "$INSTALL_STATE_DIR/install.env" ]]; then
 		cp -a "$INSTALL_LEGACY_STATE_DIR"/. "$INSTALL_STATE_DIR"/ 2>/dev/null || true
 	fi
-	touch "$INSTALL_LOG_FILE" "$INSTALL_COMMAND_LOG"
+	touch "$INSTALL_LOG_FILE" "$INSTALL_COMMAND_LOG" 2>/dev/null || true
 }
 
 install_enable_exit_permissions_reset() {
@@ -225,10 +226,17 @@ install_doctor_command() {
 	install_doctor_check_commands || status=1
 	install_doctor_check_paths || status=1
 	install_doctor_check_state || status=1
+	if declare -F install_doctor_check_dnscrypt >/dev/null 2>&1; then
+		install_doctor_check_dnscrypt || status=1
+	fi
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		doctor_warn "stack checks skipped in mock mode"
-		printf 'doctor: OK\n'
-		return 0
+		if ((status == 0)); then
+			printf 'doctor: OK\n'
+		else
+			printf 'doctor: FAILED\n'
+		fi
+		return "$status"
 	fi
 	install_doctor_check_apt_packages || status=1
 	install_doctor_check_docker || status=1
@@ -314,6 +322,7 @@ install_doctor_check_paths() {
 	local -a required_paths=(
 		"$SCRIPT_DIR/install.sh"
 		"$SCRIPT_DIR/modules"
+		"$SCRIPT_DIR/modules/04_dnscrypt.sh"
 		"$SCRIPT_DIR/template"
 		"$SCRIPT_DIR/template/install.summary.template"
 		"$SCRIPT_DIR/template/sshd_config.template"
