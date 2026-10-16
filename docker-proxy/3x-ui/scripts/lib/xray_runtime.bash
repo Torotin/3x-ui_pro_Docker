@@ -312,7 +312,8 @@ wait_managed_xray_ports() {
 	return "$failed"
 }
 
-# Перезапускает Xray до panel geofile update, чтобы panelOutbound/usque был в running config.
+# Перезапускает Xray после apply_managed_xray, до panelOutbound/geofile,
+# чтобы tag usque (и прочие managed outbounds) был в running config.
 restart_xray_if_needed() {
 	if [[ "$MODE" != "apply" ]]; then
 		return 0

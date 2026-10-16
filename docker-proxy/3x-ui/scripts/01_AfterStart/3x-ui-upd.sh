@@ -66,6 +66,10 @@ main() {
 	resolve_panel_base || die "Could not resolve and login to 3x-ui panel."
 	detect_country_flag || true
 	desired=$(build_desired_state)
+	# Managed outbounds (usque/tor/…) must exist before panelOutbound injection,
+	# otherwise 3x-ui logs: panel egress: target tag [ usque ] not found.
+	apply_managed_xray
+	restart_xray_if_needed
 	ensure_panel_settings
 	update_admin_credentials_if_needed
 	resolve_panel_base || die "Could not login after panel settings update."
@@ -92,8 +96,6 @@ main() {
 		ensure_hysteria2_client "$hysteria2_id" "$desired"
 	fi
 	repair_shared_client_after_inbound_sync "$desired"
-	apply_managed_xray
-	restart_xray_if_needed
 	update_builtin_geofiles_if_enabled
 	restart_panel_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"
