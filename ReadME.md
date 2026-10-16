@@ -87,7 +87,7 @@ script/install.sh uninstall [--plan|--apply --yes]
 Доступные шаги:
 
 ```bash
-apt env docker user firewall ssh network compose final uninstall
+dnscrypt apt env docker user firewall ssh network compose final uninstall
 ```
 
 Назначение основных команд:
@@ -166,6 +166,7 @@ Telemt и Telemt panel работают в одном контейнере `tele
 
 Destructive и host-mutating действия требуют явного opt-in:
 
+- DNSCrypt host DNS: `run dnscrypt --apply --yes` (рекомендуется первым шагом, до `apt`; логика в `script/modules/04_dnscrypt.sh`). По умолчанию ставится latest с GitHub; pin: `--version X.Y.Z` или `DNSCRYPT_VERSION`. Также `--force` / `--reconfigure`.
 - APT mirror/update: `run apt --apply --yes`.
 - Docker wipe/reinstall: `run docker --destroy-docker-data`.
 - Firewall apply: `run firewall --apply --yes`.
@@ -200,6 +201,7 @@ sudo script/install.sh uninstall --apply --yes \
   --purge-firewall \
   --purge-ssh \
   --purge-network \
+  --purge-dnscrypt \
   --remove-project-root
 ```
 
@@ -210,6 +212,7 @@ sudo script/install.sh uninstall --apply --yes \
 - `--purge-firewall` — удаление известных UFW правил проекта без глобального `ufw reset`.
 - `--purge-ssh` — восстановление backup `sshd_config`, проверка и reload/restart SSH.
 - `--purge-network` — восстановление или удаление installer sysctl файла.
+- `--purge-dnscrypt` — удаление host DNSCrypt и возврат публичного DNS в `resolv.conf` (по умолчанию DNSCrypt не трогается).
 - `--remove-project-root` — удаление `INSTALL_ROOT`.
 
 ## Файлы состояния

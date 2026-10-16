@@ -27,6 +27,8 @@ export INSTALL_NONINTERACTIVE INSTALL_MOCK SCRIPT_DIR PROJECT_ROOT
 . "$SCRIPT_DIR/modules/02_env.sh"
 # shellcheck source=script/modules/03_docker.sh
 . "$SCRIPT_DIR/modules/03_docker.sh"
+# shellcheck source=script/modules/04_dnscrypt.sh
+. "$SCRIPT_DIR/modules/04_dnscrypt.sh"
 # shellcheck source=script/modules/04_apt.sh
 . "$SCRIPT_DIR/modules/04_apt.sh"
 # shellcheck source=script/modules/04_network.sh
@@ -51,10 +53,10 @@ Usage:
   install.sh self-update [--branch <branch>] [--check] [--yes] [--force]
   install.sh uninstall [--plan|--apply --yes] [--purge-docker-data]
     [--purge-docker-engine] [--purge-firewall] [--purge-ssh]
-    [--purge-network] [--remove-project-root]
+    [--purge-network] [--purge-dnscrypt] [--remove-project-root]
 
 Steps:
-  apt env docker user firewall ssh network compose final uninstall
+  dnscrypt apt env docker user firewall ssh network compose final uninstall
 USAGE
 }
 
@@ -62,6 +64,7 @@ dispatch_step() {
 	local step=$1
 	shift || true
 	case "$step" in
+	dnscrypt) install_dnscrypt_command "$@" ;;
 	apt) install_apt_command "$@" ;;
 	env) install_env_command "$@" ;;
 	docker) install_docker_command "$@" ;;
@@ -82,13 +85,23 @@ run_steps() {
 	(($# > 0)) || die "run requires at least one step"
 	local -a steps=()
 	local -a opts=()
-	local arg
+	local arg expect_opt_value=0
 	for arg in "$@"; do
+		if ((expect_opt_value)); then
+			opts+=("$arg")
+			expect_opt_value=0
+			continue
+		fi
 		case "$arg" in
+		--version)
+			opts+=("$arg")
+			expect_opt_value=1
+			;;
 		--*) opts+=("$arg") ;;
 		*) steps+=("$arg") ;;
 		esac
 	done
+	((expect_opt_value == 0)) || die "run: option requires a value"
 	((${#steps[@]} > 0)) || die "run requires at least one step"
 	for arg in "${steps[@]}"; do
 		dispatch_step "$arg" "${opts[@]}"
