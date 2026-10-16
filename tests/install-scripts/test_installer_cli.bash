@@ -3,6 +3,12 @@ set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 INSTALLER="$ROOT_DIR/script/install.sh"
+INSTALLER_VERSION=$(sed -n '1{s/[[:space:]]//g;p;q;}' "$ROOT_DIR/script/VERSION")
+# Always-newer mock remote for self-update "update available" cases.
+INSTALLER_NEWER_VERSION=$(
+	IFS=. read -r major minor patch <<<"$INSTALLER_VERSION"
+	printf '%s.%s.%s\n' "$major" "$minor" "$((patch + 1))"
+)
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
@@ -997,30 +1003,38 @@ test_uninstall_can_remove_docker_engine_with_explicit_flag() {
 
 test_self_update_check_persists_branch_without_applying() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.7.0
-	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.7.0 - 2026-10-17\n- Новая проверка\n\n## 0.6.0 - 2026-10-16\n- Текущая версия'
+	export INSTALL_MOCK_REMOTE_VERSION=$INSTALLER_NEWER_VERSION
+	INSTALL_MOCK_REMOTE_CHANGELOG=$(printf '%s\n' \
+		'# Журнал изменений установщика' \
+		'' \
+		"## ${INSTALLER_NEWER_VERSION} - 2026-10-17" \
+		'- Новая проверка' \
+		'' \
+		"## ${INSTALLER_VERSION} - 2026-10-16" \
+		'- Текущая версия')
+	export INSTALL_MOCK_REMOTE_CHANGELOG
 	run_installer self-update --branch feature/install --check
 	assert_contains "update.branch=feature/install" "$INSTALL_STATE_DIR/config" "branch must be persisted"
 	assert_contains "self-update.check" "$INSTALL_COMMAND_LOG" "self-update check must be routed through runner"
-	assert_contains "self-update: update available: 0.6.0 -> 0.7.0" "$tmpdir/stdout" "check must report newer remote version"
-	assert_contains "## 0.7.0" "$tmpdir/stdout" "check must print newer changelog section"
-	assert_not_contains "## 0.6.0" "$tmpdir/stdout" "check must not print current version changelog section"
+	assert_contains "self-update: update available: ${INSTALLER_VERSION} -> ${INSTALLER_NEWER_VERSION}" "$tmpdir/stdout" "check must report newer remote version"
+	assert_contains "## ${INSTALLER_NEWER_VERSION}" "$tmpdir/stdout" "check must print newer changelog section"
+	assert_not_contains "## ${INSTALLER_VERSION}" "$tmpdir/stdout" "check must not print current version changelog section"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "check must not apply files"
 }
 
 test_self_update_apply_tolerates_diff_changes() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.7.0
+	export INSTALL_MOCK_REMOTE_VERSION=$INSTALLER_NEWER_VERSION
 	run_installer self-update --branch feature/install --yes
 	assert_contains "self-update.diff" "$INSTALL_COMMAND_LOG" "self-update must record diff"
 	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "self-update must continue to apply when diff reports changes"
-	assert_contains "self-update: applied feature/install (0.6.0 -> 0.7.0)" "$tmpdir/stdout" "self-update must print applied version range"
+	assert_contains "self-update: applied feature/install (${INSTALLER_VERSION} -> ${INSTALLER_NEWER_VERSION})" "$tmpdir/stdout" "self-update must print applied version range"
 }
 
 test_self_update_equal_version_does_not_apply_without_force() {
 	make_fixture
 	run_installer self-update --branch feature/install --yes
-	assert_contains "self-update: up to date (0.6.0)" "$tmpdir/stdout" "equal version must be treated as up to date"
+	assert_contains "self-update: up to date (${INSTALLER_VERSION})" "$tmpdir/stdout" "equal version must be treated as up to date"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "equal version must not apply without --force"
 }
 
@@ -1028,25 +1042,33 @@ test_self_update_force_applies_equal_version() {
 	make_fixture
 	run_installer self-update --branch feature/install --yes --force
 	assert_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "force must apply even when versions are equal"
-	assert_contains "self-update: applied feature/install (0.6.0 -> 0.6.0)" "$tmpdir/stdout" "force apply must print version range"
+	assert_contains "self-update: applied feature/install (${INSTALLER_VERSION} -> ${INSTALLER_VERSION})" "$tmpdir/stdout" "force apply must print version range"
 }
 
 test_wizard_offers_update_and_uses_same_dispatcher() {
 	make_fixture
 	printf 'env\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Update check: installer is up to date (0.6.0)" "$tmpdir/stdout" "wizard must report up-to-date installer without update prompt"
+	assert_contains "Update check: installer is up to date (${INSTALLER_VERSION})" "$tmpdir/stdout" "wizard must report up-to-date installer without update prompt"
 	assert_not_contains "Run self-update now?" "$tmpdir/stdout" "wizard must not prompt when no newer version exists"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard env selection must use command dispatcher"
 }
 
 test_wizard_offers_update_only_when_newer_version_exists() {
 	make_fixture
-	export INSTALL_MOCK_REMOTE_VERSION=0.7.0
-	export INSTALL_MOCK_REMOTE_CHANGELOG=$'# Журнал изменений установщика\n\n## 0.7.0 - 2026-10-17\n- Новая версия wizard\n\n## 0.6.0 - 2026-10-16\n- Текущая версия'
+	export INSTALL_MOCK_REMOTE_VERSION=$INSTALLER_NEWER_VERSION
+	INSTALL_MOCK_REMOTE_CHANGELOG=$(printf '%s\n' \
+		'# Журнал изменений установщика' \
+		'' \
+		"## ${INSTALLER_NEWER_VERSION} - 2026-10-17" \
+		'- Новая версия wizard' \
+		'' \
+		"## ${INSTALLER_VERSION} - 2026-10-16" \
+		'- Текущая версия')
+	export INSTALL_MOCK_REMOTE_CHANGELOG
 	printf 'n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Update available: 0.6.0 -> 0.7.0" "$tmpdir/stdout" "wizard must show newer installer version"
-	assert_contains "## 0.7.0" "$tmpdir/stdout" "wizard must show newer changelog section"
-	assert_not_contains "## 0.6.0" "$tmpdir/stdout" "wizard must not show current changelog section"
+	assert_contains "Update available: ${INSTALLER_VERSION} -> ${INSTALLER_NEWER_VERSION}" "$tmpdir/stdout" "wizard must show newer installer version"
+	assert_contains "## ${INSTALLER_NEWER_VERSION}" "$tmpdir/stdout" "wizard must show newer changelog section"
+	assert_not_contains "## ${INSTALLER_VERSION}" "$tmpdir/stdout" "wizard must not show current changelog section"
 	assert_contains "Run self-update now?" "$tmpdir/stdout" "wizard must prompt only for newer version"
 	assert_not_contains "self-update.apply" "$INSTALL_COMMAND_LOG" "declined wizard update must not apply"
 }
@@ -1452,6 +1474,38 @@ test_final_summary_prints_details() {
 	assert_not_contains "Password         : $PASS_SSH" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak SSH password"
 }
 
+test_final_summary_urls_use_trailing_slash_except_doh() {
+	make_fixture
+	# shellcheck source=script/modules/09_finalize.sh
+	. "$ROOT_DIR/script/modules/09_finalize.sh"
+	SUMMARY_DOMAIN=example.test
+	local panel doh traefik mihomo
+	panel=$(install_summary_url "nC4sRgYpwUgiad")
+	doh=$(install_summary_url "3pDA9wdT58rg0aMC" "" noslash)
+	traefik=$(install_summary_url "UoAJFIMva4GETi" "dashboard/#/")
+	mihomo=$(install_summary_url "mihomoPath" "ui/")
+	[[ "$panel" == "https://example.test/nC4sRgYpwUgiad/" ]] || fail "panel summary URL must end with trailing slash; got: $panel"
+	[[ "$doh" == "https://example.test/3pDA9wdT58rg0aMC" ]] || fail "DoH summary URL must stay exact Path without slash; got: $doh"
+	[[ "$traefik" == "https://example.test/UoAJFIMva4GETi/dashboard/#/" ]] || fail "Traefik summary URL must keep dashboard fragment; got: $traefik"
+	[[ "$mihomo" == "https://example.test/mihomoPath/ui/" ]] || fail "Mihomo UI summary URL must keep ui/ suffix; got: $mihomo"
+
+	export ENABLE_MIHOMO=true
+	run_installer run env final
+	uri_from_env() {
+		local key=$1
+		grep -E "^${key}=" "$INSTALL_STATE_DIR/install.env" | head -n1 | cut -d= -f2- | tr -d '"'
+	}
+	local panel_path dozzle_path doh_path
+	panel_path=$(uri_from_env URI_PANEL_PATH)
+	dozzle_path=$(uri_from_env URI_DOZZLE)
+	doh_path=$(uri_from_env URI_ADGUARD_DOH)
+	[[ -n "$panel_path" && -n "$dozzle_path" && -n "$doh_path" ]] || fail "install.env must define panel/dozzle/doh URI paths"
+	assert_contains "3X-UI Panel      : https://example.test/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted panel URL must include trailing slash"
+	assert_contains "Dozzle Logs      : https://example.test/${dozzle_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted Dozzle URL must include trailing slash"
+	assert_contains "AdGuard DoH      : https://example.test/${doh_path}" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must omit trailing slash"
+	assert_not_contains "AdGuard DoH      : https://example.test/${doh_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must not gain a trailing slash"
+}
+
 test_doctor_rejects_unsupported_os() {
 	make_fixture
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
@@ -1557,6 +1611,7 @@ test_user_configures_ssh_sudo_groups_and_aliases
 test_user_sudoers_content_uses_portable_defaults
 test_compose_uses_installer_state_lock
 test_final_summary_prints_details
+test_final_summary_urls_use_trailing_slash_except_doh
 test_doctor_rejects_unsupported_os
 
 printf 'test_installer_cli.bash: OK\n'

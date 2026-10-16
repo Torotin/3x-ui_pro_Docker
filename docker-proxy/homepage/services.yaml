@@ -1,24 +1,10 @@
-- Admin:
-    - Homepage Dashboard:
-        icon: mdi-view-dashboard
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_HOMEPAGE}}/"
-        description: Dashboard and service inventory
-        server: dockerproxy
-        container: homepage
-
+- Control Plane:
     - 3X-UI Web Panel:
         icon: https://github.com/MHSanaei/3x-ui/raw/main/media/3x-ui-dark.png
         href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_3X-UI_PATH}}/"
         description: Xray and subscription control panel
         server: dockerproxy
         container: 3x-ui
-
-    - Telemt Panel:
-        icon: mdi-telegram
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TELEMT_PANEL}}/"
-        description: MTProxy and Telemt control panel
-        server: dockerproxy
-        container: telemt
 
     - Traefik Dashboard:
         icon: sh-traefik.webp
@@ -31,13 +17,6 @@
             url: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}:4443/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}"
             username: "{{HOMEPAGE_VAR_USER_WEB}}"
             password: "{{HOMEPAGE_VAR_PASS_WEB}}"
-
-    - Dozzle:
-        icon: sh-dozzle.webp
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_DOZZLE}}/"
-        description: Container log viewer
-        server: dockerproxy
-        container: dozzle
 
     - AdGuard Home:
         icon: sh-adguard-home.webp
@@ -52,18 +31,26 @@
             username: "{{HOMEPAGE_VAR_USER_WEB}}"
             password: "{{HOMEPAGE_VAR_PASS_WEB}}"
 
-- Public:
-    - Main Page:
+    - Dozzle:
+        icon: sh-dozzle.webp
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_DOZZLE}}/"
+        description: Container log viewer
+        server: dockerproxy
+        container: dozzle
+
+- Edge & Apps:
+    - Homepage Dashboard:
+        icon: mdi-view-dashboard
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_HOMEPAGE}}/"
+        description: This dashboard
+        server: dockerproxy
+        container: homepage
+
+    - Public Root:
         icon: mdi-home
         href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}"
-        description: Public root served
+        description: Public root (Caddy fallback, or Lampac when enabled)
         siteMonitor: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}:4443"
-
-    - Lampac:
-        icon: mdi-television-classic
-        description: Media aggregator frontend
-        server: dockerproxy
-        container: lampac
 
     - Caddy Fallback:
         icon: sh-caddy.webp
@@ -78,13 +65,20 @@
         container: sub-json-processor
         siteMonitor: http://sub-json-processor:8080/healthz
 
-- Network & Security:
+- Security:
     - CrowdSec:
         icon: mdi-shield-half-full
         description: LAPI, AppSec, and security decisions
         server: dockerproxy
         container: crowdsec
 
+    - CrowdSec Firewall Bouncer:
+        icon: mdi-firewall
+        description: Host firewall decisions from CrowdSec
+        server: dockerproxy
+        container: crowdsec_firewall_bouncer
+
+- Proxies:
     - Usque:
         icon: mdi-transit-connection-variant
         description: Cloudflare WARP SOCKS backend
@@ -97,20 +91,29 @@
         server: dockerproxy
         container: tor-proxy
 
+- Optional Features:
+    - Telemt Panel:
+        icon: mdi-telegram
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TELEMT_PANEL}}/"
+        description: "Optional (ENABLE_TELEMT) · MTProxy / Telemt control panel"
+        server: dockerproxy
+        container: telemt
+
+    - Lampac:
+        icon: mdi-television-classic
+        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/"
+        description: "Optional (ENABLE_LAMPAC) · Media aggregator frontend"
+        server: dockerproxy
+        container: lampac
+
     - Mihomo:
         icon: mdi-router-network
         href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_MIHOMO}}/ui/"
-        description: "Mihomo secret: {{HOMEPAGE_VAR_MIHOMO_SECRET}}"
+        description: "Optional (ENABLE_MIHOMO) · secret: {{HOMEPAGE_VAR_MIHOMO_SECRET}}"
         server: dockerproxy
         container: mihomo
 
 - Maintenance:
-    - Dockcheck:
-        icon: mdi-package-variant
-        description: Docker image update checks
-        server: dockerproxy
-        container: dockcheck
-
     - Logrotate:
         icon: mdi-file-rotate-right
         description: Container log rotation
