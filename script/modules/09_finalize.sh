@@ -50,10 +50,13 @@ install_prepare_summary_env() {
 	SUMMARY_PORT_LOCAL_DOZZLE=${PORT_LOCAL_DOZZLE:-unspecified}
 	SUMMARY_PORT_LOCAL_CADDYWEB=${PORT_LOCAL_CADDYWEB:-unspecified}
 	SUMMARY_PORT_LOCAL_CROWDSEC_API=${PORT_LOCAL_CROWDSEC_API:-unspecified}
+	# UI PathPrefix services need a trailing slash so browsers land on the app
+	# without a 301 (BasicAuth often drops across that redirect).
+	# AdGuard DoH is an exact Path() endpoint — no trailing slash.
 	SUMMARY_URL_HOMEPAGE=$(install_summary_url "${URI_HOMEPAGE:-}")
 	SUMMARY_URL_3X_UI=$(install_summary_url "${URI_PANEL_PATH:-}")
 	SUMMARY_URL_ADGUARD=$(install_summary_url "${URI_ADGUARD_PANEL:-}")
-	SUMMARY_URL_ADGUARD_DOH=$(install_summary_url "${URI_ADGUARD_DOH:-}")
+	SUMMARY_URL_ADGUARD_DOH=$(install_summary_url "${URI_ADGUARD_DOH:-}" "" noslash)
 	SUMMARY_URL_DOZZLE=$(install_summary_url "${URI_DOZZLE:-}")
 	SUMMARY_URL_TRAEFIK=$(install_summary_url "${URI_TRAEFIK_DASHBOARD:-}" "dashboard/#/")
 	SUMMARY_URL_TELEMT_PANEL=$(install_summary_url "${URI_TELEMT_PANEL:-}")
@@ -79,18 +82,32 @@ install_prepare_summary_env() {
 }
 
 install_summary_url() {
-	local path=${1:-} suffix=${2:-}
+	local path=${1:-} suffix=${2:-} mode=${3:-}
+	local url
 	path=${path#/}
+	path=${path%/}
 	suffix=${suffix#/}
 	if [[ -n "$path" && -n "$suffix" ]]; then
-		printf 'https://%s/%s/%s\n' "${SUMMARY_DOMAIN:-example.invalid}" "$path" "$suffix"
+		url=$(printf 'https://%s/%s/%s' "${SUMMARY_DOMAIN:-example.invalid}" "$path" "$suffix")
 	elif [[ -n "$suffix" ]]; then
-		printf 'https://%s/%s\n' "${SUMMARY_DOMAIN:-example.invalid}" "$suffix"
+		url=$(printf 'https://%s/%s' "${SUMMARY_DOMAIN:-example.invalid}" "$suffix")
 	elif [[ -n "$path" ]]; then
-		printf 'https://%s/%s\n' "${SUMMARY_DOMAIN:-example.invalid}" "$path"
+		url=$(printf 'https://%s/%s' "${SUMMARY_DOMAIN:-example.invalid}" "$path")
 	else
-		printf 'https://%s/\n' "${SUMMARY_DOMAIN:-example.invalid}"
+		url=$(printf 'https://%s' "${SUMMARY_DOMAIN:-example.invalid}")
 	fi
+	# Default: ensure a trailing slash before any #fragment so copy-paste opens the UI.
+	# Pass mode=noslash for exact-path machine endpoints (e.g. AdGuard DoH).
+	if [[ "$mode" != "noslash" ]]; then
+		if [[ "$url" == *#* ]]; then
+			local before=${url%%#*} after=${url#*#}
+			[[ "$before" == */ ]] || before="${before}/"
+			url="${before}#${after}"
+		else
+			[[ "$url" == */ ]] || url="${url}/"
+		fi
+	fi
+	printf '%s\n' "$url"
 }
 
 install_version_file() {

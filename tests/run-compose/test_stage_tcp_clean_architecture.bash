@@ -97,7 +97,15 @@ root_api_priority = int(traefik_labels.get("traefik.http.routers.traefik-dashboa
 assert_true("PathPrefix(`/api/docker`)" in homepage_static_rule, "Homepage Docker stats API must route to Homepage, not Traefik dashboard /api")
 assert_true(homepage_static_service == "homepage-svc", "Homepage static/API router must use homepage-svc")
 assert_true(homepage_static_priority > root_api_priority, "Homepage root /api routes must outrank Traefik dashboard root /api")
-traefik_homepage_card = find_homepage_service("Admin", "Traefik Dashboard")
+assert_true(
+    homepage_labels.get("traefik.http.services.homepage-svc.loadbalancer.healthcheck.hostname") == "${WEBDOMAIN}",
+    "Homepage Traefik LB healthcheck must send Host=${WEBDOMAIN} (container-IP Host fails HOMEPAGE_ALLOWED_HOSTS → 503)",
+)
+assert_true(
+    homepage_labels.get("traefik.http.services.homepage-svc.loadbalancer.healthcheck.path") == "/api/healthcheck",
+    "Homepage Traefik LB healthcheck must probe /api/healthcheck",
+)
+traefik_homepage_card = find_homepage_service("Control Plane", "Traefik Dashboard")
 traefik_homepage_widget = traefik_homepage_card.get("widget") or {}
 assert_true(
     traefik_homepage_widget.get("url") == "https://{{HOMEPAGE_VAR_WEBDOMAIN}}:4443/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}",
@@ -107,12 +115,16 @@ assert_true(
     traefik_homepage_widget.get("username") == "{{HOMEPAGE_VAR_USER_WEB}}" and traefik_homepage_widget.get("password") == "{{HOMEPAGE_VAR_PASS_WEB}}",
     "Homepage Traefik widget must authenticate through the existing web credentials",
 )
-telemt_homepage_card = find_homepage_service("Admin", "Telemt Panel")
+telemt_homepage_card = find_homepage_service("Optional Features", "Telemt Panel")
 assert_true(
     telemt_homepage_card.get("container") == "telemt",
     "Homepage Telemt card must follow the bundled panel container",
 )
-mihomo_homepage_card = find_homepage_service("Network & Security", "Mihomo")
+assert_true(
+    "ENABLE_TELEMT" in telemt_homepage_card.get("description", ""),
+    "Homepage Telemt card must mark the service as optional via ENABLE_TELEMT",
+)
+mihomo_homepage_card = find_homepage_service("Optional Features", "Mihomo")
 assert_true(
     mihomo_homepage_card.get("href") == "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_MIHOMO}}/ui/",
     "Homepage Mihomo card must point to the routed Zashboard UI",
@@ -125,6 +137,20 @@ assert_true(
     mihomo_homepage_card.get("container") == "mihomo",
     "Homepage Mihomo card must follow the bundled Mihomo container",
 )
+assert_true(
+    "ENABLE_MIHOMO" in mihomo_homepage_card.get("description", ""),
+    "Homepage Mihomo card must mark the service as optional via ENABLE_MIHOMO",
+)
+homepage_services_text = (root / "docker-proxy/homepage/services.yaml").read_text(encoding="utf-8").lower()
+assert_true("dockcheck" not in homepage_services_text, "Homepage must not list retired Dockcheck service")
+bouncer_card = find_homepage_service("Security", "CrowdSec Firewall Bouncer")
+assert_true(
+    bouncer_card.get("container") == "crowdsec_firewall_bouncer",
+    "Homepage must list the CrowdSec firewall bouncer container",
+)
+homepage_settings = load_yaml("docker-proxy/homepage/settings.yaml")
+assert_true(homepage_settings.get("showStats") is False, "Homepage must keep docker stats collapsed by default to avoid chaotic card heights")
+assert_true(isinstance(homepage_settings.get("layout"), list), "Homepage layout must be an ordered list to lock group order")
 homepage_env = homepage_compose["services"]["homepage"].get("environment") or {}
 assert_true(
     homepage_env.get("HOMEPAGE_VAR_URI_MIHOMO") == "${URI_MIHOMO}",

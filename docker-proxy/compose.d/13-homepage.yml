@@ -10,7 +10,10 @@ services:
       # PGID: 1000
       TZ: ${TZ}
       LOG_TARGETS: both
-      HOMEPAGE_ALLOWED_HOSTS: ${WEBDOMAIN}
+      # Allow public host plus local probes. Traefik LB healthcheck Host is set
+      # explicitly below; without that, Traefik probes as <container-ip>:3000 and
+      # Homepage returns 400 → Traefik marks the backend unhealthy (HTTP 503).
+      HOMEPAGE_ALLOWED_HOSTS: ${WEBDOMAIN},localhost:3000,127.0.0.1:3000
       HOMEPAGE_VAR_WEBDOMAIN: ${WEBDOMAIN}
       HOMEPAGE_VAR_URI_3X-UI_PATH: ${URI_PANEL_PATH}
       HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD: ${URI_TRAEFIK_DASHBOARD}
@@ -53,7 +56,10 @@ services:
 
       # ---------- Service ----------
       - traefik.http.services.homepage-svc.loadbalancer.server.port=3000
-      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.path=/
+      # Traefik probes by container IP; force Host to the public domain so
+      # Homepage host validation accepts the healthcheck (avoids 503).
+      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.hostname=${WEBDOMAIN}
+      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.path=/api/healthcheck
       - traefik.http.services.homepage-svc.loadbalancer.healthcheck.interval=30s
       - traefik.http.services.homepage-svc.loadbalancer.healthcheck.timeout=5s
 
