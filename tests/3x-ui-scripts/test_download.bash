@@ -62,9 +62,11 @@ test_download_default_transports_include_stack_proxies() {
 	local got
 	local -a got_arr
 	unset DOWNLOAD_TRANSPORTS ENABLE_MIHOMO XRAY_MANAGED_TOR USQUE_HOST USQUE_PORT MIHOMO_PROXY_HOST MIHOMO_PROXY_PORT TOR_PROXY_HOST TOR_PROXY_PORT
+	ENABLE_MIHOMO=true
 	mapfile -t got_arr < <(download_default_transports)
 	got=$(download_test_join "${got_arr[@]}")
-	assert_eq "direct,socks5h://usque:1080,http://mihomo:7890,socks5h://tor-proxy:1080" "$got" "default transports must try direct then usque, mihomo and tor"
+	assert_eq "direct,socks5h://usque:1080,http://mihomo:7890,socks5h://tor-proxy:1080" "$got" "enabled mihomo must try direct then usque, mihomo and tor"
+	unset ENABLE_MIHOMO
 }
 
 test_download_default_transports_honor_disabled_flags() {

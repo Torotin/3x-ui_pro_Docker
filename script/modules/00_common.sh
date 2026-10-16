@@ -165,15 +165,15 @@ install_normalize_global_bool_env() {
 }
 
 install_telemt_enabled() {
-	! install_bool_is_false "${ENABLE_TELEMT:-true}"
+	! install_bool_is_false "${ENABLE_TELEMT:-false}"
 }
 
 install_lampac_enabled() {
-	! install_bool_is_false "${ENABLE_LAMPAC:-true}"
+	! install_bool_is_false "${ENABLE_LAMPAC:-false}"
 }
 
 install_mihomo_enabled() {
-	! install_bool_is_false "${ENABLE_MIHOMO:-true}"
+	! install_bool_is_false "${ENABLE_MIHOMO:-false}"
 }
 
 require_opt_in() {

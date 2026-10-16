@@ -131,8 +131,8 @@ run_runner_default_env() {
 test_restart_uses_no_deps_by_default() {
 	make_fixture
 	run_runner restart traefik
-	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml -f $tmpdir/compose.d/16-mihomo.yml rm --stop --force traefik" "$tmpdir/docker.log" "restart must remove target service"
-	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml -f $tmpdir/compose.d/14-lampac.yml -f $tmpdir/compose.d/15-telemt.yml -f $tmpdir/compose.d/16-mihomo.yml up -d --no-deps --force-recreate traefik" "$tmpdir/docker.log" "restart must recreate target without dependencies"
+	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml rm --stop --force traefik" "$tmpdir/docker.log" "restart must remove target service"
+	assert_contains "compose --project-name docker-proxy --env-file $tmpdir/compose.d/.env -f $tmpdir/compose.d/00-base.yml -f $tmpdir/compose.d/06-traefik.yml -f $tmpdir/compose.d/07-dozzle.yml up -d --no-deps --force-recreate traefik" "$tmpdir/docker.log" "restart must recreate target without dependencies"
 	assert_not_contains "logs -f traefik" "$tmpdir/docker.log" "restart must not follow logs by default"
 }
 
@@ -245,51 +245,51 @@ test_list_files_excludes_disabled_files() {
 test_telemt_compose_file_follows_enable_switch() {
 	make_fixture
 	output=$(run_runner list-files)
-	if ! grep -Fq "15-telemt.yml" <<<"$output"; then
-		fail "Telemt compose file must be active by default"
-	fi
-	printf 'ENABLE_TELEMT=false\n' >"$tmpdir/compose.d/.env"
-	output=$(run_runner list-files)
 	if grep -Fq "15-telemt.yml" <<<"$output"; then
-		fail "Telemt compose file must be excluded when ENABLE_TELEMT=false"
+		fail "Telemt compose file must be disabled by default"
 	fi
-	output=$(ENABLE_TELEMT=true run_runner list-files)
+	printf 'ENABLE_TELEMT=true\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
 	if ! grep -Fq "15-telemt.yml" <<<"$output"; then
-		fail "environment ENABLE_TELEMT=true must override disabled env file"
+		fail "Telemt compose file must be included when ENABLE_TELEMT=true"
+	fi
+	output=$(ENABLE_TELEMT=false run_runner list-files)
+	if grep -Fq "15-telemt.yml" <<<"$output"; then
+		fail "environment ENABLE_TELEMT=false must override enabled env file"
 	fi
 }
 
 test_lampac_compose_file_follows_enable_switch() {
 	make_fixture
 	output=$(run_runner list-files)
-	if ! grep -Fq "14-lampac.yml" <<<"$output"; then
-		fail "Lampac compose file must be active by default"
-	fi
-	printf 'ENABLE_LAMPAC=false\n' >"$tmpdir/compose.d/.env"
-	output=$(run_runner list-files)
 	if grep -Fq "14-lampac.yml" <<<"$output"; then
-		fail "Lampac compose file must be excluded when ENABLE_LAMPAC=false"
+		fail "Lampac compose file must be disabled by default"
 	fi
-	output=$(ENABLE_LAMPAC=true run_runner list-files)
+	printf 'ENABLE_LAMPAC=true\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
 	if ! grep -Fq "14-lampac.yml" <<<"$output"; then
-		fail "environment ENABLE_LAMPAC=true must override disabled env file"
+		fail "Lampac compose file must be included when ENABLE_LAMPAC=true"
+	fi
+	output=$(ENABLE_LAMPAC=false run_runner list-files)
+	if grep -Fq "14-lampac.yml" <<<"$output"; then
+		fail "environment ENABLE_LAMPAC=false must override enabled env file"
 	fi
 }
 
 test_mihomo_compose_file_follows_enable_switch() {
 	make_fixture
 	output=$(run_runner list-files)
-	if ! grep -Fq "16-mihomo.yml" <<<"$output"; then
-		fail "Mihomo compose file must be active by default"
-	fi
-	printf 'ENABLE_MIHOMO=false\n' >"$tmpdir/compose.d/.env"
-	output=$(run_runner list-files)
 	if grep -Fq "16-mihomo.yml" <<<"$output"; then
-		fail "Mihomo compose file must be excluded when ENABLE_MIHOMO=false"
+		fail "Mihomo compose file must be disabled by default"
 	fi
-	output=$(ENABLE_MIHOMO=true run_runner list-files)
+	printf 'ENABLE_MIHOMO=true\n' >"$tmpdir/compose.d/.env"
+	output=$(run_runner list-files)
 	if ! grep -Fq "16-mihomo.yml" <<<"$output"; then
-		fail "environment ENABLE_MIHOMO=true must override disabled env file"
+		fail "Mihomo compose file must be included when ENABLE_MIHOMO=true"
+	fi
+	output=$(ENABLE_MIHOMO=false run_runner list-files)
+	if grep -Fq "16-mihomo.yml" <<<"$output"; then
+		fail "environment ENABLE_MIHOMO=false must override enabled env file"
 	fi
 }
 

@@ -89,7 +89,7 @@ init_defaults() {
 	: "${XRAY_MANAGED_WARP:=true}"
 	: "${XRAY_MANAGED_WARP_CONSOLE:=false}"
 	: "${XRAY_MANAGED_TOR:=true}"
-	: "${ENABLE_MIHOMO:=true}"
+	: "${ENABLE_MIHOMO:=false}"
 	: "${WARP_REUSE_PANEL_CONFIG:=false}"
 	: "${WARP_ENDPOINT_HOST:=engage.cloudflareclient.com:2408}"
 	: "${USQUE_HOST:=usque}"
