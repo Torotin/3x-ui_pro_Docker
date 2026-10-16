@@ -1,55 +1,56 @@
 ---
 # For configuration options and examples, please see:
 # https://gethomepage.dev/configs/bookmarks
+# abbr is designed for ~2 characters when bookmarksStyle: icons.
 
-- Upstream Projects:
+- Upstream:
     - 3x-ui:
-        - abbr: 3X-UI
+        - abbr: 3X
           href: https://github.com/MHSanaei/3x-ui
           description: Original 3x-ui project
     - mihomo:
-        - abbr: Mihomo
+        - abbr: MH
           href: https://github.com/MetaCubeX/mihomo
           description: Original mihomo project
     - Homepage:
-        - abbr: Homepage
+        - abbr: HP
           href: https://github.com/gethomepage/homepage
           description: Original Homepage project
     - CrowdSec:
-        - abbr: CrowdSec
+        - abbr: CS
           href: https://github.com/crowdsecurity/crowdsec
           description: Original CrowdSec project
-    - AdGuard Home:
-        - abbr: AdGuard Home
+    - AdGuard:
+        - abbr: AG
           href: https://github.com/AdguardTeam/AdGuardHome
           description: Original AdGuard Home project
     - Caddy:
-        - abbr: Caddy
+        - abbr: CD
           href: https://github.com/caddyserver/caddy
           description: Original Caddy project
 
-- Documentation:
+- Docs:
     - 3x-ui Wiki:
-        - abbr: 3X-UI
+        - abbr: 3X
           href: https://github.com/MHSanaei/3x-ui/wiki
           description: 3x-ui documentation
     - mihomo Docs:
-        - abbr: Mihomo
+        - abbr: MH
           href: https://wiki.metacubex.one/en/
           description: mihomo documentation
     - Homepage Docs:
-        - abbr: Homepage
+        - abbr: HP
           href: https://gethomepage.dev/configs/
           description: Homepage documentation
     - CrowdSec Docs:
-        - abbr: CrowdSec
+        - abbr: CS
           href: https://docs.crowdsec.net/
           description: CrowdSec documentation
-    - AdGuard Home Wiki:
-        - abbr: AdGuard Home
+    - AdGuard Wiki:
+        - abbr: AG
           href: https://github.com/AdguardTeam/AdGuardHome/wiki
           description: AdGuard Home documentation
     - Caddy Docs:
-        - abbr: Caddy
+        - abbr: CD
           href: https://caddyserver.com/docs/
           description: Caddy documentation
