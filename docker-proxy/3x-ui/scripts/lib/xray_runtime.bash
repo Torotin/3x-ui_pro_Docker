@@ -166,7 +166,7 @@ tcp_endpoint_available() {
 apply_managed_xray() {
 	local raw obj current updated dns_servers tmp_file warp_endpoints='[]' tor_available=false tor_endpoints='[]' warp_console_ob='' mihomo_endpoints='[]'
 	local geodata_assets geodata_outbound managed_enabled=false
-	if [[ "$XRAY_MANAGED_DNS" == "true" || "$XRAY_MANAGED_TOR" == "true" || "$XRAY_MANAGED_WARP" == "true" || "${ENABLE_MIHOMO:-true}" == "true" ]]; then
+	if [[ "$XRAY_MANAGED_DNS" == "true" || "$XRAY_MANAGED_TOR" == "true" || "$XRAY_MANAGED_WARP" == "true" || "${ENABLE_MIHOMO:-false}" == "true" ]]; then
 		managed_enabled=true
 	fi
 
@@ -203,13 +203,13 @@ apply_managed_xray() {
 				log INFO "$TOR_PROXY_HOST:$TOR_PROXY_PORT did not confirm IsTor=true; excluding tor-proxy from Xray managed state."
 			fi
 		fi
-		if [[ "${ENABLE_MIHOMO:-true}" == "true" ]]; then
+		if [[ "${ENABLE_MIHOMO:-false}" == "true" ]]; then
 			if [[ "$(jq 'length' <<<"$mihomo_endpoints")" == "0" ]]; then
 				log INFO "${MIHOMO_PROXY_HOST:-mihomo}:${MIHOMO_PROXY_PORT:-7890} is not reachable; excluding mihomo from Xray managed state."
 			fi
 		fi
 		dns_servers=$(available_dns_servers)
-		updated=$(json_apply_managed_xray_state "$updated" "$dns_servers" "$XRAY_MANAGED_WARP" "$tor_available" "$XRAY_MANAGED_DNS" "$warp_endpoints" "$WEBDOMAIN" "$tor_endpoints" "$warp_console_ob" "${ENABLE_MIHOMO:-true}" "$mihomo_endpoints")
+		updated=$(json_apply_managed_xray_state "$updated" "$dns_servers" "$XRAY_MANAGED_WARP" "$tor_available" "$XRAY_MANAGED_DNS" "$warp_endpoints" "$WEBDOMAIN" "$tor_endpoints" "$warp_console_ob" "${ENABLE_MIHOMO:-false}" "$mihomo_endpoints")
 	else
 		updated=$(json_remove_managed_xray_artifacts "$current")
 	fi

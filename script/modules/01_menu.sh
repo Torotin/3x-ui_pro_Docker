@@ -77,9 +77,9 @@ wizard_wait_continue() {
 
 wizard_load_feature_toggles() {
 	install_load_state_env
-	: "${ENABLE_LAMPAC:=true}"
-	: "${ENABLE_TELEMT:=true}"
-	: "${ENABLE_MIHOMO:=true}"
+	: "${ENABLE_LAMPAC:=false}"
+	: "${ENABLE_TELEMT:=false}"
+	: "${ENABLE_MIHOMO:=false}"
 	: "${ENABLE_HYSTERIA2:=true}"
 	: "${ENABLE_VLESS_GRPC:=false}"
 	install_normalize_bool_var ENABLE_LAMPAC

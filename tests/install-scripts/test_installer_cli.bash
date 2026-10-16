@@ -258,6 +258,19 @@ test_env_prints_rendered_paths() {
 	assert_contains "- $INSTALL_ROOT/compose.d/.env" "$tmpdir/stdout" "env must print compose env path"
 }
 
+test_env_defaults_optional_services_disabled() {
+	make_fixture
+	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO VISION_FALLBACK_HOST
+	run_installer run env
+	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_STATE_DIR/install.env" "Lampac must default to disabled"
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "Telemt must default to disabled"
+	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_STATE_DIR/install.env" "Mihomo must default to disabled"
+	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_ROOT/compose.d/.env" "compose env must default Lampac to disabled"
+	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "compose env must default Telemt to disabled"
+	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_ROOT/compose.d/.env" "compose env must default Mihomo to disabled"
+	assert_contains "VISION_FALLBACK_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "disabled Telemt must default Xray fallback to Traefik"
+}
+
 test_env_detects_public_ips_when_missing() {
 	make_fixture
 	unset PUBLIC_IPV4 PUBLIC_IPV6
@@ -732,24 +745,24 @@ test_wizard_toggles_optional_feature_flags_and_renders_env() {
 	assert_contains "4. ENABLE_VLESS_GRPC" "$tmpdir/stdout" "toggle screen must show VLESS gRPC flag"
 	assert_contains "5. ENABLE_MIHOMO" "$tmpdir/stdout" "toggle screen must show Mihomo flag"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "applying toggles must render env through dispatcher"
-	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_STATE_DIR/install.env" "Lampac toggle must persist false"
-	assert_contains "ENABLE_TELEMT=false" "$INSTALL_STATE_DIR/install.env" "Telemt toggle must persist false"
+	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "Lampac toggle must persist true"
+	assert_contains "ENABLE_TELEMT=true" "$INSTALL_STATE_DIR/install.env" "Telemt toggle must persist true"
 	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_STATE_DIR/install.env" "Hysteria2 toggle must persist false"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_STATE_DIR/install.env" "VLESS gRPC toggle must persist true"
-	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_STATE_DIR/install.env" "Mihomo toggle must persist false"
-	assert_contains "ENABLE_LAMPAC=false" "$INSTALL_ROOT/compose.d/.env" "Lampac toggle must render compose env"
-	assert_contains "ENABLE_TELEMT=false" "$INSTALL_ROOT/compose.d/.env" "Telemt toggle must render compose env"
+	assert_contains "ENABLE_MIHOMO=true" "$INSTALL_STATE_DIR/install.env" "Mihomo toggle must persist true"
+	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_ROOT/compose.d/.env" "Lampac toggle must render compose env"
+	assert_contains "ENABLE_TELEMT=true" "$INSTALL_ROOT/compose.d/.env" "Telemt toggle must render compose env"
 	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_ROOT/compose.d/.env" "Hysteria2 toggle must render compose env"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_ROOT/compose.d/.env" "VLESS gRPC toggle must render compose env"
-	assert_contains "ENABLE_MIHOMO=false" "$INSTALL_ROOT/compose.d/.env" "Mihomo toggle must render compose env"
-	assert_contains "VISION_FALLBACK_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "disabled Telemt must rerender fallback target"
+	assert_contains "ENABLE_MIHOMO=true" "$INSTALL_ROOT/compose.d/.env" "Mihomo toggle must render compose env"
+	assert_contains "VISION_FALLBACK_HOST=telemt" "$INSTALL_ROOT/compose.d/.env" "enabled Telemt must rerender fallback target"
 }
 
 test_wizard_toggle_exit_does_not_persist_changes() {
 	make_fixture
 	printf 't\n1\nx\nx\n' | "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must render before exit"
-	assert_not_contains "ENABLE_LAMPAC=false" "$INSTALL_STATE_DIR/install.env" "exiting toggles without apply must not persist changes"
+	assert_not_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "exiting toggles without apply must not persist changes"
 	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "exiting toggles without apply must not render env"
 }
 
@@ -1002,6 +1015,7 @@ test_env_normalizes_global_boolean_values
 test_env_rejects_invalid_global_boolean_values
 test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
+test_env_defaults_optional_services_disabled
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels

@@ -36,7 +36,7 @@ download_split_list() {
 download_default_transports() {
 	printf '%s\n' direct
 	printf 'socks5h://%s:%s\n' "${USQUE_HOST:-usque}" "${USQUE_PORT:-1080}"
-	if download_flag_enabled "${ENABLE_MIHOMO:-true}"; then
+	if download_flag_enabled "${ENABLE_MIHOMO:-false}"; then
 		printf 'http://%s:%s\n' "${MIHOMO_PROXY_HOST:-mihomo}" "${MIHOMO_PROXY_PORT:-7890}"
 	fi
 	if download_flag_enabled "${XRAY_MANAGED_TOR:-true}"; then

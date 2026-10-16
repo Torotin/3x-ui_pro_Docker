@@ -162,21 +162,21 @@ compose_bool_is_false() {
 telemt_compose_enabled() {
 	local value
 	value=$(compose_env_value ENABLE_TELEMT || true)
-	[[ -n "$value" ]] || value=true
+	[[ -n "$value" ]] || value=false
 	! compose_bool_is_false "$value"
 }
 
 lampac_compose_enabled() {
 	local value
 	value=$(compose_env_value ENABLE_LAMPAC || true)
-	[[ -n "$value" ]] || value=true
+	[[ -n "$value" ]] || value=false
 	! compose_bool_is_false "$value"
 }
 
 mihomo_compose_enabled() {
 	local value
 	value=$(compose_env_value ENABLE_MIHOMO || true)
-	[[ -n "$value" ]] || value=true
+	[[ -n "$value" ]] || value=false
 	! compose_bool_is_false "$value"
 }
 
