@@ -699,12 +699,13 @@ install_doctor_check_containers() {
 	if ! command -v docker >/dev/null 2>&1; then
 		return 0
 	fi
+	# Base inventory = containers from always-on active compose fragments.
+	# Optional fragments (*.yml.disable or ENABLE_*=false) must not be required.
 	local -a containers=(
 		adguard
 		caddy
 		crowdsec
 		crowdsec_firewall_bouncer
-		dockcheck
 		dozzle
 		homepage
 		logrotate
@@ -713,7 +714,12 @@ install_doctor_check_containers() {
 		traefik-acme-exporter
 		usque
 		3x-ui
+		sub-json-processor
 	)
+	# dockcheck: only when active 01-dockcheck.yml/.yaml exists (not *.yml.disable)
+	if [[ -f "$INSTALL_ROOT/compose.d/01-dockcheck.yml" || -f "$INSTALL_ROOT/compose.d/01-dockcheck.yaml" ]]; then
+		containers+=(dockcheck)
+	fi
 	if install_lampac_enabled && [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
 		containers+=(lampac)
 	fi

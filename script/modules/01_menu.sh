@@ -52,8 +52,24 @@ wizard_execute_step() {
 	printf '\nRunning %s...\n\n' "$label"
 	set +e
 	if [[ "$label" == "compose" ]]; then
+		local ticker_pid="" interval="${WIZARD_COMPOSE_TICKER_SECONDS:-15}"
+		(
+			while sleep "$interval"; do
+				printf '%s\n' 'Compose step still running...'
+			done
+		) &
+		ticker_pid=$!
+		trap 'if [[ -n "${ticker_pid:-}" ]]; then kill "$ticker_pid" 2>/dev/null || true; wait "$ticker_pid" 2>/dev/null || true; ticker_pid=""; fi' INT TERM
+
 		"$@" 2>&1 | tee "$output_file" | wizard_filter_compose_output
 		rc=${PIPESTATUS[0]}
+
+		trap - INT TERM
+		if [[ -n "$ticker_pid" ]]; then
+			kill "$ticker_pid" 2>/dev/null || true
+			wait "$ticker_pid" 2>/dev/null || true
+			ticker_pid=""
+		fi
 	else
 		"$@" 2>&1 | tee "$output_file"
 		rc=${PIPESTATUS[0]}
@@ -169,28 +185,29 @@ wizard_feature_toggles() {
 }
 
 wizard_filter_compose_output() {
-	awk '
-		/^[[:space:]]*[[:xdigit:]]{12,}[[:space:]]+(Pulling fs layer|Downloading|Download complete|Extracting|Pull complete)[[:space:]]/ {
-			if (!pulling) {
-				print "Pulling Docker images..."
-				pulling=1
-			}
+	local awk_bin=(awk)
+	if command -v stdbuf >/dev/null 2>&1; then
+		awk_bin=(stdbuf -oL awk)
+	fi
+	"${awk_bin[@]}" '
+		/^[[:space:]]*[[:xdigit:]]{12,}[[:space:]]+(Preparing|Waiting|Verifying Checksum|Already exists|Pulling fs layer|Downloading|Download complete|Extracting|Pull complete)([[:space:]].*)?$/ { next }
+
+		/^ Image .+ Pulling$/ {
+			ref=$0
+			sub(/^ Image /, "", ref)
+			sub(/ Pulling$/, "", ref)
+			print "Pulling image: " ref
 			next
 		}
-		/^ Image .* Pulling$/ {
-			if (!pulling) {
-				print "Pulling Docker images..."
-				pulling=1
-			}
-			next
-		}
-		/^ Image .* Pulled$/ {
+
+		/^ Image .+ Pulled$/ {
 			if (!pulled) {
 				print "Docker images pulled"
 				pulled=1
 			}
 			next
 		}
+
 		/\[run-compose\] Проверяем конфигурацию: / {
 			print "Validating compose configuration..."
 			next
@@ -202,9 +219,18 @@ wizard_filter_compose_output() {
 			print "Starting compose stack: " line
 			next
 		}
-		/\[run-compose\] Каталог с compose-файлами:/ {next}
-		/\[run-compose\] Используем env-файл:/ {next}
-		{print}
+
+		/\[run-compose\] Каталог с compose-файлами:/ { next }
+		/\[run-compose\] Используем env-файл:/ { next }
+		/\[run-compose\] Project root:/ { next }
+		/\[run-compose\] Lock file:/ { next }
+
+		/^Created symlink / { next }
+		/^NEXT[[:space:]]+LEFT[[:space:]]+LAST[[:space:]]+PASSED[[:space:]]+UNIT[[:space:]]+ACTIVATES/ { next }
+		/docker-proxy-maintenance\.timer/ { next }
+		/^[0-9]+ timers? listed\.?$/ { next }
+
+		{ print }
 	'
 }
 

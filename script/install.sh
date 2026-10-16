@@ -41,6 +41,10 @@ export INSTALL_NONINTERACTIVE INSTALL_MOCK SCRIPT_DIR PROJECT_ROOT
 . "$SCRIPT_DIR/modules/07_ssh.sh"
 # shellcheck source=script/modules/08_doctor.sh
 . "$SCRIPT_DIR/modules/08_doctor.sh"
+declare -F install_doctor_command >/dev/null 2>&1 || {
+	echo "doctor module incomplete: install_doctor_command missing (need script/modules/08_doctor.sh)" >&2
+	exit 1
+}
 # shellcheck source=script/modules/09_finalize.sh
 . "$SCRIPT_DIR/modules/09_finalize.sh"
 # shellcheck source=script/modules/10_uninstall.sh

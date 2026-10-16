@@ -27,6 +27,7 @@ PULL_BEFORE_UP="${PULL_BEFORE_UP:-0}"
 PULL_ON_REBUILD="${PULL_ON_REBUILD:-1}"
 RETRY_COUNT="${RETRY_COUNT:-5}"
 RETRY_DELAY="${RETRY_DELAY:-30}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-600}"
 RESTART_WITH_DEPS="${RESTART_WITH_DEPS:-0}"
 CLEAN_UNHEALTHY="${CLEAN_UNHEALTHY:-0}"
 PROJECT_ROOT=
@@ -52,7 +53,7 @@ log() {
 usage() {
 	cat <<'USAGE'
 Usage:
-  run-compose.sh [up|-d args...]          Safe docker compose up -d by default.
+  run-compose.sh [up|-d args...]          Safe docker compose up -d --wait by default.
   run-compose.sh validate                 Run docker compose config.
   run-compose.sh list-files               Print active compose files in order.
   run-compose.sh restart [--logs] SERVICE [SERVICE...]
@@ -69,6 +70,7 @@ Environment:
   RESTART_WITH_DEPS=1
   PULL_BEFORE_UP=1
   PULL_ON_REBUILD=0
+  WAIT_TIMEOUT=600
   CLEAN_UNHEALTHY=1
   CLEAR_SCREEN=1
 USAGE
@@ -370,10 +372,11 @@ remove_unhealthy_containers() {
 
 run_up_with_retries() {
 	local attempts="$RETRY_COUNT" delay="$RETRY_DELAY" attempt
+	local wait_timeout="$WAIT_TIMEOUT"
 	preflight_container_name_conflicts "$@"
 	for ((attempt = 1; attempt <= attempts; attempt++)); do
-		log "Попытка ${attempt}/${attempts}: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} up -d $*"
-		if run_compose up -d "$@"; then
+		log "Попытка ${attempt}/${attempts}: ${COMPOSE_CMD[*]} ${COMPOSE_BASE_ARGS[*]} up -d --wait --wait-timeout ${wait_timeout} $*"
+		if run_compose up -d --wait --wait-timeout "$wait_timeout" "$@"; then
 			return 0
 		fi
 		if [[ "$CLEAN_UNHEALTHY" == "1" ]]; then
