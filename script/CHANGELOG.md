@@ -1,5 +1,12 @@
 # Журнал изменений установщика
 
+## 0.7.0 - 2026-10-16
+
+- `run-compose.sh up`: по умолчанию `up -d --wait --wait-timeout` (`WAIT_TIMEOUT`, default `600`).
+- Wizard compose: ticker «Compose step still running...» на время долгого `--wait`; фильтрация вывода — per-image pull, скрытие layer/timer/lock шума.
+- Doctor inventory: `dockcheck` только при активном `01-dockcheck.yml/.yaml`; в базу добавлен `sub-json-processor`.
+- Fail-fast в `install.sh`, если модуль doctor не экспортирует `install_doctor_command`.
+
 ## 0.6.0 - 2026-10-16
 
 - Рефакторинг `doctor`: оркестрация в `script/modules/08_doctor.sh` (профили, фаза, severity, matrix, next-actions).
