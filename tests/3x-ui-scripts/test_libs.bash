@@ -1185,6 +1185,8 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'resolve_panel_base || die "Could not resolve and login to 3x-ui panel."' \
 		'detect_country_flag || true' \
 		'desired=$(build_desired_state)' \
+		'apply_managed_xray' \
+		'restart_xray_if_needed' \
 		'ensure_panel_settings' \
 		'update_admin_credentials_if_needed' \
 		'resolve_panel_base || die "Could not login after panel settings update."' \
@@ -1197,8 +1199,6 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
 		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
 		'repair_shared_client_after_inbound_sync "$desired"' \
-		'apply_managed_xray' \
-		'restart_xray_if_needed' \
 		'update_builtin_geofiles_if_enabled' \
 		'restart_panel_if_needed'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
