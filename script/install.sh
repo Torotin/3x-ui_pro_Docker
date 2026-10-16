@@ -39,6 +39,8 @@ export INSTALL_NONINTERACTIVE INSTALL_MOCK SCRIPT_DIR PROJECT_ROOT
 . "$SCRIPT_DIR/modules/06_firewall.sh"
 # shellcheck source=script/modules/07_ssh.sh
 . "$SCRIPT_DIR/modules/07_ssh.sh"
+# shellcheck source=script/modules/08_doctor.sh
+. "$SCRIPT_DIR/modules/08_doctor.sh"
 # shellcheck source=script/modules/09_finalize.sh
 . "$SCRIPT_DIR/modules/09_finalize.sh"
 # shellcheck source=script/modules/10_uninstall.sh
@@ -47,13 +49,20 @@ export INSTALL_NONINTERACTIVE INSTALL_MOCK SCRIPT_DIR PROJECT_ROOT
 usage() {
 	cat <<'USAGE'
 Usage:
-  install.sh doctor
+  install.sh doctor [host|stack] [--verbose] [--strict]
   install.sh wizard
   install.sh run <step...> [--destroy-docker-data] [--apply] [--yes]
   install.sh self-update [--branch <branch>] [--check] [--yes] [--force]
   install.sh uninstall [--plan|--apply --yes] [--purge-docker-data]
     [--purge-docker-engine] [--purge-firewall] [--purge-ssh]
     [--purge-network] [--purge-dnscrypt] [--remove-project-root]
+
+Doctor profiles:
+  (default) full   preflight + host + stack (severity via DOCTOR_EXPECT_STACK)
+  host             host-focused checks (Phase 2: same body as full)
+  stack            stack-focused checks (forces DOCTOR_EXPECT_STACK=1)
+  --verbose        print individual OK detail lines
+  --strict         any WARN → exit 1 and footer doctor: FAILED
 
 Steps:
   dnscrypt apt env docker user firewall ssh network compose final uninstall
