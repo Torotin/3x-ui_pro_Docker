@@ -39,6 +39,18 @@
 - Root/sudo для пакетов, Docker, firewall, SSH и sysctl.
 - Локальная разработка installer — только mock/fake окружение (без реальных apt/docker/ufw на рабочей машине).
 
+### Ресурсы VPS (ориентир)
+
+Цифры ориентировочные, не результаты замеров. Отдельные сервисы в compose могут задавать свои `mem_limit`/`cpus` (например Caddy, tor-proxy, Lampac); таблица ниже — ориентир по хосту VPS, а не жёсткий лимит стека. Always-on стек (Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Arcane, usque, tor-proxy, …) без Lampac/Telemt/Mihomo обычно легче, чем тот же стек с опциональными тяжёлыми сервисами.
+
+| Профиль | CPU | RAM | Диск |
+|---------|-----|-----|------|
+| Минимум (без Lampac/Telemt/Mihomo) | 2 vCPU | 2–4 GB | 20+ GB SSD |
+| Комфортно (always-on + запас) | 2–4 vCPU | 4–8 GB | 40+ GB SSD |
+| С Lampac / тяжёлым трафиком | 4 vCPU | 8 GB+ | 40+ GB SSD |
+
+На 2 GB возможен swap/OOM при пиках; для production предпочтительнее ≥4 GB.
+
 ## Границы каталогов
 
 | Путь | Назначение |
