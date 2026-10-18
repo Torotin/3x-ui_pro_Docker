@@ -198,7 +198,7 @@ Wizard submenu (`t`):
 - `ENABLE_HYSTERIA2` включает inbound в Xray desired state; **не** убирает host `443/udp` mapping и UFW.
 - Не открывать наружу: `4443`, `9118`, panel ports, metrics, CrowdSec.
 - Traefik HTTP/3 entrypoints в clean install отключены / high-risk — не включать без отдельного плана отката.
-- Админки: path-routes на `https://${WEBDOMAIN}/...` + BasicAuth + CrowdSec + rate-limit + noindex.
+- Админки: path-routes на `https://${WEBDOMAIN}/...` + BasicAuth + CrowdSec + rate-limit + noindex. Arcane также владеет корневыми маршрутами `/api` (priority 900, ниже Homepage `/api/*` 949), `/_app`, SPA — [`07-arcane.yml`](docker-proxy/compose.d/07-arcane.yml).
 - Lampac routing (root front без BasicAuth; sensitive `/admin` / `/adminpanel` / `/stats` / `/weblog` — admin middleware) — **только при** `ENABLE_LAMPAC=true`.
 - `ENABLE_VLESS_GRPC`: inbound-only toggle (default false); не compose-сервис.
 
@@ -423,6 +423,14 @@ SSH apply логирует auth mode, пользователя, порт, backup
 12. **Неверный INSTALL_ROOT / пустой state**  
     Проверка: те же `INSTALL_ROOT` / `INSTALL_STATE_DIR`, что при установке.  
     Действие: `export` тех же путей и всегда `sudo -E`.
+
+13. **Browser TLS `PR_END_OF_FILE_ERROR` / timeout после рестарта бэкенда**  
+    Проверка: `cscli decisions list` — ложный `http-probing`, когда path временно уходит в Caddy-fallback.  
+    Действие: снять decision для своего IP или дождаться expiry; дождаться healthy целевого сервиса.
+
+14. **Homepage NextAuth `CLIENT_FETCH_ERROR` на `/api/auth/*`**  
+    Проверка: `homepage-static` включает `PathPrefix(/api/auth)`, priority 949 > Arcane `/api` 900; labels в [`13-homepage.yml`](docker-proxy/compose.d/13-homepage.yml).  
+    Действие: обновить labels + restart homepage (и Traefik при необходимости).
 
 ## Удаление
 

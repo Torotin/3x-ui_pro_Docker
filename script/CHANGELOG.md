@@ -1,8 +1,12 @@
 # Журнал изменений установщика
 
+## 0.7.2 - 2026-10-18
+
+- Dozzle заменён на Arcane (`07-arcane.yml`; legacy `07-dozzle.yml.disable`).
+
 ## 0.7.1 - 2026-10-16
 
-- Финальный summary: UI Service URLs заканчиваются `/` (Homepage, 3X-UI, AdGuard, Dozzle, Telemt, Mihomo), чтобы браузер не терял BasicAuth на 301.
+- Финальный summary: UI Service URLs заканчиваются `/` (Homepage, 3X-UI, AdGuard, Arcane, Telemt, Mihomo), чтобы браузер не терял BasicAuth на 301.
 - AdGuard DoH остаётся без trailing slash (exact `Path()` endpoint).
 
 ## 0.7.0 - 2026-10-16
