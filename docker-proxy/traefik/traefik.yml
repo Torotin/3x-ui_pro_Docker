@@ -72,7 +72,8 @@ providers:
     watch: true
     constraints: "Label(`traefik.tags`,`traefik`)"
   file:
-    filename: /dynamic/crowdsec.yml
+    # Directory mode so crowdsec.yml + arcane.yml (and future fragments) merge.
+    directory: /dynamic
     watch: true
 # -------------------
 # ACME / Let's Encrypt (оптимизированный)
@@ -100,6 +101,9 @@ experimental:
     fullUrlRewrite:
       moduleName: "github.com/e-flux-platform/full-url-rewrite-traefik-plugin"
       version: "v0.0.7"
+    rewrite-body:
+      moduleName: "github.com/the-ccsn/traefik-plugin-rewritebody"
+      version: "v0.1.3"
     # htransformation:
     #   moduleName: "github.com/tomMoulard/htransformation"
     #   version: "v0.3.3"

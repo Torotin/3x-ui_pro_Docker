@@ -28,7 +28,7 @@ Service URLs:
   3X-UI Panel      : ${SUMMARY_URL_3X_UI}
   AdGuard Home     : ${SUMMARY_URL_ADGUARD}
   AdGuard DoH      : ${SUMMARY_URL_ADGUARD_DOH}
-  Dozzle Logs      : ${SUMMARY_URL_DOZZLE}
+  Arcane           : ${SUMMARY_URL_ARCANE}
   Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
   Telemt Panel     : ${SUMMARY_URL_TELEMT_PANEL}
   Mihomo UI        : ${SUMMARY_URL_MIHOMO_UI}
@@ -45,7 +45,7 @@ Local service endpoints:
   Telemt proxy     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PROXY} (not public)
   Telemt API       : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_API} (not public)
   Telemt panel     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PANEL} (Traefik routed)
-  Dozzle           : 127.0.0.1:${SUMMARY_PORT_LOCAL_DOZZLE}
+  Arcane           : internal Docker :3552 (Traefik routed)
   Caddy fallback   : 127.0.0.1:${SUMMARY_PORT_LOCAL_CADDYWEB}
   CrowdSec API     : 127.0.0.1:${SUMMARY_PORT_LOCAL_CROWDSEC_API}
 

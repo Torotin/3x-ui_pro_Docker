@@ -3,7 +3,7 @@
 [![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-Explore%20Docs-6C47FF?logo=readthedocs&logoColor=white)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 
-`3x-ui_pro_Docker` — Docker Compose стек и installer CLI/wizard для развёртывания прокси-инфраструктуры на чистом Debian/Ubuntu: Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Dozzle, usque (WARP), TOR helper и опциональные Telemt / Lampac / Mihomo.
+`3x-ui_pro_Docker` — Docker Compose стек и installer CLI/wizard для развёртывания прокси-инфраструктуры на чистом Debian/Ubuntu: Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Arcane, usque (WARP), TOR helper и опциональные Telemt / Lampac / Mihomo.
 
 Репозиторий содержит compose-фрагменты, installer, шаблоны окружения и mock-only тесты. Собственные образы проекта собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
 
@@ -328,11 +328,11 @@ sudo -E script/install.sh self-update --branch main --yes
 ### Always-on (clean install, не за toggle)
 
 - Traefik + traefik-acme-exporter
-- 3x-ui (+ sub-json-processor)
+- 3x-ui
 - AdGuard Home
 - CrowdSec + crowdsec-firewall-bouncer
 - Caddy (public browser fallback, когда Lampac выключен)
-- Homepage, Dozzle
+- Homepage, Arcane
 - usque, tor-proxy, logrotate
 
 Compose fragments: [`docker-proxy/compose.d`](docker-proxy/compose.d). Host paths относительно каталога `compose.d`.

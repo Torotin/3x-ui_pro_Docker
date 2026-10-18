@@ -703,10 +703,10 @@ install_doctor_check_containers() {
 	# Optional fragments (*.yml.disable or ENABLE_*=false) must not be required.
 	local -a containers=(
 		adguard
+		arcane
 		caddy
 		crowdsec
 		crowdsec_firewall_bouncer
-		dozzle
 		homepage
 		logrotate
 		tor-proxy
@@ -714,11 +714,14 @@ install_doctor_check_containers() {
 		traefik-acme-exporter
 		usque
 		3x-ui
-		sub-json-processor
 	)
 	# dockcheck: only when active 01-dockcheck.yml/.yaml exists (not *.yml.disable)
 	if [[ -f "$INSTALL_ROOT/compose.d/01-dockcheck.yml" || -f "$INSTALL_ROOT/compose.d/01-dockcheck.yaml" ]]; then
 		containers+=(dockcheck)
+	fi
+	# Legacy dozzle: only when active 07-dozzle.yml/.yaml still exists
+	if [[ -f "$INSTALL_ROOT/compose.d/07-dozzle.yml" || -f "$INSTALL_ROOT/compose.d/07-dozzle.yaml" ]]; then
+		containers+=(dozzle)
 	fi
 	if install_lampac_enabled && [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
 		containers+=(lampac)

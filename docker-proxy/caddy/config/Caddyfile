@@ -27,6 +27,9 @@ import *.caddy
 		crowdsec
 		appsec
 
+		# Decoy templates ship http:// CDN links; upgrade them on HTTPS pages.
+		header Content-Security-Policy "upgrade-insecure-requests"
+
 		root * /srv
 		# SPA-фоллбек: если файла нет — отдать /index.html с 200
 		try_files {path} /index.html

@@ -1,0 +1,55 @@
+# Arcane path-prefix helpers (response-body rewrite + SPA root redirects).
+# Requires Traefik file provider directory mode and env URI_ARCANE + WEBDOMAIN.
+http:
+  middlewares:
+    arcane-body:
+      plugin:
+        rewrite-body:
+          lastModified: true
+          logLevel: 0
+          monitoring:
+            methods:
+              - GET
+            types:
+              - text/html
+              - application/manifest+json
+            checkMimeAccept: false
+            checkMimeContentType: true
+            checkAcceptEncoding: false
+            checkContentEncoding: true
+          rewrites:
+            - regex: 'base:\s*""'
+              replacement: '{{ printf "base: \"/%s\"" (env "URI_ARCANE") }}'
+            - regex: '"scope"\s*:\s*"/"'
+              replacement: '{{ printf "\"scope\":\"/%s/\"" (env "URI_ARCANE") }}'
+            - regex: '"start_url"\s*:\s*"/"'
+              replacement: '{{ printf "\"start_url\":\"/%s/\"" (env "URI_ARCANE") }}'
+
+    arcane-js-body:
+      plugin:
+        rewrite-body:
+          lastModified: true
+          logLevel: 0
+          monitoring:
+            methods:
+              - GET
+            types:
+              - text/javascript
+              - application/javascript
+              - application/x-javascript
+            checkMimeAccept: false
+            checkMimeContentType: true
+            checkAcceptEncoding: false
+            checkContentEncoding: true
+          rewrites:
+            - regex: 'location\.replace\(`/login\?redirect='
+              replacement: '{{ printf "location.replace(`/%s/login?redirect=" (env "URI_ARCANE") }}'
+            - regex: '\[`/login`,`/logout`,`/oidc`,`/auth/oidc`,`/mobile/passkey`\]'
+              replacement: '{{ printf "[`/%s/login`,`/login`,`/%s/logout`,`/logout`,`/%s/oidc`,`/oidc`,`/%s/auth/oidc`,`/auth/oidc`,`/%s/mobile/passkey`,`/mobile/passkey`]" (env "URI_ARCANE") (env "URI_ARCANE") (env "URI_ARCANE") (env "URI_ARCANE") (env "URI_ARCANE") }}'
+
+    arcane-spa-redirect:
+      redirectRegex:
+        # Keep "images" narrow so Caddy decoy /images/*.jpg is not stolen.
+        regex: '^https?://[^/]+/((?:dashboard|containers|projects|environments|volumes|networks|settings|events|customize|updates|security|swarm|no-access|logout|oidc|mobile|login|auth|compose|ports)(?:/.*)?|(?:images(?:/(?:builds|vulnerabilities)(?:/.*)?)?|images/[^/.]+))$'
+        replacement: 'https://{{ env "WEBDOMAIN" }}/{{ env "URI_ARCANE" }}/$1'
+        permanent: false

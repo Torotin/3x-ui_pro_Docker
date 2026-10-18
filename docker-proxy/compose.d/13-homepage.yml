@@ -17,7 +17,8 @@ services:
       HOMEPAGE_VAR_WEBDOMAIN: ${WEBDOMAIN}
       HOMEPAGE_VAR_URI_3X-UI_PATH: ${URI_PANEL_PATH}
       HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD: ${URI_TRAEFIK_DASHBOARD}
-      HOMEPAGE_VAR_URI_DOZZLE: ${URI_DOZZLE}
+      HOMEPAGE_VAR_URI_ARCANE: ${URI_ARCANE}
+      HOMEPAGE_VAR_URI_DOZZLE: ${URI_ARCANE}
       HOMEPAGE_VAR_URI_ADGUARD_PANEL: ${URI_ADGUARD_PANEL}
       HOMEPAGE_VAR_URI_TELEMT_PANEL: ${URI_TELEMT_PANEL}
       HOMEPAGE_VAR_URI_MIHOMO: ${URI_MIHOMO}
@@ -75,6 +76,9 @@ services:
       - traefik.http.middlewares.homepage-rate-limit.ratelimit.burst=100
       - traefik.http.middlewares.homepage-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rate-limit,admin-security-headers@file,homepage-strip,homepage-rewrite,homepage-compress
       - traefik.http.middlewares.homepage-static-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rate-limit,admin-security-headers@file,homepage-rewrite,homepage-compress
+      # Icons/manifest are auto-requested from domain root (e.g. Caddy portfolio
+      # fetching /favicon.ico). Basic Auth here pops a login dialog on public pages.
+      - traefik.http.middlewares.homepage-icons-chain.chain.middlewares=bouncer@file,homepage-rate-limit,admin-security-headers@file,homepage-rewrite,homepage-compress
 
       # ---------- Роутеры ----------
       - traefik.http.routers.homepage-router.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_HOMEPAGE}`)
@@ -84,9 +88,27 @@ services:
       - traefik.http.routers.homepage-router.tls.certresolver=le
       - traefik.http.routers.homepage-router.priority=950
 
-      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`) || PathPrefix(`/favicon`) || PathPrefix(`/apple-touch-icon`) || PathPrefix(`/site.webmanifest`) || PathPrefix(`/homepage.ico`) || PathPrefix(`/safari-pinned-tab`) || PathPrefix(`/android-chrome`))
+      # Include /api/auth so NextAuth is not stolen by Arcane's root PathPrefix(`/api`) (prio 900).
+      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/auth`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`))
       - traefik.http.routers.homepage-static.entrypoints=websecure
       - traefik.http.routers.homepage-static.middlewares=homepage-static-chain
       - traefik.http.routers.homepage-static.service=homepage-svc
       - traefik.http.routers.homepage-static.tls.certresolver=le
       - traefik.http.routers.homepage-static.priority=949
+
+      # Browser still probes /favicon.ico; map it to Homepage's built-in icon.
+      - traefik.http.middlewares.homepage-favicon-map.replacepath.path=/homepage.ico
+      - traefik.http.middlewares.homepage-favicon-chain.chain.middlewares=bouncer@file,homepage-rate-limit,admin-security-headers@file,homepage-favicon-map,homepage-rewrite,homepage-compress
+      - traefik.http.routers.homepage-favicon.rule=Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)
+      - traefik.http.routers.homepage-favicon.entrypoints=websecure
+      - traefik.http.routers.homepage-favicon.middlewares=homepage-favicon-chain
+      - traefik.http.routers.homepage-favicon.service=homepage-svc
+      - traefik.http.routers.homepage-favicon.tls.certresolver=le
+      - traefik.http.routers.homepage-favicon.priority=951
+
+      - traefik.http.routers.homepage-icons.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/favicon`) || PathPrefix(`/apple-touch-icon`) || PathPrefix(`/site.webmanifest`) || PathPrefix(`/homepage.ico`) || PathPrefix(`/safari-pinned-tab`) || PathPrefix(`/android-chrome`))
+      - traefik.http.routers.homepage-icons.entrypoints=websecure
+      - traefik.http.routers.homepage-icons.middlewares=homepage-icons-chain
+      - traefik.http.routers.homepage-icons.service=homepage-svc
+      - traefik.http.routers.homepage-icons.tls.certresolver=le
+      - traefik.http.routers.homepage-icons.priority=949
