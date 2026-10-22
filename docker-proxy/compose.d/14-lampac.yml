@@ -103,6 +103,12 @@ services:
       - traefik.http.middlewares.lampac-unknown-root.replacepath.path=/
 
       # Middlewares
+      # Lampac builds plugin/API absolute URLs from xscheme (overrides listen.scheme)
+      # and X-Forwarded-Proto when KnownProxies trust Traefik. Without these,
+      # HTTPS pages get http:// script URLs and browsers block mixed content.
+      # See https://docs.lampac.dev/deployment/reverse-proxy
+      - traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.xscheme=https
+      - traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
       - traefik.http.middlewares.lampac-headers.headers.stsSeconds=31536000
       - traefik.http.middlewares.lampac-headers.headers.browserXssFilter=true
       - traefik.http.middlewares.lampac-headers.headers.contentTypeNosniff=true

@@ -328,6 +328,14 @@ assert_true(
     "bouncer@file" in lampac_labels.get("traefik.http.middlewares.lampac-admin-chain.chain.middlewares", ""),
     "Lampac admin chain must include the CrowdSec bouncer",
 )
+assert_true(
+    lampac_labels.get("traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.xscheme") == "https",
+    "Lampac must send xscheme=https so plugin URLs are not http:// under HTTPS (mixed content)",
+)
+assert_true(
+    lampac_labels.get("traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.X-Forwarded-Proto") == "https",
+    "Lampac must send X-Forwarded-Proto=https for trusted-proxy scheme detection",
+)
 for router in [
     "lampac-https",
     "lampac-cub-plugins",
