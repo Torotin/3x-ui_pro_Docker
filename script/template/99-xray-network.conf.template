@@ -126,10 +126,12 @@ net.ipv4.conf.default.arp_filter = 0
 # net.ipv6.conf.all.disable_ipv6      = 1
 # net.ipv6.conf.default.disable_ipv6  = 1
 # net.ipv6.conf.lo.disable_ipv6       = 1
-net.ipv6.conf.all.autoconf          = 0
-net.ipv6.conf.default.autoconf      = 0
-net.ipv6.conf.all.accept_ra         = 0
-net.ipv6.conf.default.accept_ra     = 0
+net.ipv6.conf.all.forwarding = __IPV6_FORWARDING__
+net.ipv6.conf.default.forwarding = __IPV6_FORWARDING__
+net.ipv6.conf.all.autoconf = __IPV6_AUTOCONF__
+net.ipv6.conf.default.autoconf = __IPV6_AUTOCONF__
+net.ipv6.conf.all.accept_ra = __IPV6_ACCEPT_RA__
+net.ipv6.conf.default.accept_ra = __IPV6_ACCEPT_RA__
 
 #############################
 # 8. IPv6 (если требуется, раскомментируйте)

@@ -56,10 +56,14 @@ entryPoints:
       trustedIPs:
         - "172.18.0.0/24"
         - "172.19.0.0/24"
+        - "fd00:dead:beef:12::/64"
+        - "fd00:dead:beef:13::/64"
     forwardedHeaders:
       trustedIPs:
         - "172.18.0.0/24"
         - "172.19.0.0/24"
+        - "fd00:dead:beef:12::/64"
+        - "fd00:dead:beef:13::/64"
 
 # -------------------
 # Провайдеры (оптимизированные)

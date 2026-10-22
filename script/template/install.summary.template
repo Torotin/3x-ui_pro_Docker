@@ -3,6 +3,7 @@ Generated at: ${SUMMARY_GENERATED_AT}
 
 Project:
   Domain           : ${SUMMARY_DOMAIN}
+  Host IP mode     : ${SUMMARY_HOST_IP_MODE}
   Public IPv4      : ${SUMMARY_PUBLIC_IPV4}
   Public IPv6      : ${SUMMARY_PUBLIC_IPV6}
   Project root     : ${INSTALL_ROOT}
@@ -10,11 +11,11 @@ Project:
   Compose directory: ${SUMMARY_COMPOSE_DIR}
   Compose env      : ${SUMMARY_COMPOSE_ENV}
   Update branch    : ${SUMMARY_UPDATE_BRANCH}
-  Host DNS         : DNSCrypt/DoH via 127.0.0.1:53 (/opt/dnscrypt-proxy)
+  Host DNS         : ${SUMMARY_HOST_DNS}
 
 SSH access:
   Target           : ${SUMMARY_SSH_TARGET}
-  User             : ${SUMMARY_USER_SSH}
+${SUMMARY_SSH_EXTRA}  User             : ${SUMMARY_USER_SSH}
   Port             : ${SUMMARY_PORT_REMOTE_SSH}
   Auth             : ${SUMMARY_SSH_AUTH}
   Root login       : disabled by installer SSH policy

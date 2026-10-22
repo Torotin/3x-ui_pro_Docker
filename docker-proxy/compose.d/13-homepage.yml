@@ -36,8 +36,10 @@ services:
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.13
+        ipv6_address: fd00:dead:beef:12::13
       dns-net:
         ipv4_address: 172.19.0.13
+        ipv6_address: fd00:dead:beef:13::13
     extra_hosts:
       # Let server-side Homepage widgets call the Traefik websecure entrypoint
       # by the public hostname while staying on the internal Docker network.

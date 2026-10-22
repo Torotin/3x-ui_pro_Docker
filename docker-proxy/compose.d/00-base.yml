@@ -1,6 +1,6 @@
-# Ranges in use:
-# traefik-proxy: 172.18.0.0/24 (external network created separately)
-# dns-net:       172.19.0.0/24 (internal network for DNS services)
+# Ranges in use (external networks created by installer; always dual-stack):
+# traefik-proxy: 172.18.0.0/24 + fd00:dead:beef:12::/64
+# dns-net:       172.19.0.0/24 + fd00:dead:beef:13::/64
 
 networks:
   traefik-proxy:

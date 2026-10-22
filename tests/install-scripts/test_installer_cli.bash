@@ -117,6 +117,8 @@ make_fixture() {
 	unset VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER
 	unset REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
 	unset INSTALL_MOCK_DOCTOR_PHASE
+	unset INSTALL_MOCK_IP_PROBE_IPV4 INSTALL_MOCK_IP_PROBE_IPV6
+	unset INSTALL_MOCK_PUBLIC_IPV4 INSTALL_MOCK_PUBLIC_IPV6
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -244,7 +246,7 @@ test_doctor_inventory_uses_bundled_telemt_panel_healthcheck() {
 	assert_not_contains 'containers+=(telemt telemt-panel)' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must not expect a retired standalone panel container"
 	assert_contains 'containers+=(mihomo)' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must check the Mihomo container when gated"
 	assert_contains 'install_mihomo_enabled' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must gate Mihomo checks on ENABLE_MIHOMO"
-	assert_contains 'sub-json-processor' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must inventory sub-json-processor from 12-3x-ui"
+	assert_not_contains 'sub-json-processor' "$ROOT_DIR/script/modules/08_doctor.sh" "doctor must not inventory removed sub-json-processor"
 }
 
 # dockcheck must match compose: only active 01-dockcheck.yml/.yaml, never *.yml.disable alone
@@ -587,6 +589,33 @@ test_env_prints_rendered_paths() {
 	assert_contains "- $INSTALL_ROOT/compose.d/.env" "$tmpdir/stdout" "env must print compose env path"
 }
 
+test_env_writes_host_ip_mode_dual() {
+	make_fixture
+	unset PUBLIC_IPV4 PUBLIC_IPV6 HOST_IP_MODE
+	export INSTALL_MOCK_IP_PROBE_IPV4=1 INSTALL_MOCK_IP_PROBE_IPV6=1
+	run_installer run env
+	assert_contains "HOST_IP_MODE=dual" "$INSTALL_STATE_DIR/install.env" "env must persist HOST_IP_MODE=dual"
+	assert_contains "HOST_IP_MODE=dual" "$INSTALL_ROOT/compose.d/.env" "compose env must persist HOST_IP_MODE"
+	assert_contains "TOR_IPV6_AVAILABLE=true" "$INSTALL_ROOT/compose.d/.env" "dual host must enable TOR IPv6 bridges"
+}
+
+test_env_ipv4_only_does_not_copy_v4_into_v6() {
+	make_fixture
+	unset PUBLIC_IPV4 PUBLIC_IPV6 HOST_IP_MODE
+	export INSTALL_MOCK_IP_PROBE_IPV4=1 INSTALL_MOCK_IP_PROBE_IPV6=0
+	run_installer run env
+	assert_contains "HOST_IP_MODE=ipv4" "$INSTALL_STATE_DIR/install.env" "env must persist ipv4 mode"
+	assert_contains "TOR_IPV6_AVAILABLE=false" "$INSTALL_ROOT/compose.d/.env" "ipv4-only host must disable TOR IPv6 bridges"
+	assert_contains "PUBLIC_IPV4=" "$INSTALL_STATE_DIR/install.env" "env must keep PUBLIC_IPV4"
+	# PUBLIC_IPV6 may be absent or empty — must not equal dotted-quad v4
+	if grep -q '^PUBLIC_IPV6=' "$INSTALL_STATE_DIR/install.env"; then
+		v6=$(awk -F= '/^PUBLIC_IPV6=/{print substr($0,13)}' "$INSTALL_STATE_DIR/install.env")
+		v4=$(awk -F= '/^PUBLIC_IPV4=/{print substr($0,13)}' "$INSTALL_STATE_DIR/install.env")
+		[[ "$v6" != "$v4" ]] || fail "PUBLIC_IPV6 must not equal PUBLIC_IPV4"
+		[[ ! "$v6" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "PUBLIC_IPV6 must not be an IPv4 address"
+	fi
+}
+
 test_env_defaults_optional_services_disabled() {
 	make_fixture
 	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO VISION_FALLBACK_HOST
@@ -600,12 +629,60 @@ test_env_defaults_optional_services_disabled() {
 	assert_contains "VISION_FALLBACK_HOST=traefik" "$INSTALL_ROOT/compose.d/.env" "disabled Telemt must default Xray fallback to Traefik"
 }
 
+test_ip_probe_sets_dual_mode_in_mock() {
+	make_fixture
+	unset PUBLIC_IPV4 PUBLIC_IPV6 HOST_IP_MODE
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	export INSTALL_MOCK=1
+	ip_probe_resolve_host_mode
+	[[ "$HOST_IP_MODE" == "dual" ]] || fail "expected dual, got $HOST_IP_MODE"
+	[[ "$PUBLIC_IPV4" == "198.51.100.10" ]] || fail "unexpected PUBLIC_IPV4=$PUBLIC_IPV4"
+	[[ "$PUBLIC_IPV6" == "2001:db8::10" ]] || fail "unexpected PUBLIC_IPV6=$PUBLIC_IPV6"
+}
+
+test_ip_probe_ipv4_only_leaves_ipv6_empty() {
+	make_fixture
+	unset PUBLIC_IPV4 PUBLIC_IPV6 HOST_IP_MODE
+	export INSTALL_MOCK=1
+	export INSTALL_MOCK_IP_PROBE_IPV6=0
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_resolve_host_mode
+	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "expected ipv4, got $HOST_IP_MODE"
+	[[ -n "$PUBLIC_IPV4" ]] || fail "PUBLIC_IPV4 empty"
+	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "PUBLIC_IPV6 must be empty, got $PUBLIC_IPV6"
+	[[ "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] || fail "PUBLIC_IPV6 must not equal PUBLIC_IPV4"
+}
+
+test_ip_probe_clears_stale_ipv6_when_unreachable() {
+	make_fixture
+	export PUBLIC_IPV4=198.51.100.10
+	export PUBLIC_IPV6=2001:db8:dead:beef::1
+	unset HOST_IP_MODE
+	export INSTALL_MOCK=1
+	export INSTALL_MOCK_IP_PROBE_IPV4=1
+	export INSTALL_MOCK_IP_PROBE_IPV6=0
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_resolve_host_mode
+	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "stale PUBLIC_IPV6 must downgrade to ipv4, got $HOST_IP_MODE"
+	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "stale PUBLIC_IPV6 must be cleared, got $PUBLIC_IPV6"
+}
+
 test_env_detects_public_ips_when_missing() {
 	make_fixture
 	unset PUBLIC_IPV4 PUBLIC_IPV6
 	run_installer run env
 	assert_contains "PUBLIC_IPV4=198.51.100.10" "$INSTALL_STATE_DIR/install.env" "env must detect public IPv4"
 	assert_contains "PUBLIC_IPV6=2001:db8::10" "$INSTALL_STATE_DIR/install.env" "env must detect public IPv6"
+	assert_contains "HOST_IP_MODE=dual" "$INSTALL_STATE_DIR/install.env" "env must persist HOST_IP_MODE=dual when both IPs detected"
 	assert_contains "ip.detect.ipv4" "$INSTALL_COMMAND_LOG" "env must route IPv4 detection through runner"
 	assert_contains "ip.detect.ipv6" "$INSTALL_COMMAND_LOG" "env must route IPv6 detection through runner"
 }
@@ -846,6 +923,24 @@ test_firewall_does_not_preserve_current_ssh_port() {
 	assert_contains "ufw allow 22022/tcp comment PORT_REMOTE_SSH" "$INSTALL_COMMAND_LOG" "firewall must still allow configured target SSH port"
 }
 
+test_firewall_ensures_ipv6_yes() {
+	make_fixture
+	run_installer run firewall --apply --yes
+	assert_contains "IPV6=yes" "$INSTALL_COMMAND_LOG" "firewall apply must ensure UFW IPV6=yes"
+}
+
+test_doctor_dual_mock_logs_host_probes() {
+	make_fixture
+	export HOST_IP_MODE=dual
+	printf 'HOST_IP_MODE=dual\n' >>"$INSTALL_STATE_DIR/install.env"
+	run_installer doctor host
+	assert_contains "doctor.network.dual.accept_ra" "$INSTALL_COMMAND_LOG" "doctor dual must probe accept_ra via runner"
+	assert_contains "doctor.network.dual.route" "$INSTALL_COMMAND_LOG" "doctor dual must probe default v6 route via runner"
+	assert_contains "doctor.firewall.ipv6" "$INSTALL_COMMAND_LOG" "doctor dual must probe UFW IPV6 setting via runner"
+	assert_contains "doctor.dnscrypt.dig6" "$INSTALL_COMMAND_LOG" "doctor dual must probe dig @::1 via runner"
+	assert_not_contains "ufw --force" "$INSTALL_COMMAND_LOG" "doctor dual probes must not mutate ufw"
+}
+
 test_ssh_rejects_invalid_port_before_apply() {
 	make_fixture
 	export PORT_REMOTE_SSH=not-a-port
@@ -905,6 +1000,26 @@ test_docker_install_handles_missing_docker_binary() {
 	assert_contains "docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker data purge must use rm -rf --"
 }
 
+test_network_sysctl_dual_preserves_slaac() {
+	make_fixture
+	export HOST_IP_MODE=dual
+	printf 'HOST_IP_MODE=dual\n' >>"$INSTALL_STATE_DIR/install.env"
+	run_installer run network --apply --yes
+	assert_contains "net.ipv6.conf.all.forwarding = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable ipv6 forwarding"
+	assert_contains "net.ipv6.conf.all.accept_ra = 2" "$INSTALL_COMMAND_LOG" "dual sysctl must use accept_ra=2 with forwarding"
+	assert_contains "net.ipv6.conf.all.autoconf = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable autoconf"
+	assert_not_contains "net.ipv6.conf.all.accept_ra = 0" "$INSTALL_COMMAND_LOG" "dual must not force accept_ra=0"
+}
+
+test_network_sysctl_ipv4_keeps_ra_off() {
+	make_fixture
+	export HOST_IP_MODE=ipv4
+	printf 'HOST_IP_MODE=ipv4\n' >>"$INSTALL_STATE_DIR/install.env"
+	run_installer run network --apply --yes
+	assert_contains "net.ipv6.conf.all.accept_ra = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps accept_ra=0"
+	assert_contains "net.ipv6.conf.all.autoconf = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps autoconf=0"
+}
+
 test_network_apply_uses_runner() {
 	make_fixture
 	run_installer run network --apply --yes
@@ -912,9 +1027,26 @@ test_network_apply_uses_runner() {
 	assert_contains "network.sysctl" "$INSTALL_COMMAND_LOG" "network sysctl must use runner"
 }
 
-test_docker_repo_and_daemon_config_are_safe() {
+test_docker_networks_created_dual_stack() {
+	make_fixture
+	run_installer run docker --destroy-docker-data
+	assert_contains "--ipv6" "$INSTALL_COMMAND_LOG" "docker network create must pass --ipv6"
+	assert_contains "fd00:dead:beef:12::/64" "$INSTALL_COMMAND_LOG" "traefik-proxy must use ULA /64"
+	assert_contains "fd00:dead:beef:13::/64" "$INSTALL_COMMAND_LOG" "dns-net must use ULA /64"
+}
+
+test_docker_enable_ipv6_zero_dies_on_user_networks() {
 	make_fixture
 	export DOCKER_ENABLE_IPV6=0
+	if run_installer run docker --destroy-docker-data; then
+		fail "DOCKER_ENABLE_IPV6=0 must abort before creating dual-stack user networks"
+	fi
+	assert_contains "DOCKER_ENABLE_IPV6=0 conflicts with dual-stack user networks" "$tmpdir/stderr" "must explain DOCKER_ENABLE_IPV6 conflict"
+	assert_not_contains "docker.network.ensure docker network create" "$INSTALL_COMMAND_LOG" "must not create user networks when DOCKER_ENABLE_IPV6=0"
+}
+
+test_docker_repo_and_daemon_config_are_safe() {
+	make_fixture
 	run_installer run docker --destroy-docker-data
 	assert_contains "docker.repo.gpg printf" "$INSTALL_COMMAND_LOG" "docker repo key install must log a non-executing pipeline in mock mode"
 	assert_contains "curl\\ -fsSL\\ %s\\ \\|\\ gpg\\ --dearmor\\ -o\\ %s" "$INSTALL_COMMAND_LOG" "docker repo key install must show the intended pipeline"
@@ -929,7 +1061,6 @@ test_docker_repo_and_daemon_config_are_safe() {
 	assert_contains '"max-buffer-size": "4m"' "$INSTALL_COMMAND_LOG" "docker daemon logs must cap non-blocking buffer"
 	assert_not_contains '"containerd-snapshotter": true' "$INSTALL_COMMAND_LOG" "docker daemon must not enable containerd snapshotter with explicit overlay2 by default"
 	assert_not_contains "overlay2.size=20G" "$INSTALL_COMMAND_LOG" "overlay2 size limit must be opt-in and quota-gated"
-	assert_not_contains "fixed-cidr-v6" "$INSTALL_COMMAND_LOG" "docker daemon config must allow disabling IPv6"
 	assert_not_contains "docker.network.remove docker network rm docker-proxy_default" "$INSTALL_COMMAND_LOG" "docker network creation must not auto-delete compose default network"
 }
 
@@ -1296,6 +1427,23 @@ test_dnscrypt_pins_version_flag() {
 	assert_not_contains "dnscrypt.resolve.latest" "$INSTALL_COMMAND_LOG" "pinned version must not query GitHub latest"
 }
 
+test_dnscrypt_detect_connectivity_uses_shared_probe_in_mock() {
+	make_fixture
+	unset DNSCRYPT_HAS_IPV4 DNSCRYPT_HAS_IPV6 DNSCRYPT_PUBLIC_IPV4 DNSCRYPT_PUBLIC_IPV6
+	unset DNSCRYPT_LISTEN_ADDRESSES DNSCRYPT_IPV4_SERVERS DNSCRYPT_IPV6_SERVERS
+	export INSTALL_MOCK=1
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_dnscrypt.sh"
+	dnscrypt_detect_connectivity >/dev/null
+	((DNSCRYPT_HAS_IPV4 == 1 && DNSCRYPT_HAS_IPV6 == 1)) || fail "mock probe must detect dual connectivity"
+	[[ "$DNSCRYPT_PUBLIC_IPV4" == "198.51.100.10" ]] || fail "DNSCRYPT_PUBLIC_IPV4 must come from shared probe"
+	[[ "$DNSCRYPT_PUBLIC_IPV6" == "2001:db8::10" ]] || fail "DNSCRYPT_PUBLIC_IPV6 must come from shared probe"
+	[[ "$DNSCRYPT_LISTEN_ADDRESSES" == "['127.0.0.1:53', '[::1]:53']" ]] || fail "dual must listen on v4 and v6 localhost"
+	[[ "$DNSCRYPT_IPV4_SERVERS" == "true" && "$DNSCRYPT_IPV6_SERVERS" == "true" ]] || fail "dual must enable both server families"
+}
+
 test_dnscrypt_decide_mode_matches_original_semver_rules() {
 	make_fixture
 	# shellcheck source=script/modules/00_common.sh
@@ -1548,6 +1696,11 @@ test_env_rejects_invalid_global_boolean_values
 test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
 test_env_defaults_optional_services_disabled
+test_env_writes_host_ip_mode_dual
+test_env_ipv4_only_does_not_copy_v4_into_v6
+test_ip_probe_sets_dual_mode_in_mock
+test_ip_probe_ipv4_only_leaves_ipv6_empty
+test_ip_probe_clears_stale_ipv6_when_unreachable
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels
@@ -1561,11 +1714,17 @@ test_state_loader_keeps_explicit_values_over_state
 test_destructive_steps_require_explicit_flags
 test_destructive_steps_use_mock_runner_when_explicit
 test_firewall_does_not_preserve_current_ssh_port
+test_firewall_ensures_ipv6_yes
+test_doctor_dual_mock_logs_host_probes
 test_ssh_rejects_invalid_port_before_apply
 test_ssh_restarts_when_listener_check_fails_after_reload
 test_ssh_listener_mock_uses_realistic_address_pattern
 test_docker_install_handles_missing_docker_binary
+test_network_sysctl_dual_preserves_slaac
+test_network_sysctl_ipv4_keeps_ra_off
 test_network_apply_uses_runner
+test_docker_networks_created_dual_stack
+test_docker_enable_ipv6_zero_dies_on_user_networks
 test_docker_repo_and_daemon_config_are_safe
 test_docker_containerd_snapshotter_is_explicit_opt_in
 test_docker_installs_journald_policy
@@ -1596,6 +1755,7 @@ test_dnscrypt_requires_apply_confirmation
 test_dnscrypt_mock_install_logs_intent_without_host_mutation
 test_dnscrypt_forwards_force_flag
 test_dnscrypt_pins_version_flag
+test_dnscrypt_detect_connectivity_uses_shared_probe_in_mock
 test_dnscrypt_decide_mode_matches_original_semver_rules
 test_dnscrypt_appears_in_usage_and_wizard
 test_uninstall_purge_dnscrypt_is_explicit

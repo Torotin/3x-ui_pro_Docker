@@ -32,6 +32,8 @@ desktop.ini
 .idea/
 *.iml
 .cursor/
+.superpowers/
+docs/
 
 # ==== Python / test leftovers ====
 __pycache__/

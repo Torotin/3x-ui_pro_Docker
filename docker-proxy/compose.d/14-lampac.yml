@@ -7,8 +7,10 @@ services:
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.14
+        ipv6_address: fd00:dead:beef:12::14
       dns-net:
         ipv4_address: 172.19.0.14
+        ipv6_address: fd00:dead:beef:13::14
     restart: unless-stopped
     shm_size: 1024mb
     pids_limit: 400

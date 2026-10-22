@@ -16,7 +16,7 @@ services:
       - PGID=1000
       - ENCRYPTION_KEY=${ARCANE_ENCRYPTION_KEY}
       - PROJECTS_DIRECTORY=/opt/docker-proxy
-      - TRUSTED_PROXIES=172.18.0.0/16
+      - TRUSTED_PROXIES=172.18.0.0/16,fd00:dead:beef:12::/64,fd00:dead:beef:13::/64
     healthcheck:
       test: ["CMD", "./arcane", "health", "--timeout", "2s"]
       interval: 10s
@@ -26,8 +26,10 @@ services:
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.7
+        ipv6_address: fd00:dead:beef:12::7
       dns-net:
         ipv4_address: 172.19.0.7
+        ipv6_address: fd00:dead:beef:13::7
     security_opt:
       - no-new-privileges=true
     labels:

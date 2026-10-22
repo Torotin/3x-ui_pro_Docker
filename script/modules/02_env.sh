@@ -15,24 +15,6 @@ render_env_template() {
 	fi
 }
 
-detect_public_ip() {
-	local family=$1 label="ip.detect.ipv4" url="https://api.ipify.org"
-	if [[ "$family" == "6" ]]; then
-		label="ip.detect.ipv6"
-		url="https://api6.ipify.org"
-	fi
-	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd "$label" curl -fsSL "$url"
-		if [[ "$family" == "6" ]]; then
-			printf '2001:db8::10\n'
-		else
-			printf '198.51.100.10\n'
-		fi
-		return 0
-	fi
-	curl -fsSL --max-time 5 "$url" 2>/dev/null || true
-}
-
 generate_hex_secret() {
 	local bytes=${1:-16}
 	if command -v openssl >/dev/null 2>&1; then
@@ -93,14 +75,16 @@ detect_docker_socket_gid() {
 
 ensure_env_defaults() {
 	: "${WEBDOMAIN:=example.invalid}"
-	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
-		PUBLIC_IPV4=$(detect_public_ip 4)
-		: "${PUBLIC_IPV4:=127.0.0.1}"
+	ip_probe_resolve_host_mode
+	# PUBLIC_IPV4 is required for this product; probe already died if missing.
+	: "${PUBLIC_IPV4:?PUBLIC_IPV4 required}"
+	# PUBLIC_IPV6 may be empty when HOST_IP_MODE=ipv4 — do not default to PUBLIC_IPV4
+	if [[ "${HOST_IP_MODE}" == "dual" ]]; then
+		TOR_IPV6_AVAILABLE=true
+	else
+		TOR_IPV6_AVAILABLE=false
 	fi
-	if [[ -z "${PUBLIC_IPV6:-}" ]]; then
-		PUBLIC_IPV6=$(detect_public_ip 6)
-	fi
-	: "${PUBLIC_IPV6:=$PUBLIC_IPV4}"
+	export TOR_IPV6_AVAILABLE
 	: "${USER_WEB:=}"
 	: "${PASS_WEB:=}"
 	: "${USER_SSH:=}"
@@ -231,7 +215,7 @@ ensure_env_defaults() {
 		: "${REALITY_TARGET_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
 		: "${REALITY_TARGET_XVER:=1}"
 	fi
-	export WEBDOMAIN PUBLIC_IPV4 PUBLIC_IPV6 USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
+	export WEBDOMAIN HOST_IP_MODE PUBLIC_IPV4 PUBLIC_IPV6 TOR_IPV6_AVAILABLE USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
 	export URI_TRAEFIK_DASHBOARD URI_ARCANE URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
 	export URI_VLESS_XHTTP URI_VLESS_GRPC URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_MIHOMO URI_TEST

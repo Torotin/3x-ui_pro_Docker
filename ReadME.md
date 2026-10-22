@@ -67,7 +67,7 @@
 ## Подготовка перед установкой
 
 1. Чистый Debian/Ubuntu и root/sudo.
-2. DNS A (и AAAA при IPv6) на `WEBDOMAIN` → публичный IP сервера.
+2. DNS на `WEBDOMAIN`: A → публичный IPv4 сервера; при dual-stack (`HOST_IP_MODE=dual`) также AAAA → публичный IPv6. Адреса `fd00:dead:beef:*` в compose — только внутренние ULA Docker-сетей, не публиковать у регистратора.
 3. Свободны host `80/tcp` и `443/tcp`. Host `443/udp` будет открыт firewall и опубликован compose (см. раздел портов).
 4. Не публиковать наружу `4443`, `9118`, panel/metrics/CrowdSec ports.
 5. Держать второй SSH-сеанс до завершения шагов `firewall` / `ssh`.
@@ -428,19 +428,23 @@ SSH apply логирует auth mode, пользователя, порт, backup
     Проверка: `ENABLE_HYSTERIA2` в `$INSTALL_ROOT/compose.d/.env`. Publish/UFW ≠ inbound.  
     Действие: выставить `ENABLE_HYSTERIA2=true`, `run env`, затем `run compose`.
 
-11. **Telemt off, но telemt ещё крутится / неверный fallback**  
+11. **Ошибка пересоздания `traefik-proxy` / `dns-net` при апгрейде на dual-stack**  
+    Проверка: шаг `docker`/`compose` сообщает, что сеть занята контейнерами.  
+    Действие: `$INSTALL_ROOT/compose.d/run-compose.sh down`, затем снова `sudo -E script/install.sh run docker network --apply --yes` и `run compose` (на busy-хосте нельзя менять подсеть «на лету»).
+
+12. **Telemt off, но telemt ещё крутится / неверный fallback**  
     Проверка: `ENABLE_TELEMT=false` в compose `.env`; ожидать `VISION_FALLBACK_HOST=traefik` **и** `REALITY_TARGET_HOST=traefik` (ports `4443`); fragment [`15-telemt.yml`](docker-proxy/compose.d/15-telemt.yml) не должен включаться.  
     Действие: `run env`, compose up; при необходимости `down --remove-orphans`.
 
-12. **Неверный INSTALL_ROOT / пустой state**  
+13. **Неверный INSTALL_ROOT / пустой state**  
     Проверка: те же `INSTALL_ROOT` / `INSTALL_STATE_DIR`, что при установке.  
     Действие: `export` тех же путей и всегда `sudo -E`.
 
-13. **Browser TLS `PR_END_OF_FILE_ERROR` / timeout после рестарта бэкенда**  
+14. **Browser TLS `PR_END_OF_FILE_ERROR` / timeout после рестарта бэкенда**  
     Проверка: `cscli decisions list` — ложный `http-probing`, когда path временно уходит в Caddy-fallback.  
     Действие: снять decision для своего IP или дождаться expiry; дождаться healthy целевого сервиса.
 
-14. **Homepage NextAuth `CLIENT_FETCH_ERROR` на `/api/auth/*`**  
+15. **Homepage NextAuth `CLIENT_FETCH_ERROR` на `/api/auth/*`**  
     Проверка: `homepage-static` включает `PathPrefix(/api/auth)`, priority 949 > Arcane `/api` 900; labels в [`13-homepage.yml`](docker-proxy/compose.d/13-homepage.yml).  
     Действие: обновить labels + restart homepage (и Traefik при необходимости).
 

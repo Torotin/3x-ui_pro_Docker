@@ -55,9 +55,9 @@ http_ip_detect_urls = ["${TELEMT_HTTP_IP_DETECT_URL_1_TOML}", "${TELEMT_HTTP_IP_
 [server]
 port = ${PORT_LOCAL_TELEMT_PROXY}
 proxy_protocol = true
-proxy_protocol_trusted_cidrs = ["172.18.0.0/24", "172.19.0.0/24"]
+proxy_protocol_trusted_cidrs = ["172.18.0.0/24", "172.19.0.0/24", "fd00:dead:beef:12::/64", "fd00:dead:beef:13::/64"]
 metrics_listen = "0.0.0.0:${PORT_LOCAL_TELEMT_METRICS}"
-metrics_whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24"]
+metrics_whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24", "fd00:dead:beef:12::/64", "fd00:dead:beef:13::/64"]
 max_connections = ${TELEMT_MAX_CONNECTIONS}
 accept_permit_timeout_ms = ${TELEMT_ACCEPT_PERMIT_TIMEOUT_MS}
 
@@ -68,7 +68,7 @@ mode = "tracked"
 [server.api]
 enabled = true
 listen = "0.0.0.0:${PORT_LOCAL_TELEMT_API}"
-whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24"]
+whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24", "fd00:dead:beef:12::/64", "fd00:dead:beef:13::/64"]
 auth_header = "${TELEMT_API_AUTH_HEADER}"
 minimal_runtime_enabled = true
 

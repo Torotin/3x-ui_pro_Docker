@@ -181,65 +181,6 @@ dnscrypt_decide_mode() {
 	fi
 }
 
-dnscrypt_fetch_public_ip() {
-	local family="$1"
-	local url ip
-	local -a urls curl_opts
-
-	if [[ "$family" == "4" ]]; then
-		curl_opts=(-4)
-		urls=(
-			"https://api.ipify.org"
-			"https://ipv4.icanhazip.com"
-			"https://ifconfig.me/ip"
-		)
-	else
-		curl_opts=(-6)
-		urls=(
-			"https://api64.ipify.org"
-			"https://ipv6.icanhazip.com"
-			"https://ifconfig.me/ip"
-		)
-	fi
-
-	for url in "${urls[@]}"; do
-		ip="$(curl -fsS "${curl_opts[@]}" --connect-timeout 3 --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]')" || true
-		if [[ "$family" == "4" ]] && [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-			printf '%s\n' "$ip"
-			return 0
-		fi
-		if [[ "$family" == "6" ]] && [[ "$ip" == *:* ]] && [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-			printf '%s\n' "$ip"
-			return 0
-		fi
-	done
-	return 1
-}
-
-dnscrypt_has_ipv4_connectivity() {
-	if ! ip -4 route show default 2>/dev/null | grep -q .; then
-		return 1
-	fi
-	DNSCRYPT_PUBLIC_IPV4="$(dnscrypt_fetch_public_ip 4)" || return 1
-	export DNSCRYPT_PUBLIC_IPV4
-	return 0
-}
-
-dnscrypt_has_ipv6_connectivity() {
-	if [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 1)" == "1" ]]; then
-		return 1
-	fi
-	if ! ip -6 -o addr show scope global 2>/dev/null | grep -q .; then
-		return 1
-	fi
-	if ! ip -6 route show default 2>/dev/null | grep -q .; then
-		return 1
-	fi
-	DNSCRYPT_PUBLIC_IPV6="$(dnscrypt_fetch_public_ip 6)" || return 1
-	export DNSCRYPT_PUBLIC_IPV6
-	return 0
-}
-
 dnscrypt_switch_to_public_dns() {
 	local resolv="$DNSCRYPT_RESOLV_CONF"
 	chattr -i "$resolv" 2>/dev/null || true
@@ -329,15 +270,19 @@ dnscrypt_detect_connectivity() {
 	DNSCRYPT_PUBLIC_IPV6=""
 
 	printf '[+] Detecting external IPv4/IPv6 connectivity\n'
-	if dnscrypt_has_ipv4_connectivity; then
+	if ip_probe_has_ipv4; then
 		DNSCRYPT_HAS_IPV4=1
+		DNSCRYPT_PUBLIC_IPV4="$IP_PROBE_PUBLIC_IPV4"
+		export DNSCRYPT_PUBLIC_IPV4
 		printf '[+] External IPv4 OK: %s\n' "$DNSCRYPT_PUBLIC_IPV4"
 	else
 		printf '[!] No external IPv4 connectivity\n'
 	fi
 
-	if dnscrypt_has_ipv6_connectivity; then
+	if ip_probe_has_ipv6; then
 		DNSCRYPT_HAS_IPV6=1
+		DNSCRYPT_PUBLIC_IPV6="$IP_PROBE_PUBLIC_IPV6"
+		export DNSCRYPT_PUBLIC_IPV6
 		printf '[+] External IPv6 OK: %s\n' "$DNSCRYPT_PUBLIC_IPV6"
 	else
 		printf '[!] No external IPv6 connectivity\n'
@@ -370,16 +315,7 @@ dnscrypt_detect_connectivity() {
 		DNSCRYPT_RESOLVED_DNS_LINE="DNS=127.0.0.1"
 		printf '[+] IPv4-only — listen/server_names on IPv4, block_ipv6=true\n'
 	else
-		DNSCRYPT_LISTEN_ADDRESSES="['[::1]:53']"
-		DNSCRYPT_IPV4_SERVERS="false"
-		DNSCRYPT_IPV6_SERVERS="true"
-		DNSCRYPT_BLOCK_IPV6="false"
-		DNSCRYPT_BOOTSTRAP_RESOLVERS="['[2620:fe::11]:53', '[2606:4700:4700::1111]:53']"
-		DNSCRYPT_SERVER_NAMES="[${server_names_v6}]"
-		DNSCRYPT_RESOLV_CONF_CONTENT=$'nameserver ::1\noptions edns0'
-		DNSCRYPT_TEMP_RESOLV_CONF_CONTENT=$'nameserver 2606:4700:4700::1111\nnameserver 2620:fe::fe\noptions edns0'
-		DNSCRYPT_RESOLVED_DNS_LINE="DNS=::1"
-		printf '[+] IPv6-only — listen/server_names on IPv6\n'
+		die "IPv6-only host detected; this installer requires public IPv4 (HOST_IP_MODE dual|ipv4 only)"
 	fi
 
 	DNSCRYPT_SERVER_NAMES="$(printf '%s' "$DNSCRYPT_SERVER_NAMES" | tr -d '\n' | sed -E 's/[[:space:]]+/ /g; s|\[ |[|; s| \]|]|')"

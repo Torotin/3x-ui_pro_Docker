@@ -98,16 +98,29 @@ NAMESERVERS=(
 
 INTERVAL=15 # секунд между проверками
 
-# Получение текущего внешнего IP
-CURRENT_IP=$(curl -s ifconfig.me)
-
-if [[ -z "$CURRENT_IP" ]]; then
-	echo "❌ Не удалось получить внешний IP сервера."
-	exit 1
+CHECK_AAAA=false
+if [[ -n "${PUBLIC_IPV6:-}" ]]; then
+	CHECK_AAAA=true
 fi
 
-echo "🌐 Текущий внешний IP сервера: $CURRENT_IP"
-echo "Ожидание совпадения DNS-записей доменов с этим IP: ${DOMAINS[*]}"
+# Ожидаемый IPv4: из env или curl
+if [[ -n "${PUBLIC_IPV4:-}" ]]; then
+	EXPECT_IPV4=$PUBLIC_IPV4
+else
+	EXPECT_IPV4=$(curl -s ifconfig.me)
+	if [[ -z "$EXPECT_IPV4" ]]; then
+		echo "❌ Не удалось получить внешний IPv4 сервера."
+		exit 1
+	fi
+fi
+
+echo "🌐 Ожидаемый IPv4 сервера: $EXPECT_IPV4"
+if $CHECK_AAAA; then
+	echo "🌐 Ожидаемый IPv6 сервера: $PUBLIC_IPV6"
+	echo "Ожидание совпадения DNS A и AAAA доменов: ${DOMAINS[*]}"
+else
+	echo "Ожидание совпадения DNS A-записей доменов с IPv4: ${DOMAINS[*]}"
+fi
 echo
 
 while true; do
@@ -126,26 +139,57 @@ while true; do
 			else
 				match=false
 				for ip in "${ips[@]}"; do
-					if [[ "$ip" == "$CURRENT_IP" ]]; then
+					if [[ "$ip" == "$EXPECT_IPV4" ]]; then
 						match=true
 						break
 					fi
 				done
 
 				if $match; then
-					echo "✅ [$dns_name / $ns] $domain — IP совпадает: ${ips[*]}"
+					echo "✅ [$dns_name / $ns] $domain — A совпадает: ${ips[*]}"
 				else
-					echo "⚠️ [$dns_name / $ns] $domain — IP не совпадает: ${ips[*]} ≠ $CURRENT_IP"
+					echo "⚠️ [$dns_name / $ns] $domain — A не совпадает: ${ips[*]} ≠ $EXPECT_IPV4"
 					all_matched=false
 				fi
 			fi
 		done
 
+		if $CHECK_AAAA; then
+			for entry in "${NAMESERVERS[@]}"; do
+				IFS=':' read -r ns dns_name <<<"$entry"
+				mapfile -t v6s < <(dig +short @"$ns" "$domain" AAAA | grep -E ':')
+
+				if [[ ${#v6s[@]} -eq 0 ]]; then
+					echo "❌ [$dns_name / $ns] $domain — AAAA-запись не найдена или ошибка связи."
+					all_matched=false
+				else
+					match=false
+					for ip in "${v6s[@]}"; do
+						if [[ "${ip,,}" == "${PUBLIC_IPV6,,}" ]]; then
+							match=true
+							break
+						fi
+					done
+
+					if $match; then
+						echo "✅ [$dns_name / $ns] $domain — AAAA совпадает: ${v6s[*]}"
+					else
+						echo "⚠️ [$dns_name / $ns] $domain — AAAA не совпадает: ${v6s[*]} ≠ $PUBLIC_IPV6"
+						all_matched=false
+					fi
+				fi
+			done
+		fi
+
 		echo
 	done
 
 	if $all_matched; then
-		echo "✅ Все DNS-записи соответствуют текущему IP на всех указанных серверах."
+		if $CHECK_AAAA; then
+			echo "✅ Все DNS A/AAAA записи соответствуют текущим публичным IP на всех указанных серверах."
+		else
+			echo "✅ Все DNS A-записи соответствуют текущему IPv4 на всех указанных серверах."
+		fi
 		break
 	fi
 

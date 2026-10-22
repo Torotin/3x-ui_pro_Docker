@@ -304,20 +304,27 @@ install_docker_wipe() {
 }
 
 install_docker_networks() {
-	local traefik_subnet="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}"
-	local dns_subnet="${DNS_NET_SUBNET:-172.19.0.0/24}"
+	local traefik_v4="${TRAEFIK_NET_SUBNET:-172.18.0.0/24}"
+	local traefik_v6="${TRAEFIK_NET_SUBNET_V6:-fd00:dead:beef:12::/64}"
+	local dns_v4="${DNS_NET_SUBNET:-172.19.0.0/24}"
+	local dns_v6="${DNS_NET_SUBNET_V6:-fd00:dead:beef:13::/64}"
+	if [[ "${DOCKER_ENABLE_IPV6:-1}" == "0" ]]; then
+		die "DOCKER_ENABLE_IPV6=0 conflicts with dual-stack user networks (traefik-proxy, dns-net) required by compose ipv6_address pins; unset DOCKER_ENABLE_IPV6 or set it to 1"
+	fi
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd docker.network.ensure docker network create --subnet "$traefik_subnet" traefik-proxy
-		run_cmd docker.network.ensure docker network create --subnet "$dns_subnet" dns-net
+		run_cmd docker.network.ensure docker network create --subnet "$traefik_v4" --ipv6 --subnet "$traefik_v6" traefik-proxy
+		run_cmd docker.network.ensure docker network create --subnet "$dns_v4" --ipv6 --subnet "$dns_v6" dns-net
 		return 0
 	fi
-	install_docker_ensure_network traefik-proxy "$traefik_subnet"
-	install_docker_ensure_network dns-net "$dns_subnet"
+	install_docker_ensure_network traefik-proxy "$traefik_v4" "$traefik_v6"
+	install_docker_ensure_network dns-net "$dns_v4" "$dns_v6"
 }
 
-install_docker_network_subnet_matches() {
-	local name=$1 subnet=$2
-	docker network inspect "$name" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null | grep -Fq "$subnet"
+install_docker_network_subnets_match() {
+	local name=$1 v4=$2 v6=$3
+	local seen
+	seen=$(docker network inspect "$name" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null || true)
+	grep -Fq "$v4" <<<"$seen" && grep -Fq "$v6" <<<"$seen"
 }
 
 install_docker_network_is_unused() {
@@ -326,19 +333,20 @@ install_docker_network_is_unused() {
 }
 
 install_docker_ensure_network() {
-	local name=$1 subnet=$2
+	local name=$1 v4=$2 v6=$3
 	if docker network inspect "$name" >/dev/null 2>&1; then
-		if install_docker_network_subnet_matches "$name" "$subnet"; then
+		if install_docker_network_subnets_match "$name" "$v4" "$v6"; then
 			return 0
 		fi
 		if install_docker_network_is_unused "$name"; then
 			run_cmd docker.network.remove docker network rm "$name"
 		else
-			die "Docker network $name exists with unexpected subnet and has attached containers"
+			die "Docker network $name exists without required dual-stack subnets ($v4 + $v6) and has attached containers; run compose down (or destroy), then retry"
 		fi
 	fi
-	if ! run_cmd docker.network.ensure docker network create --subnet "$subnet" "$name"; then
-		die "failed to create Docker network $name with subnet $subnet"
+	if ! run_cmd docker.network.ensure docker network create \
+		--subnet "$v4" --ipv6 --subnet "$v6" "$name"; then
+		die "failed to create Docker network $name with $v4 and $v6"
 	fi
 }
 

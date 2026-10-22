@@ -15,6 +15,7 @@ theme: auto
 dns:
   bind_hosts:
     - 0.0.0.0
+    - '::'
   port: 53
   anonymize_client_ip: false
   ratelimit: 200
@@ -39,8 +40,11 @@ dns:
   fastest_timeout: 2s
   allowed_clients:
     - 127.0.0.1
+    - '::1'
     - 172.18.0.0/24
     - 172.19.0.0/24
+    - fd00:dead:beef:12::/64
+    - fd00:dead:beef:13::/64
   disallowed_clients: []
   blocked_hosts:
     - version.bind
@@ -50,6 +54,8 @@ dns:
     - 127.0.0.0/8
     - ::1/128
     - 172.19.0.0/24
+    - fd00:dead:beef:12::/64
+    - fd00:dead:beef:13::/64
   cache_enabled: true
   cache_size: 67108864
   cache_ttl_min: 60
@@ -208,24 +214,44 @@ filtering:
   rewrites:
     - domain: adguard
       answer: 172.19.0.10
+    - domain: adguard
+      answer: fd00:dead:beef:13::10
     - domain: crowdsec
       answer: 172.19.0.3
+    - domain: crowdsec
+      answer: fd00:dead:beef:13::3
     - domain: caddy
       answer: 172.19.0.5
+    - domain: caddy
+      answer: fd00:dead:beef:13::5
     - domain: traefik
       answer: 172.19.0.6
+    - domain: traefik
+      answer: fd00:dead:beef:13::6
     - domain: dozzle
       answer: 172.19.0.7
+    - domain: dozzle
+      answer: fd00:dead:beef:13::7
     - domain: tor-proxy
       answer: 172.19.0.11
+    - domain: tor-proxy
+      answer: fd00:dead:beef:13::11
     - domain: 3x-ui
       answer: 172.19.0.12
+    - domain: 3x-ui
+      answer: fd00:dead:beef:13::12
     - domain: homepage
       answer: 172.19.0.13
+    - domain: homepage
+      answer: fd00:dead:beef:13::13
     - domain: lampac
       answer: 172.19.0.14
+    - domain: lampac
+      answer: fd00:dead:beef:13::14
     - domain: sub2sing
       answer: 172.19.0.15
+    - domain: sub2sing
+      answer: fd00:dead:beef:13::15
   safe_fs_patterns:
     - /opt/adguardhome/work/userfilters/*
   safebrowsing_cache_size: 1048576

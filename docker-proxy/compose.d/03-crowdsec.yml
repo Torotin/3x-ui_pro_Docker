@@ -6,8 +6,10 @@ services:
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.3
+        ipv6_address: fd00:dead:beef:12::3
       dns-net:
         ipv4_address: 172.19.0.3
+        ipv6_address: fd00:dead:beef:13::3
     # dns:
     #   - 172.19.0.10
     ports:
