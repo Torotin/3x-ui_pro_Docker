@@ -302,6 +302,7 @@ lampac_sensitive_rule = lampac_labels.get("traefik.http.routers.lampac-sensitive
 for public_path in ("reqinfo", "testaccsdb"):
     assert_true(public_path not in lampac_sensitive_rule, f"Lampac /{public_path} must not trigger BasicAuth")
 assert_true("weblog" in lampac_sensitive_rule, "Lampac /weblog must require BasicAuth")
+assert_true("database-editor" in lampac_sensitive_rule, "Lampac /database-editor must require BasicAuth")
 for removed_router in ("lampac-api", "lampac-proxy", "lampac-plugins", "lampac-ws", "lampac-static-js"):
     assert_true(
         f"traefik.http.routers.{removed_router}.rule" not in lampac_labels,
@@ -311,6 +312,7 @@ auth_pages_rule = lampac_labels.get("traefik.http.routers.lampac-auth-pages.rule
 auth_pages_middlewares = lampac_labels.get("traefik.http.routers.lampac-auth-pages.middlewares", "")
 auth_pages_priority = int(lampac_labels.get("traefik.http.routers.lampac-auth-pages.priority", "0"))
 assert_true("adminpanel" in auth_pages_rule and "weblog" in auth_pages_rule and "/auth" in auth_pages_rule, "Lampac auth pages must bypass protected admin prefixes")
+assert_true("database-editor" not in auth_pages_rule, "Lampac /database-editor must not bypass protection on the public auth-pages router")
 assert_true(auth_pages_middlewares == "lampac-headers", "Lampac auth pages must not use BasicAuth")
 assert_true(auth_pages_priority > int(lampac_labels.get("traefik.http.routers.lampac-sensitive.priority", "0")), "Lampac auth pages must have higher priority than sensitive router")
 assert_true("traefik.http.routers.lampac-admin.rule" not in lampac_labels, "Duplicated lampac-admin router must be removed")

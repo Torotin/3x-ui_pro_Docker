@@ -76,7 +76,7 @@ services:
       - traefik.http.middlewares.lampac-cub-js.headers.customResponseHeaders.Content-Type=text/javascript
 
       # Admin paths: BasicAuth + CrowdSec
-      - traefik.http.routers.lampac-sensitive.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog)`)
+      - traefik.http.routers.lampac-sensitive.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog|database-editor)`)
       - traefik.http.routers.lampac-sensitive.entrypoints=websecure
       - traefik.http.routers.lampac-sensitive.tls=true
       - traefik.http.routers.lampac-sensitive.tls.certresolver=le
