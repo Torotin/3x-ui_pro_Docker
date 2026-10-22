@@ -308,6 +308,21 @@ for removed_router in ("lampac-api", "lampac-proxy", "lampac-plugins", "lampac-w
         f"traefik.http.routers.{removed_router}.rule" not in lampac_labels,
         f"Specialized {removed_router} router is intentionally removed in the simplified NextGen surface",
     )
+# /nws|/ws keep a dedicated high-priority router (nginx /nws contract); name is lampac-nws, not legacy lampac-ws.
+nws_rule = lampac_labels.get("traefik.http.routers.lampac-nws.rule", "")
+nws_middlewares = lampac_labels.get("traefik.http.routers.lampac-nws.middlewares", "")
+nws_priority = int(lampac_labels.get("traefik.http.routers.lampac-nws.priority", "0"))
+assert_true("nws" in nws_rule and "ws" in nws_rule, "Lampac must expose a dedicated /nws|/ws router for RCH WebSocket")
+assert_true(nws_middlewares == "lampac-nws-headers", "Lampac NWS router must use WS-safe headers (no contentTypeNosniff)")
+assert_true(nws_priority >= 70, "Lampac NWS router priority must be at least 70")
+assert_true(
+    lampac_labels.get("traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.xscheme") == "https",
+    "Lampac NWS middleware must send xscheme=https",
+)
+assert_true(
+    lampac_labels.get(f"traefik.http.routers.lampac-nws.tls.certresolver") == "le",
+    "lampac-nws must explicitly use tls.certresolver=le",
+)
 auth_pages_rule = lampac_labels.get("traefik.http.routers.lampac-auth-pages.rule", "")
 auth_pages_middlewares = lampac_labels.get("traefik.http.routers.lampac-auth-pages.middlewares", "")
 auth_pages_priority = int(lampac_labels.get("traefik.http.routers.lampac-auth-pages.priority", "0"))
@@ -338,6 +353,7 @@ assert_true(
 )
 for router in [
     "lampac-https",
+    "lampac-nws",
     "lampac-cub-plugins",
     "lampac-sensitive",
     "lampac-auth-pages",

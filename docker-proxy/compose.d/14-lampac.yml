@@ -20,13 +20,19 @@ services:
       options:
         tag: "{{.Name}}"
     healthcheck:
-      # Probe a stable plugin endpoint: GET / can return 500 during LampaWeb init,
-      # and Traefik drops all routers for Docker-unhealthy containers.
-      test: ["CMD-SHELL", "curl -fsS --max-time 5 http://127.0.0.1:9118/online.js >/dev/null"]
+      # Probe online.js (cheap) and warm/verify lampa-main/app.min.js under https
+      # scheme headers. StatiCache(always) can permanently cache an empty 500 for
+      # app.min.js after a brief startup race; Firefox then sees blank MIME + nosniff
+      # and refuses the script. Warming with xscheme keeps the good response cached.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS --max-time 5 http://127.0.0.1:9118/online.js >/dev/null && curl -fsS --max-time 20 -H 'Host: localhost' -H 'xscheme: https' -H 'X-Forwarded-Proto: https' -o /tmp/hc-app.min.js http://127.0.0.1:9118/lampa-main/app.min.js && test $(wc -c < /tmp/hc-app.min.js) -gt 100000",
+        ]
       interval: 30s
-      timeout: 10s
+      timeout: 25s
       retries: 5
-      start_period: 60s
+      start_period: 90s
     # --- Mount your own files (commented by default). Paths are relative to this compose file. ---
     volumes:
       # Required for custom setup: root password (WebLog, etc.) → must exist on host before `up`
@@ -45,6 +51,9 @@ services:
       - ../_data/lampac/lampa-main:/lampac/wwwroot/lampa-main
       # Force proxy_tmdb via lampainit-invc hooks (GeoIP {country} is often empty behind Traefik).
       - ../lampac-docker/plugins/override:/lampac/plugins/override:ro
+      # RCH: single-flight nws-client load (stock putScript force=true flaps Firefox WSS).
+      # FileCache does not pick this from override/ for plugins/rch_nws.js — bind-mount required.
+      - ../lampac-docker/plugins/override/rch_nws.js:/lampac/plugins/rch_nws.js:ro
       # Optional: extra user module dir (see README → Docker → manifest.json). Example name is illustrative.
       # - ../lampac-docker/mods/BulbaCrawler:/lampac/mods/BulbaCrawler
       - ../lampac-docker/mods/AdminPanel/manifest.json:/lampac/module/AdminPanel/manifest.json
@@ -63,6 +72,19 @@ services:
       - traefik.http.routers.lampac-https.service=lampac
       - traefik.http.routers.lampac-https.middlewares=lampac-headers
       - traefik.http.routers.lampac-https.priority=10
+
+      # Native WebSocket (RCH /nws) + legacy /ws: keep Upgrade path free of
+      # contentTypeNosniff/XSS response headers that some clients mishandle.
+      # Transport contract: idle/read ≥ 2h (entrypoint respondingTimeouts already 0s).
+      - traefik.http.routers.lampac-nws.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(nws|ws)`)
+      - traefik.http.routers.lampac-nws.entrypoints=websecure
+      - traefik.http.routers.lampac-nws.tls=true
+      - traefik.http.routers.lampac-nws.tls.certresolver=le
+      - traefik.http.routers.lampac-nws.service=lampac
+      - traefik.http.routers.lampac-nws.middlewares=lampac-nws-headers
+      - traefik.http.routers.lampac-nws.priority=70
+      - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.xscheme=https
+      - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
 
       # Cub JS plugins: Lampac StatiCache HIT can serve these extensionless paths as
       # application/octet-stream; with contentTypeNosniff Firefox refuses to execute.

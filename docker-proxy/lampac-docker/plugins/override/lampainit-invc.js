@@ -1,6 +1,7 @@
 // Force Lampac TMDB proxy for all clients (string 'true' — Lampa.Storage.field toggle).
 // Default lampainit only enables proxy when GeoIP {country} == 'RU'.
 // Also persist accsdb account id from privateinit.js?uid=… for /tmdb/* auth.
+// CUB sync WebSocket stays enabled (stock lampainit socket_use=true).
 
 var lampainit_invc = {};
 
@@ -22,17 +23,19 @@ function lampainit_capture_accsdb_uid() {
   return Lampa.Storage.get('lampac_accsdb_uid', '');
 }
 
-lampainit_invc.appload = function appload() {
+function lampainit_apply_local() {
   Lampa.Storage.set('proxy_tmdb', 'true');
   lampainit_capture_accsdb_uid();
+}
+
+lampainit_invc.appload = function appload() {
+  lampainit_apply_local();
 };
 
 lampainit_invc.appready = function appready() {
-  Lampa.Storage.set('proxy_tmdb', 'true');
-  lampainit_capture_accsdb_uid();
+  lampainit_apply_local();
 };
 
 lampainit_invc.first_initiale = function firstinitiale() {
-  Lampa.Storage.set('proxy_tmdb', 'true');
-  lampainit_capture_accsdb_uid();
+  lampainit_apply_local();
 };
