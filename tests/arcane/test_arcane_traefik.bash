@@ -42,6 +42,21 @@ test_compose_pins_arcane_image_not_latest() {
 	pass "compose pins Arcane by digest"
 }
 
+test_live_probe_uses_get_for_asset_headers() {
+	grep -q -- '-fsSI' "$ROOT_DIR/tests/arcane/probe-live.sh" && fail "probe must not use HEAD for Arcane JS assets"
+	grep -q -- '-D -' "$ROOT_DIR/tests/arcane/probe-live.sh" || fail "probe should capture headers from a GET request"
+	pass "live probe checks asset headers with GET"
+}
+
+test_live_probe_crawls_relative_js_chunks() {
+	grep -q 'normalize_js_ref' "$ROOT_DIR/tests/arcane/probe-live.sh" || fail "probe must normalize nested JS references"
+	grep -q 'dirname "$base_path"' "$ROOT_DIR/tests/arcane/probe-live.sh" || fail "probe must resolve relative chunks from source path"
+	grep -q 'html_js=' "$ROOT_DIR/tests/arcane/probe-live.sh" || fail "probe must seed crawl from all HTML JS assets"
+	grep -q 'queue+=(' "$ROOT_DIR/tests/arcane/probe-live.sh" || fail "probe must process discovered chunks from an in-memory queue"
+	grep -q 'checked < 120' "$ROOT_DIR/tests/arcane/probe-live.sh" || fail "probe must crawl beyond first-level chunks with a bound"
+	pass "live probe crawls nested JS chunks"
+}
+
 test_fixture_contains_unstable_names_for_semantic_coverage() {
 	grep -q 'function Xx(' "$FIXTURE" || fail "fixture must use non-Ph name Xx"
 	grep -q 'var Guard=' "$FIXTURE" || fail "fixture must use non-Q name Guard"
@@ -55,6 +70,8 @@ main() {
 	test_arcane_yml_js_rewrites_are_semantic_not_minified_names
 	test_arcane_yml_replacements_avoid_broken_js_regex_lookahead
 	test_compose_pins_arcane_image_not_latest
+	test_live_probe_uses_get_for_asset_headers
+	test_live_probe_crawls_relative_js_chunks
 	printf 'All arcane traefik tests passed\n'
 }
 
