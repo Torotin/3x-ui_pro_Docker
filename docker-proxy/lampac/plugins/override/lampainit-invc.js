@@ -58,6 +58,16 @@
     var origin = location.origin || '';
     if (origin.indexOf('http') === 0) localStorage.setItem('alc_auto_server', origin);
   } catch (e) {}
+  // Load gitignored JacRed apikey inject (written by apply_lampac_jacred_secrets).
+  try {
+    if (!window.__lampac_jacred_apikey) {
+      var jacScript = document.createElement('script');
+      // Override files are HTTP-served at /{basename} (not /plugins/override/…).
+      jacScript.src = (location.origin || '') + '/jacred-apikey.local.js';
+      jacScript.async = false;
+      document.documentElement.appendChild(jacScript);
+    }
+  } catch (e) {}
   // Pin JacRed/Jackett host before parser reads empty jackett_url from Storage.
   try {
     var jhost = location.hostname || '';
@@ -65,7 +75,11 @@
       localStorage.setItem('jackett_url', jhost);
       localStorage.setItem('parser_torrent_type', 'jackett');
       localStorage.setItem('parser_use', 'true');
-      if (!localStorage.getItem('jackett_key')) localStorage.setItem('jackett_key', '1');
+      var earlyKey = '';
+      try {
+        earlyKey = window.__lampac_jacred_apikey || '';
+      } catch (eJ) {}
+      if (earlyKey) localStorage.setItem('jackett_key', earlyKey);
     }
   } catch (e) {}
 
@@ -235,14 +249,21 @@ function lampainit_force_jacred_parser() {
     Lampa.Storage.set('parser_use', 'true');
     Lampa.Storage.set('parser_torrent_type', 'jackett');
     Lampa.Storage.set('jackett_url', host);
-    if (!Lampa.Storage.get('jackett_key', '')) {
-      Lampa.Storage.set('jackett_key', '1');
+    var key = '';
+    try {
+      key = window.__lampac_jacred_apikey || '';
+    } catch (e2) {}
+    if (key) {
+      Lampa.Storage.set('jackett_key', key);
+      try {
+        localStorage.setItem('jackett_key', key);
+      } catch (e3) {}
     }
     try {
       localStorage.setItem('jackett_url', host);
       localStorage.setItem('parser_torrent_type', 'jackett');
       localStorage.setItem('parser_use', 'true');
-    } catch (e2) {}
+    } catch (e4) {}
   } catch (e) {}
 }
 
