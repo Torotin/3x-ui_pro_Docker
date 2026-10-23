@@ -42,10 +42,10 @@ desktop.ini
 *.iml
 .cursor/
 .superpowers/
-docs/
+docs/**
 # Track design specs / plans under docs/superpowers (rest of docs/ stays ignored)
 !docs/superpowers/
-!docs/superpowers/**/
+!docs/superpowers/**
 
 # ==== Python / test leftovers ====
 __pycache__/
