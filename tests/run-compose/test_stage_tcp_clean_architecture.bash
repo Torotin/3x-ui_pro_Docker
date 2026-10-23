@@ -298,31 +298,65 @@ assert_true("basic-auth" not in public_middleware.lower(), "Lampac public front 
 assert_true("bouncer" not in public_middleware.lower(), "Lampac public front must not use CrowdSec bouncer")
 sensitive = lampac_labels.get("traefik.http.routers.lampac-sensitive.middlewares", "")
 assert_true("lampac-admin-chain" in sensitive, "Lampac sensitive paths must use protected middleware chain")
-lampac_api_rule = lampac_labels.get("traefik.http.routers.lampac-api.rule", "")
 lampac_sensitive_rule = lampac_labels.get("traefik.http.routers.lampac-sensitive.rule", "")
-assert_true("reqinfo" in lampac_api_rule, "Lampac /reqinfo must remain public for the browser frontend")
-assert_true("reqinfo" not in lampac_sensitive_rule, "Lampac /reqinfo must not trigger BasicAuth")
-assert_true("testaccsdb" in lampac_api_rule, "Lampac /testaccsdb must remain public for shared_passwd registration")
-assert_true("testaccsdb" not in lampac_sensitive_rule, "Lampac /testaccsdb must not trigger BasicAuth")
-assert_true("online" in lampac_api_rule, "Lampac /online routes must remain public for online JS plugins")
-assert_true("extensions" not in lampac_api_rule, "Lampac API router must not include obsolete /extensions path")
+for public_path in ("reqinfo", "testaccsdb"):
+    assert_true(public_path not in lampac_sensitive_rule, f"Lampac /{public_path} must not trigger BasicAuth")
 assert_true("weblog" in lampac_sensitive_rule, "Lampac /weblog must require BasicAuth")
+assert_true("database-editor" in lampac_sensitive_rule, "Lampac /database-editor must require BasicAuth")
+for removed_router in ("lampac-api", "lampac-proxy", "lampac-plugins", "lampac-ws", "lampac-static-js"):
+    assert_true(
+        f"traefik.http.routers.{removed_router}.rule" not in lampac_labels,
+        f"Specialized {removed_router} router is intentionally removed in the simplified NextGen surface",
+    )
+# /nws|/ws keep a dedicated high-priority router (nginx /nws contract); name is lampac-nws, not legacy lampac-ws.
+nws_rule = lampac_labels.get("traefik.http.routers.lampac-nws.rule", "")
+nws_middlewares = lampac_labels.get("traefik.http.routers.lampac-nws.middlewares", "")
+nws_priority = int(lampac_labels.get("traefik.http.routers.lampac-nws.priority", "0"))
+assert_true("nws" in nws_rule and "ws" in nws_rule, "Lampac must expose a dedicated /nws|/ws router for RCH WebSocket")
+assert_true(nws_middlewares == "lampac-nws-headers", "Lampac NWS router must use WS-safe headers (no contentTypeNosniff)")
+assert_true(nws_priority >= 70, "Lampac NWS router priority must be at least 70")
+assert_true(
+    lampac_labels.get("traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.xscheme") == "https",
+    "Lampac NWS middleware must send xscheme=https",
+)
+assert_true(
+    lampac_labels.get(f"traefik.http.routers.lampac-nws.tls.certresolver") == "le",
+    "lampac-nws must explicitly use tls.certresolver=le",
+)
 auth_pages_rule = lampac_labels.get("traefik.http.routers.lampac-auth-pages.rule", "")
 auth_pages_middlewares = lampac_labels.get("traefik.http.routers.lampac-auth-pages.middlewares", "")
 auth_pages_priority = int(lampac_labels.get("traefik.http.routers.lampac-auth-pages.priority", "0"))
 assert_true("adminpanel" in auth_pages_rule and "weblog" in auth_pages_rule and "/auth" in auth_pages_rule, "Lampac auth pages must bypass protected admin prefixes")
+assert_true("database-editor" not in auth_pages_rule, "Lampac /database-editor must not bypass protection on the public auth-pages router")
 assert_true(auth_pages_middlewares == "lampac-headers", "Lampac auth pages must not use BasicAuth")
 assert_true(auth_pages_priority > int(lampac_labels.get("traefik.http.routers.lampac-sensitive.priority", "0")), "Lampac auth pages must have higher priority than sensitive router")
 assert_true("traefik.http.routers.lampac-admin.rule" not in lampac_labels, "Duplicated lampac-admin router must be removed")
+cub_rule = lampac_labels.get("traefik.http.routers.lampac-cub-plugins.rule", "")
+cub_middlewares = lampac_labels.get("traefik.http.routers.lampac-cub-plugins.middlewares", "")
+assert_true("/cub/" in cub_rule and "plugin" in cub_rule, "Lampac cub plugin router must match /cub/*/plugin paths")
+assert_true("lampac-cub-js" in cub_middlewares, "Lampac cub plugin router must apply the Content-Type workaround middleware")
+assert_true(
+    lampac_labels.get("traefik.http.middlewares.lampac-cub-js.headers.customResponseHeaders.Content-Type") == "text/javascript",
+    "Lampac cub Content-Type workaround must serve text/javascript",
+)
+assert_true(
+    "bouncer@file" in lampac_labels.get("traefik.http.middlewares.lampac-admin-chain.chain.middlewares", ""),
+    "Lampac admin chain must include the CrowdSec bouncer",
+)
+assert_true(
+    lampac_labels.get("traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.xscheme") == "https",
+    "Lampac must send xscheme=https so plugin URLs are not http:// under HTTPS (mixed content)",
+)
+assert_true(
+    lampac_labels.get("traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.X-Forwarded-Proto") == "https",
+    "Lampac must send X-Forwarded-Proto=https for trusted-proxy scheme detection",
+)
 for router in [
     "lampac-https",
-    "lampac-proxy",
-    "lampac-api",
+    "lampac-nws",
+    "lampac-cub-plugins",
     "lampac-sensitive",
     "lampac-auth-pages",
-    "lampac-plugins",
-    "lampac-ws",
-    "lampac-static-js",
 ]:
     assert_true(
         lampac_labels.get(f"traefik.http.routers.{router}.tls.certresolver") == "le",

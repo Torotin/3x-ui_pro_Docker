@@ -3,7 +3,7 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-Explore%20Docs-6C47FF?logo=readthedocs&logoColor=white)](https://deepwiki.com/Torotin/3x-ui_pro_Docker)
 
-`3x-ui_pro_Docker` — Docker Compose стек и installer CLI/wizard для развёртывания прокси-инфраструктуры на чистом Debian/Ubuntu: Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Dozzle, usque (WARP), TOR helper и опциональные Telemt / Lampac / Mihomo.
+`3x-ui_pro_Docker` — Docker Compose стек и installer CLI/wizard для развёртывания прокси-инфраструктуры на чистом Debian/Ubuntu: Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Arcane, usque (WARP), TOR helper и опциональные Telemt / Lampac / Mihomo.
 
 Репозиторий содержит compose-фрагменты, installer, шаблоны окружения и mock-only тесты. Собственные образы проекта собираются в [AutoDockerBuilder](https://github.com/Torotin/AutoDockerBuilder).
 
@@ -39,6 +39,18 @@
 - Root/sudo для пакетов, Docker, firewall, SSH и sysctl.
 - Локальная разработка installer — только mock/fake окружение (без реальных apt/docker/ufw на рабочей машине).
 
+### Ресурсы VPS (ориентир)
+
+Цифры ориентировочные, не результаты замеров. Отдельные сервисы в compose могут задавать свои `mem_limit`/`cpus` (например Caddy, tor-proxy, Lampac); таблица ниже — ориентир по хосту VPS, а не жёсткий лимит стека. Always-on стек (Traefik, 3x-ui/Xray, AdGuard Home, CrowdSec, Caddy, Homepage, Arcane, usque, tor-proxy, …) без Lampac/Telemt/Mihomo обычно легче, чем тот же стек с опциональными тяжёлыми сервисами.
+
+| Профиль | CPU | RAM | Диск |
+|---------|-----|-----|------|
+| Минимум (без Lampac/Telemt/Mihomo) | 2 vCPU | 2–4 GB | 20+ GB SSD |
+| Комфортно (always-on + запас) | 2–4 vCPU | 4–8 GB | 40+ GB SSD |
+| С Lampac / тяжёлым трафиком | 4 vCPU | 8 GB+ | 40+ GB SSD |
+
+На 2 GB возможен swap/OOM при пиках; для production предпочтительнее ≥4 GB.
+
 ## Границы каталогов
 
 | Путь | Назначение |
@@ -55,7 +67,7 @@
 ## Подготовка перед установкой
 
 1. Чистый Debian/Ubuntu и root/sudo.
-2. DNS A (и AAAA при IPv6) на `WEBDOMAIN` → публичный IP сервера.
+2. DNS на `WEBDOMAIN`: A → публичный IPv4 сервера; при dual-stack (`HOST_IP_MODE=dual`) также AAAA → публичный IPv6. Адреса `fd00:dead:beef:*` в compose — только внутренние ULA Docker-сетей, не публиковать у регистратора.
 3. Свободны host `80/tcp` и `443/tcp`. Host `443/udp` будет открыт firewall и опубликован compose (см. раздел портов).
 4. Не публиковать наружу `4443`, `9118`, panel/metrics/CrowdSec ports.
 5. Держать второй SSH-сеанс до завершения шагов `firewall` / `ssh`.
@@ -198,7 +210,7 @@ Wizard submenu (`t`):
 - `ENABLE_HYSTERIA2` включает inbound в Xray desired state; **не** убирает host `443/udp` mapping и UFW.
 - Не открывать наружу: `4443`, `9118`, panel ports, metrics, CrowdSec.
 - Traefik HTTP/3 entrypoints в clean install отключены / high-risk — не включать без отдельного плана отката.
-- Админки: path-routes на `https://${WEBDOMAIN}/...` + BasicAuth + CrowdSec + rate-limit + noindex.
+- Админки: path-routes на `https://${WEBDOMAIN}/...` + BasicAuth + CrowdSec + rate-limit + noindex. Arcane: `/${URI_ARCANE}` + root `/api` (prio 900), `/_app`, SPA — [`07-arcane.yml`](docker-proxy/compose.d/07-arcane.yml). Homepage NextAuth только узкие `/api/auth/signin|session|callback|…` (prio 949), не весь `/api/auth` — иначе крадёт Arcane login.
 - Lampac routing (root front без BasicAuth; sensitive `/admin` / `/adminpanel` / `/stats` / `/weblog` — admin middleware) — **только при** `ENABLE_LAMPAC=true`.
 - `ENABLE_VLESS_GRPC`: inbound-only toggle (default false); не compose-сервис.
 
@@ -328,11 +340,11 @@ sudo -E script/install.sh self-update --branch main --yes
 ### Always-on (clean install, не за toggle)
 
 - Traefik + traefik-acme-exporter
-- 3x-ui (+ sub-json-processor)
+- 3x-ui
 - AdGuard Home
 - CrowdSec + crowdsec-firewall-bouncer
 - Caddy (public browser fallback, когда Lampac выключен)
-- Homepage, Dozzle
+- Homepage, Arcane
 - usque, tor-proxy, logrotate
 
 Compose fragments: [`docker-proxy/compose.d`](docker-proxy/compose.d). Host paths относительно каталога `compose.d`.
@@ -416,13 +428,25 @@ SSH apply логирует auth mode, пользователя, порт, backup
     Проверка: `ENABLE_HYSTERIA2` в `$INSTALL_ROOT/compose.d/.env`. Publish/UFW ≠ inbound.  
     Действие: выставить `ENABLE_HYSTERIA2=true`, `run env`, затем `run compose`.
 
-11. **Telemt off, но telemt ещё крутится / неверный fallback**  
+11. **Ошибка пересоздания `traefik-proxy` / `dns-net` при апгрейде на dual-stack**  
+    Проверка: шаг `docker`/`compose` сообщает, что сеть занята контейнерами.  
+    Действие: `$INSTALL_ROOT/compose.d/run-compose.sh down`, затем снова `sudo -E script/install.sh run docker network --apply --yes` и `run compose` (на busy-хосте нельзя менять подсеть «на лету»).
+
+12. **Telemt off, но telemt ещё крутится / неверный fallback**  
     Проверка: `ENABLE_TELEMT=false` в compose `.env`; ожидать `VISION_FALLBACK_HOST=traefik` **и** `REALITY_TARGET_HOST=traefik` (ports `4443`); fragment [`15-telemt.yml`](docker-proxy/compose.d/15-telemt.yml) не должен включаться.  
     Действие: `run env`, compose up; при необходимости `down --remove-orphans`.
 
-12. **Неверный INSTALL_ROOT / пустой state**  
+13. **Неверный INSTALL_ROOT / пустой state**  
     Проверка: те же `INSTALL_ROOT` / `INSTALL_STATE_DIR`, что при установке.  
     Действие: `export` тех же путей и всегда `sudo -E`.
+
+14. **Browser TLS `PR_END_OF_FILE_ERROR` / timeout после рестарта бэкенда**  
+    Проверка: `cscli decisions list` — ложный `http-probing`, когда path временно уходит в Caddy-fallback.  
+    Действие: снять decision для своего IP или дождаться expiry; дождаться healthy целевого сервиса.
+
+15. **Двойной Basic Auth / Arcane login не работает; Homepage NextAuth `CLIENT_FETCH_ERROR`**  
+    Проверка: `homepage-static` должен держать **только** NextAuth-пути (`/api/auth/signin|signout|session|csrf|providers|error|_log|callback`), prio 949; Arcane `/api/auth/login|me|…` уходит в `arcane-api` (prio 900, realm Basic Authentication). Labels — [`13-homepage.yml`](docker-proxy/compose.d/13-homepage.yml), [`07-arcane.yml`](docker-proxy/compose.d/07-arcane.yml).  
+    Действие: не возвращать широкий `PathPrefix(/api/auth)`; обновить labels + recreate homepage (Traefik при необходимости).
 
 ## Удаление
 

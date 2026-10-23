@@ -34,9 +34,13 @@ http:
           forwardedHeadersTrustedIPs:
             - 172.18.0.0/24
             - 172.19.0.0/24
+            - fd00:dead:beef:12::/64
+            - fd00:dead:beef:13::/64
           clientTrustedIPs:
             - 172.18.0.0/24
             - 172.19.0.0/24
+            - fd00:dead:beef:12::/64
+            - fd00:dead:beef:13::/64
           # Дополнительные настройки для оптимизации
           crowdsecLapiTimeout: 5s
           crowdsecLapiRetryInterval: 1s

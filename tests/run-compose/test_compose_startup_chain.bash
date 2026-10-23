@@ -57,10 +57,17 @@ tor_start_period=$(compose_value '.services."tor-proxy".healthcheck.start_period
 [[ "$tor_start_period" == "3m" ]] ||
 	fail "tor-proxy healthcheck start_period must allow bridge bootstrap; got '${tor_start_period:-<missing>}'"
 
+tor_ipv6_env=$(compose_value '.services."tor-proxy".environment.TOR_IPV6_AVAILABLE // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$tor_ipv6_env" == '${TOR_IPV6_AVAILABLE:-false}' ]] ||
+	fail "tor-proxy TOR_IPV6_AVAILABLE must come from compose env; got '${tor_ipv6_env:-<missing>}'"
+
 tor_public_ip=$(compose_value '.services."tor-proxy".networks."traefik-proxy".ipv4_address // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
 tor_dns_ip=$(compose_value '.services."tor-proxy".networks."dns-net".ipv4_address // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
-[[ "$tor_public_ip" == "172.18.0.11" && "$tor_dns_ip" == "172.19.0.11" ]] ||
-	fail "tor-proxy must join both existing networks with reserved addresses"
+tor_public_ipv6=$(compose_value '.services."tor-proxy".networks."traefik-proxy".ipv6_address // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+tor_dns_ipv6=$(compose_value '.services."tor-proxy".networks."dns-net".ipv6_address // ""' "$COMPOSE_DIR/11-tor-proxy.yml")
+[[ "$tor_public_ip" == "172.18.0.11" && "$tor_dns_ip" == "172.19.0.11" &&
+	"$tor_public_ipv6" == "fd00:dead:beef:12::11" && "$tor_dns_ipv6" == "fd00:dead:beef:13::11" ]] ||
+	fail "tor-proxy must join both existing networks with reserved v4/v6 addresses"
 
 for dependency in crowdsec crowdsec-firewall-bouncer caddy dozzle adguard 3x-ui homepage usque tor-proxy; do
 	assert_depends_on_healthy "$COMPOSE_DIR/06-traefik.yml" traefik "$dependency"

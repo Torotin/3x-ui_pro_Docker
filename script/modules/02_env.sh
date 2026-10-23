@@ -15,24 +15,6 @@ render_env_template() {
 	fi
 }
 
-detect_public_ip() {
-	local family=$1 label="ip.detect.ipv4" url="https://api.ipify.org"
-	if [[ "$family" == "6" ]]; then
-		label="ip.detect.ipv6"
-		url="https://api6.ipify.org"
-	fi
-	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd "$label" curl -fsSL "$url"
-		if [[ "$family" == "6" ]]; then
-			printf '2001:db8::10\n'
-		else
-			printf '198.51.100.10\n'
-		fi
-		return 0
-	fi
-	curl -fsSL --max-time 5 "$url" 2>/dev/null || true
-}
-
 generate_hex_secret() {
 	local bytes=${1:-16}
 	if command -v openssl >/dev/null 2>&1; then
@@ -93,14 +75,16 @@ detect_docker_socket_gid() {
 
 ensure_env_defaults() {
 	: "${WEBDOMAIN:=example.invalid}"
-	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
-		PUBLIC_IPV4=$(detect_public_ip 4)
-		: "${PUBLIC_IPV4:=127.0.0.1}"
+	ip_probe_resolve_host_mode
+	# PUBLIC_IPV4 is required for this product; probe already died if missing.
+	: "${PUBLIC_IPV4:?PUBLIC_IPV4 required}"
+	# PUBLIC_IPV6 may be empty when HOST_IP_MODE=ipv4 — do not default to PUBLIC_IPV4
+	if [[ "${HOST_IP_MODE}" == "dual" ]]; then
+		TOR_IPV6_AVAILABLE=true
+	else
+		TOR_IPV6_AVAILABLE=false
 	fi
-	if [[ -z "${PUBLIC_IPV6:-}" ]]; then
-		PUBLIC_IPV6=$(detect_public_ip 6)
-	fi
-	: "${PUBLIC_IPV6:=$PUBLIC_IPV4}"
+	export TOR_IPV6_AVAILABLE
 	: "${USER_WEB:=}"
 	: "${PASS_WEB:=}"
 	: "${USER_SSH:=}"
@@ -111,7 +95,10 @@ ensure_env_defaults() {
 	: "${ADMIN_ROUTING_MODE:=path}"
 	: "${STRICT_DNS_CHECK:=true}"
 	: "${STRICT_ACME_CHECK:=true}"
-	: "${URI_DOZZLE:=$(generate_random_string 12 16)}"
+	# Prefer URI_ARCANE; keep URI_DOZZLE as legacy alias for upgrades from older installs.
+	: "${URI_ARCANE:=${URI_DOZZLE:-$(generate_random_string 12 16)}}"
+	: "${URI_DOZZLE:=$URI_ARCANE}"
+	: "${ARCANE_ENCRYPTION_KEY:=$(generate_random_string 32 48)}"
 	: "${URI_PANEL_PATH:=$(generate_random_string 12 16)}"
 	: "${URI_SUB_PATH:=$(generate_random_string 12 16)}"
 	: "${URI_JSON_PATH:=$(generate_random_string 12 16)}"
@@ -150,6 +137,7 @@ ensure_env_defaults() {
 	: "${ENABLE_TELEMT:=false}"
 	: "${ENABLE_MIHOMO:=false}"
 	: "${MIHOMO_SECRET:=$(generate_hex_secret 32)}"
+	: "${LAMPAC_JACRED_APIKEY:=$(generate_hex_secret 16)}"
 	: "${TELEMT_API_AUTH_HEADER:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_JWT_SECRET:=$(generate_random_string 48 64)}"
 	: "${TELEMT_PANEL_PASSWORD_HASH:=}"
@@ -228,16 +216,17 @@ ensure_env_defaults() {
 		: "${REALITY_TARGET_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
 		: "${REALITY_TARGET_XVER:=1}"
 	fi
-	export WEBDOMAIN PUBLIC_IPV4 PUBLIC_IPV6 USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
+	export WEBDOMAIN HOST_IP_MODE PUBLIC_IPV4 PUBLIC_IPV6 TOR_IPV6_AVAILABLE USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
-	export URI_TRAEFIK_DASHBOARD URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
+	export URI_TRAEFIK_DASHBOARD URI_ARCANE URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
 	export URI_VLESS_XHTTP URI_VLESS_GRPC URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_MIHOMO URI_TEST
+	export ARCANE_ENCRYPTION_KEY
 	export PORT_LOCAL_CADDYWEB PORT_LOCAL_SUB2SING PORT_LOCAL_DOZZLE PORT_LOCAL_VLESS_SUBSCRIBE
 	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_GRPC PORT_LOCAL_HYSTERIA PORT_LOCAL_TELEMT_PROXY
 	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_CROWDSEC_API
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET LAMPAC_JACRED_APIKEY TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
 	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
 	export TELEMT_ME_KEEPALIVE_ENABLED TELEMT_ME_KEEPALIVE_INTERVAL_SECS TELEMT_ME_KEEPALIVE_JITTER_SECS
 	export TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC TELEMT_ME_RECONNECT_BACKOFF_BASE_MS TELEMT_ME_RECONNECT_BACKOFF_CAP_MS TELEMT_ME_RECONNECT_FAST_RETRY_COUNT
@@ -398,6 +387,12 @@ install_env_command() {
 	render_env_template "$templates/docker.env.template" "$compose_env"
 	render_telemt_configs
 	render_mihomo_config
+	if install_lampac_enabled; then
+		if [[ -f "$INSTALL_ROOT/lampac/config/init.conf" ]]; then
+			apply_lampac_jacred_secrets
+			run_cmd env.lampac_jacred printf 'applied lampac JacRed secrets\n'
+		fi
+	fi
 	run_cmd env.render printf 'rendered env files\n'
 	printf 'rendered:\n- %s\n- %s\n' "$install_env" "$compose_env"
 	if install_telemt_enabled; then

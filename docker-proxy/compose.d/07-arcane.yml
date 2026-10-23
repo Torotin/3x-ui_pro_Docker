@@ -1,0 +1,130 @@
+services:
+  arcane:
+    container_name: arcane
+    image: ghcr.io/getarcaneapp/manager:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - arcane-data:/app/data
+      # Allow Arcane projects to manage this stack tree when desired.
+      - /opt/docker-proxy:/opt/docker-proxy
+    env_file:
+      - ./.env
+    environment:
+      - APP_URL=https://${WEBDOMAIN}/${URI_ARCANE}
+      - PUID=1000
+      - PGID=1000
+      - ENCRYPTION_KEY=${ARCANE_ENCRYPTION_KEY}
+      - PROJECTS_DIRECTORY=/opt/docker-proxy
+      - TRUSTED_PROXIES=172.18.0.0/16,fd00:dead:beef:12::/64,fd00:dead:beef:13::/64
+    healthcheck:
+      test: ["CMD", "./arcane", "health", "--timeout", "2s"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    networks:
+      traefik-proxy:
+        ipv4_address: 172.18.0.7
+        ipv6_address: fd00:dead:beef:12::7
+      dns-net:
+        ipv4_address: 172.19.0.7
+        ipv6_address: fd00:dead:beef:13::7
+    security_opt:
+      - no-new-privileges=true
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.tags=traefik
+
+      - traefik.http.services.arcane-svc.loadbalancer.server.port=3552
+      - traefik.http.services.arcane-svc.loadbalancer.server.scheme=http
+
+      # Root-path exceptions (upstream Arcane has no subpath support):
+      #   /${URI_ARCANE}/*  → UI (stripPrefix) + Basic
+      #   /_app/*           → SvelteKit assets + JS body rewrite (prio 1100)
+      #   /api/*            → Arcane API + Basic (prio 900; Lampac v1/v2=910; Homepage NextAuth paths=949)
+      #   /img, manifest, service-worker, passkey → PWA/helpers (prio 1100)
+      #   /login + SPA roots → arcane-spa-redirect@file (prio 1200)
+      # Dual auth: Basic (USER_WEB/PASS_WEB) then Arcane app login.
+
+      # Shared middlewares
+      - traefik.http.middlewares.basic-auth.basicauth.users=${HT_PASS_ENCODED}
+      - traefik.http.middlewares.basic-auth.basicauth.realm=Basic Authentication
+      - traefik.http.middlewares.arcane-rate.ratelimit.average=50
+      - traefik.http.middlewares.arcane-rate.ratelimit.burst=100
+      - traefik.http.middlewares.arcane-strip.stripPrefix.prefixes=/${URI_ARCANE}
+
+      # UI under URI_ARCANE: strip prefix, rewrite HTML/manifest body on the way out
+      - traefik.http.middlewares.arcane-ui-chain.chain.middlewares=bouncer@file,basic-auth,arcane-rate,admin-security-headers@file,arcane-strip,arcane-body@file
+      # Root asset/API chains: no strip, no compress (WS/SSE-safe)
+      - traefik.http.middlewares.arcane-root-chain.chain.middlewares=bouncer@file,arcane-rate,admin-security-headers@file
+      - traefik.http.middlewares.arcane-app-chain.chain.middlewares=bouncer@file,arcane-rate,admin-security-headers@file,arcane-js-body@file
+      - traefik.http.middlewares.arcane-api-chain.chain.middlewares=bouncer@file,basic-auth,arcane-rate,admin-security-headers@file
+      - traefik.http.middlewares.arcane-pwa-chain.chain.middlewares=bouncer@file,arcane-rate,admin-security-headers@file,arcane-body@file
+
+      # Prefixed UI
+      - traefik.http.routers.arcane-ui.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ARCANE}`)
+      - traefik.http.routers.arcane-ui.entrypoints=websecure
+      - traefik.http.routers.arcane-ui.middlewares=arcane-ui-chain
+      - traefik.http.routers.arcane-ui.service=arcane-svc
+      - traefik.http.routers.arcane-ui.tls.certresolver=le
+      - traefik.http.routers.arcane-ui.priority=1100
+
+      # Root /_app (SvelteKit assets; JS body rewrite for hardcoded /login)
+      - traefik.http.routers.arcane-app.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/_app`)
+      - traefik.http.routers.arcane-app.entrypoints=websecure
+      - traefik.http.routers.arcane-app.middlewares=arcane-app-chain
+      - traefik.http.routers.arcane-app.service=arcane-svc
+      - traefik.http.routers.arcane-app.tls.certresolver=le
+      - traefik.http.routers.arcane-app.priority=1100
+
+      # Root /api for Arcane (priority > Traefik dashboard /api 145, < Homepage /api/* 949)
+      - traefik.http.routers.arcane-api.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.arcane-api.entrypoints=websecure
+      - traefik.http.routers.arcane-api.middlewares=arcane-api-chain
+      - traefik.http.routers.arcane-api.service=arcane-svc
+      - traefik.http.routers.arcane-api.tls.certresolver=le
+      - traefik.http.routers.arcane-api.priority=900
+
+      # Root PWA helpers
+      - traefik.http.routers.arcane-pwa.rule=Host(`${WEBDOMAIN}`) && (Path(`/app.webmanifest`) || Path(`/service-worker.js`))
+      - traefik.http.routers.arcane-pwa.entrypoints=websecure
+      - traefik.http.routers.arcane-pwa.middlewares=arcane-pwa-chain
+      - traefik.http.routers.arcane-pwa.service=arcane-svc
+      - traefik.http.routers.arcane-pwa.tls.certresolver=le
+      - traefik.http.routers.arcane-pwa.priority=1100
+
+      # Root /img icons
+      - traefik.http.routers.arcane-img.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/img`)
+      - traefik.http.routers.arcane-img.entrypoints=websecure
+      - traefik.http.routers.arcane-img.middlewares=arcane-root-chain
+      - traefik.http.routers.arcane-img.service=arcane-svc
+      - traefik.http.routers.arcane-img.tls.certresolver=le
+      - traefik.http.routers.arcane-img.priority=1100
+
+      - traefik.http.routers.arcane-passkey.rule=Host(`${WEBDOMAIN}`) && Path(`/arcane-mobile-passkey.json`)
+      - traefik.http.routers.arcane-passkey.entrypoints=websecure
+      - traefik.http.routers.arcane-passkey.middlewares=arcane-root-chain
+      - traefik.http.routers.arcane-passkey.service=arcane-svc
+      - traefik.http.routers.arcane-passkey.tls.certresolver=le
+      - traefik.http.routers.arcane-passkey.priority=1100
+
+      # Hardcoded SPA navigations without URI prefix → redirect into URI_ARCANE
+      - traefik.http.routers.arcane-login.rule=Host(`${WEBDOMAIN}`) && Path(`/login`)
+      - traefik.http.routers.arcane-login.entrypoints=websecure
+      - traefik.http.routers.arcane-login.middlewares=arcane-spa-redirect@file
+      - traefik.http.routers.arcane-login.service=arcane-svc
+      - traefik.http.routers.arcane-login.tls.certresolver=le
+      - traefik.http.routers.arcane-login.priority=1200
+
+      - traefik.http.routers.arcane-spa-root.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(?:dashboard|containers|projects|environments|volumes|networks|settings|events|customize|updates|security|swarm|no-access|logout|oidc|mobile|login|auth|compose|ports)(/.*)?$$|^/(?:images(?:/(?:builds|vulnerabilities)(?:/.*)?)?|images/[^/.]+)$$`)
+      - traefik.http.routers.arcane-spa-root.entrypoints=websecure
+      - traefik.http.routers.arcane-spa-root.middlewares=arcane-spa-redirect@file
+      - traefik.http.routers.arcane-spa-root.service=arcane-svc
+      - traefik.http.routers.arcane-spa-root.tls.certresolver=le
+      - traefik.http.routers.arcane-spa-root.priority=1200
+
+volumes:
+  arcane-data:
+    driver: local

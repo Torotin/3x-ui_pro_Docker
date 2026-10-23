@@ -11,7 +11,8 @@ background:
   brightness: 50
   opacity: 50
 cardBlur: xs
-favicon: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/favicon.ico
+# /favicon.ico 404s under path hosting; Homepage ships /homepage.ico.
+favicon: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/homepage.ico
 theme: dark
 color: slate
 headerStyle: boxed

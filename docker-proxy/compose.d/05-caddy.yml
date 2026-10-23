@@ -12,13 +12,17 @@ services:
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.5
+        ipv6_address: fd00:dead:beef:12::5
       dns-net:
         ipv4_address: 172.19.0.5
+        ipv6_address: fd00:dead:beef:13::5
     # dns:
     #   - 172.19.0.10
     volumes:
       - ../_logs/caddy:/var/log/caddy
       - ../caddy/config:/etc/caddy
+      # /srv itself stays image-owned so entrypoint randomfakehtml can re-roll
+      # the public decoy template on recreate. Only subscription HTML is bind-mounted.
       - ../caddy/subs:/srv/subs:ro
     env_file:
       - ./.env

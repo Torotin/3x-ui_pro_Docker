@@ -2,11 +2,20 @@
 docker-proxy/3x-ui/clear/
 docker-proxy/_data/
 docker-proxy/_logs/
+docker-proxy/lampac/cache/
+docker-proxy/lampac/database/
+docker-proxy/lampac/data/ts/TorrServer-*
+docker-proxy/lampac/data/ts/*.db
+docker-proxy/lampac/data/ts/tagname
+docker-proxy/lampac/data/ts/config.db
+docker-proxy/lampac/config/init.conf.bak-*
+docker-proxy/lampac/plugins/override/jacred-apikey.local.js
 
 # ==== Local scratch / helpers ====
 /tmp/
 /New/
 /ideas*
+sync-lampac.sh
 sync-lampac-docker.sh
 /.project_context*
 
@@ -32,6 +41,11 @@ desktop.ini
 .idea/
 *.iml
 .cursor/
+.superpowers/
+docs/**
+# Track design specs / plans under docs/superpowers (rest of docs/ stays ignored)
+!docs/superpowers/
+!docs/superpowers/**
 
 # ==== Python / test leftovers ====
 __pycache__/

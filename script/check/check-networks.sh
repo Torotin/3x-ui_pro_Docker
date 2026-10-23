@@ -6,7 +6,9 @@ set -euo pipefail
 
 NEEDED=(
 	"traefik-proxy:172.18.0.0/24"
+	"traefik-proxy:fd00:dead:beef:12::/64"
 	"dns-net:172.19.0.0/24"
+	"dns-net:fd00:dead:beef:13::/64"
 )
 
 log() {
@@ -38,7 +40,7 @@ main() {
 	echo
 
 	for item in "${NEEDED[@]}"; do
-		IFS=":" read -r name subnet <<<"$item"
+		local name="${item%%:*}" subnet="${item#*:}"
 		local_subnets="$(network_subnets "$name")"
 
 		if [[ -z "$local_subnets" ]]; then
@@ -47,7 +49,7 @@ main() {
 		fi
 
 		log "INFO: сеть '$name' найдена. Подсети: $local_subnets"
-		if ! grep -qw "$subnet" <<<"$local_subnets"; then
+		if ! grep -Fq "$subnet" <<<"$local_subnets"; then
 			log "WARN: у сети '$name' нет ожидаемой подсети $subnet"
 		fi
 	done
@@ -55,8 +57,8 @@ main() {
 	echo
 	log "Поиск других сетей с теми же подсетями:"
 	for item in "${NEEDED[@]}"; do
-		IFS=":" read -r name subnet <<<"$item"
-		matches=$(list_all_subnets | grep -w "$subnet" | grep -v "^$name " || true)
+		local name="${item%%:*}" subnet="${item#*:}"
+		matches=$(list_all_subnets | grep -F "$subnet" | grep -v "^$name " || true)
 		if [[ -n "$matches" ]]; then
 			log "WARN: подсеть $subnet также используется сетью(ями):"
 			echo "$matches"

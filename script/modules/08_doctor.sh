@@ -245,6 +245,7 @@ doctor_run_host_steps() {
 	install_doctor_check_state
 	if declare -F install_doctor_check_dnscrypt >/dev/null 2>&1; then
 		install_doctor_check_dnscrypt
+		install_doctor_check_dnscrypt_ipv6_dig
 	fi
 	install_doctor_check_user
 	install_doctor_check_firewall
@@ -501,9 +502,14 @@ install_doctor_check_user() {
 install_doctor_check_firewall() {
 	local next_action="run firewall --apply --yes"
 	local status_out=""
+	local ufw_default="${INSTALL_UFW_DEFAULT:-/etc/default/ufw}"
+	install_load_state_env
 	if [[ "${INSTALL_MOCK:-0}" == "1" ]]; then
 		run_cmd doctor.firewall.present command -v ufw
 		run_cmd doctor.firewall ufw status
+		if [[ "${HOST_IP_MODE:-ipv4}" == "dual" ]]; then
+			run_cmd doctor.firewall.ipv6 grep '^IPV6=' "$ufw_default" || true
+		fi
 		doctor_record firewall OK "ufw present (runtime status skipped in mock)"
 		return 0
 	fi
@@ -513,6 +519,13 @@ install_doctor_check_firewall() {
 	fi
 	status_out=$(ufw status 2>/dev/null || true)
 	run_cmd doctor.firewall ufw status >/dev/null || true
+	if [[ "${HOST_IP_MODE:-ipv4}" == "dual" ]]; then
+		if [[ -f "$ufw_default" ]] && grep -q '^IPV6=yes' "$ufw_default"; then
+			doctor_ok_detail "UFW IPV6=yes"
+		else
+			doctor_issue firewall "UFW IPV6 is not yes (required for dual-stack)" "$next_action"
+		fi
+	fi
 	if printf '%s\n' "$status_out" | grep -qiE 'Status:[[:space:]]*inactive'; then
 		doctor_issue firewall "ufw is inactive" "$next_action"
 		return 0
@@ -552,9 +565,51 @@ install_doctor_check_ssh() {
 	return 0
 }
 
+_doctor_crowdsec_ip6_path_present() {
+	if command -v ip6tables >/dev/null 2>&1; then
+		if ip6tables -L -n 2>/dev/null | grep -qiE 'crowdsec|CROWDSEC'; then
+			return 0
+		fi
+	fi
+	if command -v ipset >/dev/null 2>&1; then
+		if ipset list -n 2>/dev/null | grep -q 'crowdsec6-blacklists'; then
+			return 0
+		fi
+	fi
+	return 1
+}
+
+install_doctor_check_dnscrypt_ipv6_dig() {
+	local next_action="run dnscrypt --apply --yes"
+	install_load_state_env
+	[[ "${HOST_IP_MODE:-ipv4}" == "dual" ]] || return 0
+	if [[ "${INSTALL_MOCK:-0}" == "1" ]]; then
+		run_cmd doctor.dnscrypt.dig6 dig +time=2 +tries=1 +short example.com @::1 || true
+		return 0
+	fi
+	if ! command -v dig >/dev/null 2>&1; then
+		return 0
+	fi
+	if dig +time=2 +tries=1 +short example.com @::1 >/dev/null 2>&1; then
+		doctor_ok_detail "dig @::1 succeeded"
+	else
+		doctor_issue dnscrypt "dig @::1 failed" "$next_action"
+	fi
+	return 0
+}
+
 install_doctor_check_network() {
 	local next_action="run network --apply --yes"
 	local target="${INSTALL_SYSCTL_CONF:-/etc/sysctl.d/99-xray.conf}"
+	local ra_all ra_default
+	install_load_state_env
+	if [[ "${HOST_IP_MODE:-ipv4}" == "dual" ]]; then
+		run_cmd doctor.network.dual.accept_ra sysctl -n net.ipv6.conf.all.accept_ra || true
+		run_cmd doctor.network.dual.accept_ra_default sysctl -n net.ipv6.conf.default.accept_ra || true
+		run_cmd doctor.network.dual.addr ip -6 -o addr show scope global || true
+		run_cmd doctor.network.dual.route ip -6 route show default || true
+		run_cmd doctor.network.crowdsec.ip6 ip6tables -L -n || true
+	fi
 	# Read-only: confirm file presence/readability; do not run sysctl -p (applies kernel settings).
 	run_cmd doctor.network.sysctl test -r "$target" || true
 	if [[ ! -f "$target" ]]; then
@@ -569,6 +624,23 @@ install_doctor_check_network() {
 		doctor_record network OK "sysctl conf present: $target"
 	else
 		doctor_issue network "sysctl conf not readable: $target" "$next_action"
+		return 0
+	fi
+	if [[ "${HOST_IP_MODE:-ipv4}" == "dual" ]]; then
+		ra_all=$(sysctl -n net.ipv6.conf.all.accept_ra 2>/dev/null || echo 0)
+		ra_default=$(sysctl -n net.ipv6.conf.default.accept_ra 2>/dev/null || echo 0)
+		if [[ "$ra_all" == "0" || "$ra_default" == "0" ]]; then
+			doctor_issue network "dual host accept_ra is 0 on all or default (expected 2 with forwarding)" "$next_action"
+		fi
+		if ! ip -6 -o addr show scope global 2>/dev/null | grep -q .; then
+			doctor_issue network "dual host has no global IPv6 address" "$next_action"
+		fi
+		if ! ip -6 route show default 2>/dev/null | grep -q .; then
+			doctor_issue network "dual host has no default IPv6 route" "$next_action"
+		fi
+		if ! _doctor_crowdsec_ip6_path_present; then
+			doctor_record network WARN "CrowdSec firewall bouncer IPv6 ban path not detected (ip6tables/ipset)" "verify crowdsec_firewall_bouncer when stack is up"
+		fi
 	fi
 	return 0
 }
@@ -703,10 +775,10 @@ install_doctor_check_containers() {
 	# Optional fragments (*.yml.disable or ENABLE_*=false) must not be required.
 	local -a containers=(
 		adguard
+		arcane
 		caddy
 		crowdsec
 		crowdsec_firewall_bouncer
-		dozzle
 		homepage
 		logrotate
 		tor-proxy
@@ -714,11 +786,14 @@ install_doctor_check_containers() {
 		traefik-acme-exporter
 		usque
 		3x-ui
-		sub-json-processor
 	)
 	# dockcheck: only when active 01-dockcheck.yml/.yaml exists (not *.yml.disable)
 	if [[ -f "$INSTALL_ROOT/compose.d/01-dockcheck.yml" || -f "$INSTALL_ROOT/compose.d/01-dockcheck.yaml" ]]; then
 		containers+=(dockcheck)
+	fi
+	# Legacy dozzle: only when active 07-dozzle.yml/.yaml still exists
+	if [[ -f "$INSTALL_ROOT/compose.d/07-dozzle.yml" || -f "$INSTALL_ROOT/compose.d/07-dozzle.yaml" ]]; then
+		containers+=(dozzle)
 	fi
 	if install_lampac_enabled && [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
 		containers+=(lampac)

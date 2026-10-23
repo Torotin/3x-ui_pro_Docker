@@ -12,8 +12,8 @@ services:
       TOR_BRIDGE_TRANSPORT: "auto"
       TOR_BRIDGES_MAX_PER_TRANSPORT: "10"
       TOR_MAX_CLIENT_CIRCUITS_PENDING: "4"
-      # На сервере без рабочего native IPv6 задайте false явно.
-      TOR_IPV6_AVAILABLE: "false"
+      # dual-stack host (HOST_IP_MODE=dual) → true via compose .env; ipv4-only → false
+      TOR_IPV6_AVAILABLE: "${TOR_IPV6_AVAILABLE:-false}"
       TOR_BRIDGES_OBFS4_URL: https://raw.githubusercontent.com/scriptzteam/Tor-Bridges-Collector/refs/heads/main/bridges-obfs4
       TOR_BRIDGES_OBFS4_IPV6_URL: https://raw.githubusercontent.com/scriptzteam/Tor-Bridges-Collector/refs/heads/main/bridges-obfs4-ipv6
       TOR_BRIDGES_WEBTUNNEL_URL: https://raw.githubusercontent.com/scriptzteam/Tor-Bridges-Collector/refs/heads/main/bridges-webtunnel
@@ -35,8 +35,10 @@ services:
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.11
+        ipv6_address: fd00:dead:beef:12::11
       dns-net:
         ipv4_address: 172.19.0.11
+        ipv6_address: fd00:dead:beef:13::11
     healthcheck:
       test: ["CMD", "/usr/local/bin/tor-proxy-healthcheck"]
       interval: 1m

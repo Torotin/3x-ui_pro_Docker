@@ -435,3 +435,6 @@ generate_random_port() {
 	done
 	die "could not find a free port in range $min-$max"
 }
+
+# shellcheck source=script/modules/lib_ip.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_ip.sh"
