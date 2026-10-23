@@ -1,5 +1,11 @@
 # Журнал изменений установщика
 
+## 0.7.3 - 2026-10-23
+
+- Arcane path-prefix: семантические Traefik JS/HTML rewrites (без minify-имён), защита `arcane.yml` от Go-template в комментариях.
+- Homepage: узкие NextAuth-пути вместо `PathPrefix(/api/auth)`, чтобы не перехватывать Arcane `/api/auth/login|me|…` (двойной Basic Auth).
+- Регрессия: `tests/arcane/` + live probe; playbook `.project_context/04_playbooks/arcane_path_prefix.md`.
+
 ## 0.7.2 - 2026-10-18
 
 - Dozzle заменён на Arcane (`07-arcane.yml`; legacy `07-dozzle.yml.disable`).
