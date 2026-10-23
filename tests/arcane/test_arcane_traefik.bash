@@ -93,15 +93,11 @@ test_arcane_yml_replacements_avoid_broken_js_regex_lookahead() {
 	pass "no broken lookahead; slice strip present"
 }
 
-test_compose_pins_arcane_image_not_latest() {
+test_compose_uses_arcane_manager_image() {
 	local img
 	img=$(grep -E '^\s*image:' "$COMPOSE_ARCANE" | head -1)
-	[[ "$img" == *':latest'* ]] && fail "image still uses :latest — $img"
-	[[ "$img" == *'@sha256:'* || "$img" == *'manager:'* ]] || fail "unexpected image line: $img"
-	[[ "$img" != *':latest'* ]] || fail "latest not allowed"
-	# require digest pin explicitly
-	[[ "$img" == *'@sha256:'* ]] || fail "image must be pinned by @sha256 digest"
-	pass "compose pins Arcane by digest"
+	[[ "$img" == *'ghcr.io/getarcaneapp/manager'* ]] || fail "expected getarcaneapp/manager image — $img"
+	pass "compose uses Arcane manager image"
 }
 
 test_live_probe_uses_get_for_asset_headers() {
@@ -132,7 +128,7 @@ main() {
 	test_arcane_js_rewrite_regexes_match_fixture
 	test_arcane_yml_js_rewrites_are_semantic_not_minified_names
 	test_arcane_yml_replacements_avoid_broken_js_regex_lookahead
-	test_compose_pins_arcane_image_not_latest
+	test_compose_uses_arcane_manager_image
 	test_live_probe_uses_get_for_asset_headers
 	test_live_probe_crawls_relative_js_chunks
 	printf 'All arcane traefik tests passed\n'

@@ -1,7 +1,7 @@
 services:
   arcane:
     container_name: arcane
-    image: ghcr.io/getarcaneapp/manager@sha256:47af3e1aa8492eb17276d0dcc6c55fb1dfde98cfd928c12f2961023221891f5a
+    image: ghcr.io/getarcaneapp/manager:latest
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
