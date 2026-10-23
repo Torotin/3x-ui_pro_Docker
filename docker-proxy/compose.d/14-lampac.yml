@@ -91,16 +91,15 @@ services:
       - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.xscheme=https
       - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
 
-      # JacRed Jackett-compatible API lives at /api/v1.0 and /api/v2.0.
-      # Traefik dashboard (prio 145) and Arcane (prio 900) both claim PathPrefix(`/api`);
-      # without a higher-priority Lampac route the parser gets BasicAuth 401 from those.
-      - traefik.http.routers.lampac-jacred-api.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/api/v1.0`) || PathPrefix(`/api/v2.0`))
-      - traefik.http.routers.lampac-jacred-api.entrypoints=websecure
-      - traefik.http.routers.lampac-jacred-api.tls=true
-      - traefik.http.routers.lampac-jacred-api.tls.certresolver=le
-      - traefik.http.routers.lampac-jacred-api.service=lampac
-      - traefik.http.routers.lampac-jacred-api.middlewares=lampac-headers
-      - traefik.http.routers.lampac-jacred-api.priority=910
+      # Lampac APIs under /api/* that must not hit Traefik dashboard (prio 145) or Arcane (900).
+      # JacRed: /api/v1.0, /api/v2.0. Alcopa OpenSubs menu: /api/opensubs.
+      - traefik.http.routers.lampac-api-override.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/api/v1.0`) || PathPrefix(`/api/v2.0`) || PathPrefix(`/api/opensubs`))
+      - traefik.http.routers.lampac-api-override.entrypoints=websecure
+      - traefik.http.routers.lampac-api-override.tls=true
+      - traefik.http.routers.lampac-api-override.tls.certresolver=le
+      - traefik.http.routers.lampac-api-override.service=lampac
+      - traefik.http.routers.lampac-api-override.middlewares=lampac-headers
+      - traefik.http.routers.lampac-api-override.priority=910
 
       # Cub JS plugins: Lampac StatiCache HIT can serve these extensionless paths as
       # application/octet-stream; with contentTypeNosniff Firefox refuses to execute.
