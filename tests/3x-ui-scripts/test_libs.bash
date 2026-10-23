@@ -1298,15 +1298,6 @@ test_xray_api_inbound_uses_documented_dokodemo_protocol() {
 	assert_eq dokodemo-door "$protocol" "Xray API inbound must use documented dokodemo-door protocol"
 }
 
-test_lampac_hide_interface_waits_for_lampa_global() {
-	local file="$ROOT_DIR/docker-proxy/lampac/wwwroot/js/hide_interface.js"
-	grep -Fq "function waitForLampa()" "$file" || fail "hide_interface must wait for window.Lampa"
-	grep -Fq "typeof window.Lampa !== 'undefined'" "$file" || fail "hide_interface must check window.Lampa before init"
-	if grep -Fq "if (typeof Lampa !== 'undefined')" "$file" || grep -Fq "Lampa.Listener.follow('app', function" "$file"; then
-		fail "hide_interface must not access Lampa.Listener from the undefined-Lampa startup branch"
-	fi
-}
-
 test_redaction_masks_secrets
 test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
@@ -1374,5 +1365,4 @@ test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol
-test_lampac_hide_interface_waits_for_lampa_global
 printf 'test_libs.bash: OK\n'

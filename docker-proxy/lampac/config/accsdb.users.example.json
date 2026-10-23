@@ -1,0 +1,13 @@
+{
+  "_comment": "Lampac NextGen accsdb users template. Merge the `users` array into init.conf → accsdb.users (see docs.lampac.dev/configuration/security). There is no shared password: each id gets a token via /testaccsdb or Lampa UI; plugin URLs use /online/js/{token}. Replace ids/dates before production use. Do not commit real emails or tokens.",
+  "users": [
+    {
+      "id": "demo",
+      "expires": "2099-12-31"
+    },
+    {
+      "id": "family",
+      "expires": "2099-12-31"
+    }
+  ]
+}

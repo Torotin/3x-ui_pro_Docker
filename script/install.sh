@@ -23,6 +23,8 @@ export INSTALL_NONINTERACTIVE INSTALL_MOCK SCRIPT_DIR PROJECT_ROOT
 . "$SCRIPT_DIR/modules/00_common.sh"
 # shellcheck source=script/modules/01_menu.sh
 . "$SCRIPT_DIR/modules/01_menu.sh"
+# shellcheck source=script/modules/lampac_jacred_secrets.sh
+. "$SCRIPT_DIR/modules/lampac_jacred_secrets.sh"
 # shellcheck source=script/modules/02_env.sh
 . "$SCRIPT_DIR/modules/02_env.sh"
 # shellcheck source=script/modules/03_docker.sh

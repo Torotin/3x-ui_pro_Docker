@@ -20,34 +20,48 @@ services:
       options:
         tag: "{{.Name}}"
     healthcheck:
-      # Probe a stable plugin endpoint: GET / can return 500 during LampaWeb init,
-      # and Traefik drops all routers for Docker-unhealthy containers.
-      test: ["CMD-SHELL", "curl -fsS --max-time 5 http://127.0.0.1:9118/online.js >/dev/null"]
+      # Probe online.js (cheap) and warm/verify lampa-main/app.min.js under https
+      # scheme headers. StatiCache(always) can permanently cache an empty 500 for
+      # app.min.js after a brief startup race; Firefox then sees blank MIME + nosniff
+      # and refuses the script. Warming with xscheme keeps the good response cached.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS --max-time 5 http://127.0.0.1:9118/online.js >/dev/null && curl -fsS --max-time 20 -H 'Host: localhost' -H 'xscheme: https' -H 'X-Forwarded-Proto: https' -o /tmp/hc-app.min.js http://127.0.0.1:9118/lampa-main/app.min.js && test $(wc -c < /tmp/hc-app.min.js) -gt 100000",
+        ]
       interval: 30s
-      timeout: 10s
+      timeout: 25s
       retries: 5
-      start_period: 60s
+      start_period: 90s
     # --- Mount your own files (commented by default). Paths are relative to this compose file. ---
     volumes:
       # Required for custom setup: root password (WebLog, etc.) → must exist on host before `up`
-      - ../lampac-docker/config/passwd:/lampac/passwd
+      - ../lampac/config/passwd:/lampac/passwd
       # Main JSON/YAML config (hot-reloaded). In-container path is always /lampac/init.conf
-      - ../lampac-docker/config/init.conf:/lampac/init.conf
+      - ../lampac/config/init.conf:/lampac/init.conf
 
       # Optional: Lampa client plugin override
-      # - ../lampac-docker/plugins/lampainit.js:/lampac/plugins/override/lampainit.js
+      # - ../lampac/plugins/lampainit.js:/lampac/plugins/override/lampainit.js
       # Optional: persist cache across restarts
-      - ../lampac-docker/cache:/lampac/cache
+      - ../lampac/cache:/lampac/cache
       # Optional: persist SQLite / local DB dirs
-      - ../lampac-docker/database:/lampac/database
-      # Lampa UI tree (LampaWeb). Outside lampac-docker/ so sync --delete cannot wipe it.
+      - ../lampac/database:/lampac/database
+      # TorrServer binary + BitTorr settings/cache (data/ts); keep outside sync --delete if needed
+      - ../lampac/data:/lampac/data
+      # Lampa UI tree (LampaWeb). Outside lampac/ so sync --delete cannot wipe it.
       # Without this, a fresh container has no wwwroot/lampa-main and GET / returns 500.
       - ../_data/lampac/lampa-main:/lampac/wwwroot/lampa-main
       # Force proxy_tmdb via lampainit-invc hooks (GeoIP {country} is often empty behind Traefik).
-      - ../lampac-docker/plugins/override:/lampac/plugins/override:ro
+      - ../lampac/plugins/override:/lampac/plugins/override:ro
+      # RCH: single-flight nws-client load (stock putScript force=true flaps Firefox WSS).
+      # FileCache does not pick this from override/ for plugins/rch_nws.js — bind-mount required.
+      - ../lampac/plugins/override/rch_nws.js:/lampac/plugins/rch_nws.js:ro
+      # JacRed apikey inject (gitignored). Lampac serves wwwroot/* at /{basename}.
+      # Run apply-secrets (installer env) before first compose up, or remove a stray host directory and re-apply.
+      - ../lampac/plugins/override/jacred-apikey.local.js:/lampac/wwwroot/jacred-apikey.local.js:ro
       # Optional: extra user module dir (see README → Docker → manifest.json). Example name is illustrative.
-      # - ../lampac-docker/mods/BulbaCrawler:/lampac/mods/BulbaCrawler
-      - ../lampac-docker/mods/AdminPanel/manifest.json:/lampac/module/AdminPanel/manifest.json
+      # - ../lampac/mods/BulbaCrawler:/lampac/mods/BulbaCrawler
+      - ../lampac/mods/AdminPanel/manifest.json:/lampac/module/AdminPanel/manifest.json
 
     labels:
       - traefik.enable=true
@@ -64,6 +78,29 @@ services:
       - traefik.http.routers.lampac-https.middlewares=lampac-headers
       - traefik.http.routers.lampac-https.priority=10
 
+      # Native WebSocket (RCH /nws) + legacy /ws: keep Upgrade path free of
+      # contentTypeNosniff/XSS response headers that some clients mishandle.
+      # Transport contract: idle/read ≥ 2h (entrypoint respondingTimeouts already 0s).
+      - traefik.http.routers.lampac-nws.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(nws|ws)`)
+      - traefik.http.routers.lampac-nws.entrypoints=websecure
+      - traefik.http.routers.lampac-nws.tls=true
+      - traefik.http.routers.lampac-nws.tls.certresolver=le
+      - traefik.http.routers.lampac-nws.service=lampac
+      - traefik.http.routers.lampac-nws.middlewares=lampac-nws-headers
+      - traefik.http.routers.lampac-nws.priority=70
+      - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.xscheme=https
+      - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
+
+      # Lampac APIs under /api/* that must not hit Traefik dashboard (prio 145) or Arcane (900).
+      # JacRed: /api/v1.0, /api/v2.0.
+      - traefik.http.routers.lampac-api-override.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/api/v1.0`) || PathPrefix(`/api/v2.0`))
+      - traefik.http.routers.lampac-api-override.entrypoints=websecure
+      - traefik.http.routers.lampac-api-override.tls=true
+      - traefik.http.routers.lampac-api-override.tls.certresolver=le
+      - traefik.http.routers.lampac-api-override.service=lampac
+      - traefik.http.routers.lampac-api-override.middlewares=lampac-headers
+      - traefik.http.routers.lampac-api-override.priority=910
+
       # Cub JS plugins: Lampac StatiCache HIT can serve these extensionless paths as
       # application/octet-stream; with contentTypeNosniff Firefox refuses to execute.
       - traefik.http.routers.lampac-cub-plugins.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/cub/[^/]+/plugin`)
@@ -76,7 +113,7 @@ services:
       - traefik.http.middlewares.lampac-cub-js.headers.customResponseHeaders.Content-Type=text/javascript
 
       # Admin paths: BasicAuth + CrowdSec
-      - traefik.http.routers.lampac-sensitive.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog)`)
+      - traefik.http.routers.lampac-sensitive.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog|database-editor)`)
       - traefik.http.routers.lampac-sensitive.entrypoints=websecure
       - traefik.http.routers.lampac-sensitive.tls=true
       - traefik.http.routers.lampac-sensitive.tls.certresolver=le
@@ -103,6 +140,12 @@ services:
       - traefik.http.middlewares.lampac-unknown-root.replacepath.path=/
 
       # Middlewares
+      # Lampac builds plugin/API absolute URLs from xscheme (overrides listen.scheme)
+      # and X-Forwarded-Proto when KnownProxies trust Traefik. Without these,
+      # HTTPS pages get http:// script URLs and browsers block mixed content.
+      # See https://docs.lampac.dev/deployment/reverse-proxy
+      - traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.xscheme=https
+      - traefik.http.middlewares.lampac-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
       - traefik.http.middlewares.lampac-headers.headers.stsSeconds=31536000
       - traefik.http.middlewares.lampac-headers.headers.browserXssFilter=true
       - traefik.http.middlewares.lampac-headers.headers.contentTypeNosniff=true
