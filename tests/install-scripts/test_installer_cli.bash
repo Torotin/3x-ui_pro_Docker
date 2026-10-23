@@ -560,9 +560,19 @@ assert conf.get("JacRed", {}).get("apikey") == key
 js = Path(sys.argv[3]).read_text(encoding="utf-8")
 assert f'window.__lampac_jacred_apikey = "{key}";' in js
 assert "localStorage.setItem('jackett_key'" in js
-# secret must not appear in command log if fixture logs commands
 PY
-	# tracked-style sanity: whitepattern not required in fixture
+	local jacred_key
+	jacred_key=$(python3 - "$INSTALL_STATE_DIR/install.env" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r'^LAMPAC_JACRED_APIKEY="([0-9a-f]+)"$', text, re.M)
+if not m:
+    raise SystemExit("missing JacRed apikey in install.env")
+print(m.group(1))
+PY
+) || fail "JacRed apikey must be present in install.env for log redaction check"
+	assert_not_contains "$jacred_key" "$INSTALL_COMMAND_LOG" "JacRed apikey hex must not appear in command log"
 }
 
 test_env_skips_lampac_jacred_secrets_when_disabled() {
