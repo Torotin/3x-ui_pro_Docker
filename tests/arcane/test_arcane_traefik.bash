@@ -19,9 +19,9 @@ test_arcane_yml_comments_have_no_go_template_delimiters() {
 test_arcane_yml_js_rewrites_are_semantic_not_minified_names() {
 	grep -qE "var Q=\\\\?\(e,t\)" "$ARCANE_YML" && fail "JS rewrite still keys on minified var Q"
 	grep -qE "function Ph\\\\?\(e,t,n,r" "$ARCANE_YML" && fail "JS rewrite still keys on minified function Ph"
-	grep -q 'location\.replace(`/login\?redirect=' "$ARCANE_YML" || fail "missing location.replace login rewrite"
-	grep -q 'e\.startsWith\(`\\\$\{t\}/`\)' "$ARCANE_YML" || fail 'missing semantic startsWith(`${t}/`) guard matcher'
-	grep -q 'i=!1,a=`/dashboard`' "$ARCANE_YML" || fail "missing semantic dashboard-guard matcher"
+	grep -qF 'location\.replace\(`/login\?redirect=' "$ARCANE_YML" || fail "missing location.replace login rewrite"
+	grep -qF 'e\.startsWith\(`\$\{t\}/`\)' "$ARCANE_YML" || fail 'missing semantic startsWith(`${t}/`) guard matcher'
+	grep -qF 'i=!1,a=`/dashboard`' "$ARCANE_YML" || fail "missing semantic dashboard-guard matcher"
 	pass "JS rewrites are semantic"
 }
 
