@@ -2,7 +2,8 @@
   'use strict';
 
   // Always route TMDB via Lampac. Relative paths avoid wrong http/https from listen.scheme.
-  // With accsdb.enable, /tmdb/img and /tmdb/api require a known account uid (init.conf users).
+  // Stock lampainit first_initiale can set proxy_tmdb=false when GeoIP {country} is empty
+  // behind Traefik ('' == 'RU'). Episode stills use TMDB.img → TMDB.image — keep override hot.
   // privateinit.js is loaded as ?uid=demo|family — prefer that over random lampac_unic_id.
   var unic_id = Lampa.Storage.get('lampac_unic_id', '');
   if (!unic_id) {
@@ -50,10 +51,34 @@
     return url;
   }
 
-  Lampa.Storage.set('proxy_tmdb', 'true');
+  // TMDB.img(still_path, size) builds t/p/{size}/+src; some episode cards pass
+  // 't/p/w300'+still_path already — collapse duplicate prefixes and hosts.
+  function normalizeImgPath(url) {
+    if (!url || typeof url !== 'string') return url;
+    url = url.replace(/^https?:\/\/image\.tmdb\.org\//i, '');
+    url = url.replace(/^\/+/, '');
+    url = url.replace(/^(t\/p\/[^/]+\/)+(?=t\/p\/)/, '');
+    url = url.replace(/^(t\/p\/[^/]+)\/{2,}/, '$1/');
+    return url;
+  }
+
+  function forceProxyFlags() {
+    try {
+      Lampa.Storage.set('proxy_tmdb', 'true');
+      // Stock image()/api() fall back to these when override is late/missing.
+      if (!Lampa.Storage.get('tmdb_proxy_image', '')) {
+        Lampa.Storage.set('tmdb_proxy_image', '/tmdb/img');
+      }
+      if (!Lampa.Storage.get('tmdb_proxy_api', '')) {
+        Lampa.Storage.set('tmdb_proxy_api', '/tmdb/api');
+      }
+    } catch (e) {}
+  }
+
+  forceProxyFlags();
 
   Lampa.TMDB.image = function (url) {
-    return '/tmdb/img/' + account(url);
+    return '/tmdb/img/' + account(normalizeImgPath(url));
   };
 
   Lampa.TMDB.api = function (url) {
@@ -65,4 +90,8 @@
       e.body.find('[data-parent="proxy"]').remove();
     }
   });
+
+  // Re-assert after lampainit first_initiale (GeoIP empty → proxy_tmdb false).
+  setTimeout(forceProxyFlags, 0);
+  setTimeout(forceProxyFlags, 2000);
 })();

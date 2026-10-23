@@ -53,6 +53,21 @@
   try {
     localStorage.setItem(KEY, stamp);
   } catch (e) {}
+  // Pin before alc_auto probes plugin CDN origins as Lampac (hub.alcopa.cc CORS/404).
+  try {
+    var origin = location.origin || '';
+    if (origin.indexOf('http') === 0) localStorage.setItem('alc_auto_server', origin);
+  } catch (e) {}
+  // Pin JacRed/Jackett host before parser reads empty jackett_url from Storage.
+  try {
+    var jhost = location.hostname || '';
+    if (jhost) {
+      localStorage.setItem('jackett_url', jhost);
+      localStorage.setItem('parser_torrent_type', 'jackett');
+      localStorage.setItem('parser_use', 'true');
+      if (!localStorage.getItem('jackett_key')) localStorage.setItem('jackett_key', '1');
+    }
+  } catch (e) {}
 
   function markStorage() {
     try {
@@ -182,9 +197,60 @@ function lampainit_default_screensaver() {
   } catch (e) {}
 }
 
+function lampainit_force_tmdb_proxy() {
+  // Stock lampainit first_initiale: proxy_tmdb = ({country} == 'RU'). Behind Traefik
+  // GeoIP country is often empty → false, then episode stills hit image.tmdb.org direct.
+  Lampa.Storage.set('proxy_tmdb', 'true');
+  if (!Lampa.Storage.get('tmdb_proxy_image', '')) {
+    Lampa.Storage.set('tmdb_proxy_image', '/tmdb/img');
+  }
+  if (!Lampa.Storage.get('tmdb_proxy_api', '')) {
+    Lampa.Storage.set('tmdb_proxy_api', '/tmdb/api');
+  }
+}
+
+// alc_auto builds Lampac candidates from plugin URL origins → hub.alcopa.cc gets
+// probed at /lite/events (404 + CORS). Pin pack server to this Lampac origin.
+function lampainit_pin_alcopa_server() {
+  try {
+    var host = '';
+    try {
+      host = location.origin || '';
+    } catch (e) {}
+    if (!host || host.indexOf('http') !== 0) return;
+    Lampa.Storage.set('alc_auto_server', host);
+  } catch (e) {}
+}
+
+// Stock lampainit sets jackett_url only inside first_initiale (lampac_initiale).
+// Clients that already passed that gate keep an empty Jackett link →
+// "Укажите ссылку для парсинга: Jackett". JacRed is Jackett-compatible on this host.
+function lampainit_force_jacred_parser() {
+  try {
+    var host = '';
+    try {
+      host = location.hostname || '';
+    } catch (e) {}
+    if (!host) return;
+    Lampa.Storage.set('parser_use', 'true');
+    Lampa.Storage.set('parser_torrent_type', 'jackett');
+    Lampa.Storage.set('jackett_url', host);
+    if (!Lampa.Storage.get('jackett_key', '')) {
+      Lampa.Storage.set('jackett_key', '1');
+    }
+    try {
+      localStorage.setItem('jackett_url', host);
+      localStorage.setItem('parser_torrent_type', 'jackett');
+      localStorage.setItem('parser_use', 'true');
+    } catch (e2) {}
+  } catch (e) {}
+}
+
 function lampainit_apply_local() {
   // CUB domain/mirrors: leave Lampa defaults (no forced cub_domain / cub_mirrors).
-  Lampa.Storage.set('proxy_tmdb', 'true');
+  lampainit_force_tmdb_proxy();
+  lampainit_force_jacred_parser();
+  lampainit_pin_alcopa_server();
   lampainit_capture_accsdb_uid();
   lampainit_suppress_alcopa_free_notice();
   lampainit_default_screensaver();
@@ -238,8 +304,15 @@ lampainit_invc.appready = function appready() {
   lampainit_apply_local();
   // start() calls appready() before plugins_add; defer past family-dedup install.
   setTimeout(lampainit_ensure_alcopa_plugins, 0);
+  // After stock first_initiale may flip proxy_tmdb false when {country} is empty.
+  setTimeout(lampainit_force_tmdb_proxy, 0);
+  setTimeout(lampainit_force_tmdb_proxy, 1500);
+  setTimeout(lampainit_force_jacred_parser, 0);
+  setTimeout(lampainit_force_jacred_parser, 1500);
 };
 
 lampainit_invc.first_initiale = function firstinitiale() {
   lampainit_apply_local();
+  lampainit_force_tmdb_proxy();
+  lampainit_force_jacred_parser();
 };

@@ -2,6 +2,13 @@
 docker-proxy/3x-ui/clear/
 docker-proxy/_data/
 docker-proxy/_logs/
+docker-proxy/lampac/cache/
+docker-proxy/lampac/database/
+docker-proxy/lampac/data/ts/TorrServer-*
+docker-proxy/lampac/data/ts/*.db
+docker-proxy/lampac/data/ts/tagname
+docker-proxy/lampac/data/ts/config.db
+docker-proxy/lampac/config/init.conf.bak-*
 
 # ==== Local scratch / helpers ====
 /tmp/

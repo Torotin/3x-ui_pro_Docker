@@ -46,6 +46,8 @@ services:
       - ../lampac/cache:/lampac/cache
       # Optional: persist SQLite / local DB dirs
       - ../lampac/database:/lampac/database
+      # TorrServer binary + BitTorr settings/cache (data/ts); keep outside sync --delete if needed
+      - ../lampac/data:/lampac/data
       # Lampa UI tree (LampaWeb). Outside lampac/ so sync --delete cannot wipe it.
       # Without this, a fresh container has no wwwroot/lampa-main and GET / returns 500.
       - ../_data/lampac/lampa-main:/lampac/wwwroot/lampa-main
@@ -85,6 +87,17 @@ services:
       - traefik.http.routers.lampac-nws.priority=70
       - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.xscheme=https
       - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
+
+      # JacRed Jackett-compatible API lives at /api/v1.0 and /api/v2.0.
+      # Traefik dashboard (prio 145) and Arcane (prio 900) both claim PathPrefix(`/api`);
+      # without a higher-priority Lampac route the parser gets BasicAuth 401 from those.
+      - traefik.http.routers.lampac-jacred-api.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/api/v1.0`) || PathPrefix(`/api/v2.0`))
+      - traefik.http.routers.lampac-jacred-api.entrypoints=websecure
+      - traefik.http.routers.lampac-jacred-api.tls=true
+      - traefik.http.routers.lampac-jacred-api.tls.certresolver=le
+      - traefik.http.routers.lampac-jacred-api.service=lampac
+      - traefik.http.routers.lampac-jacred-api.middlewares=lampac-headers
+      - traefik.http.routers.lampac-jacred-api.priority=910
 
       # Cub JS plugins: Lampac StatiCache HIT can serve these extensionless paths as
       # application/octet-stream; with contentTypeNosniff Firefox refuses to execute.
