@@ -11,9 +11,71 @@ pass() { printf 'PASS: %s\n' "$*"; }
 test_arcane_yml_comments_have_no_go_template_delimiters() {
 	# Traefik templates the whole file; {{ }} in YAML comments break parsing. Values may use templates.
 	local bad
-	bad=$(grep -nE '^\s*#' "$ARCANE_YML" | grep -E '\{\{|\}\}' || true)
+	bad=$(
+		python3 - "$ARCANE_YML" <<'PY' || true
+import re
+import sys
+
+path = sys.argv[1]
+bad = []
+with open(path, encoding="utf-8") as fh:
+    for lineno, line in enumerate(fh, 1):
+        stripped = line.rstrip("\n")
+        if re.match(r"^\s*#", stripped):
+            comment = stripped
+        else:
+            m = re.search(r"\s+#(.*)$", stripped)
+            if not m:
+                continue
+            comment = m.group(1)
+        if "{{" in comment or "}}" in comment:
+            bad.append(f"{lineno}:{stripped}")
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+PY
+	)
 	[[ -z "$bad" ]] || fail "Go-template delimiters in YAML comments:\n$bad"
 	pass "arcane.yml comments have no {{ }}"
+}
+
+test_arcane_js_rewrite_regexes_match_fixture() {
+	python3 - "$ARCANE_YML" "$FIXTURE" <<'PY'
+import re
+import sys
+
+arcane_yml, fixture_path = sys.argv[1:3]
+text = open(arcane_yml, encoding="utf-8").read()
+fixture = open(fixture_path, encoding="utf-8").read()
+
+m = re.search(
+    r"(?ms)^\s*arcane-js-body:\s*$.*?(?=^\S|\Z)",
+    text,
+)
+if not m:
+    sys.exit("arcane-js-body section not found in arcane.yml")
+
+section = m.group(0)
+regexes = re.findall(r"^\s+- regex: '((?:[^']|'')*)'\s*$", section, re.M)
+if len(regexes) != 4:
+    sys.exit(f"expected 4 JS rewrite regexes under arcane-js-body, got {len(regexes)}")
+
+failures = []
+for i, raw in enumerate(regexes, 1):
+    pattern = raw.replace("''", "'")
+    try:
+        hit = re.search(pattern, fixture)
+    except re.error as exc:
+        failures.append(f"regex #{i} invalid: {exc}\n  pattern={pattern!r}")
+        continue
+    if not hit:
+        failures.append(f"regex #{i} does not match fixture\n  pattern={pattern!r}")
+
+if failures:
+    print("\n".join(failures), file=sys.stderr)
+    sys.exit(1)
+PY
+	pass "arcane-js-body rewrite regexes match fixture"
 }
 
 test_arcane_yml_js_rewrites_are_semantic_not_minified_names() {
@@ -67,6 +129,7 @@ test_fixture_contains_unstable_names_for_semantic_coverage() {
 main() {
 	test_fixture_contains_unstable_names_for_semantic_coverage
 	test_arcane_yml_comments_have_no_go_template_delimiters
+	test_arcane_js_rewrite_regexes_match_fixture
 	test_arcane_yml_js_rewrites_are_semantic_not_minified_names
 	test_arcane_yml_replacements_avoid_broken_js_regex_lookahead
 	test_compose_pins_arcane_image_not_latest
