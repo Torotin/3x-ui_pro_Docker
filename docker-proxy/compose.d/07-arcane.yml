@@ -1,7 +1,7 @@
 services:
   arcane:
     container_name: arcane
-    image: ghcr.io/getarcaneapp/manager:latest
+    image: ghcr.io/getarcaneapp/manager@sha256:47af3e1aa8492eb17276d0dcc6c55fb1dfde98cfd928c12f2961023221891f5a
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -39,6 +39,14 @@ services:
 
       - traefik.http.services.arcane-svc.loadbalancer.server.port=3552
       - traefik.http.services.arcane-svc.loadbalancer.server.scheme=http
+
+      # Root-path exceptions (upstream Arcane has no subpath support):
+      #   /${URI_ARCANE}/*  → UI (stripPrefix) + Basic
+      #   /_app/*           → SvelteKit assets + JS body rewrite (prio 1100)
+      #   /api/*            → Arcane API + Basic (prio 900; Lampac /api/v1.0|v2.0 is 910)
+      #   /img, manifest, service-worker, passkey → PWA/helpers (prio 1100)
+      #   /login + SPA roots → arcane-spa-redirect@file (prio 1200)
+      # Dual auth: Basic (USER_WEB/PASS_WEB) then Arcane app login.
 
       # Shared middlewares
       - traefik.http.middlewares.basic-auth.basicauth.users=${HT_PASS_ENCODED}
