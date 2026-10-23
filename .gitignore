@@ -9,6 +9,7 @@ docker-proxy/lampac/data/ts/*.db
 docker-proxy/lampac/data/ts/tagname
 docker-proxy/lampac/data/ts/config.db
 docker-proxy/lampac/config/init.conf.bak-*
+docker-proxy/lampac/plugins/override/jacred-apikey.local.js
 
 # ==== Local scratch / helpers ====
 /tmp/

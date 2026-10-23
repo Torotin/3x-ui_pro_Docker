@@ -532,6 +532,49 @@ if len(m.group(1)) != 32:
 PY
 }
 
+test_env_applies_lampac_jacred_secrets_when_enabled() {
+	make_fixture
+	mkdir -p "$INSTALL_ROOT/lampac/config" "$INSTALL_ROOT/lampac/plugins/override"
+	cat >"$INSTALL_ROOT/lampac/config/init.conf" <<'JSON'
+{
+  "JacRed": {
+    "typesearch": "webapi",
+    "disableJackett": true
+  }
+}
+JSON
+	export ENABLE_LAMPAC=true
+	run_installer run env
+	local initf="$INSTALL_ROOT/lampac/config/init.conf"
+	local inject="$INSTALL_ROOT/lampac/plugins/override/jacred-apikey.local.js"
+	[[ -f "$inject" ]] || fail "apply-secrets must write jacred-apikey.local.js"
+	python3 - "$INSTALL_STATE_DIR/install.env" "$initf" "$inject" <<'PY'
+import json, re, sys
+from pathlib import Path
+env = Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r'^LAMPAC_JACRED_APIKEY="([0-9a-f]+)"$', env, re.M)
+assert m, "missing env key"
+key = m.group(1)
+conf = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+assert conf.get("JacRed", {}).get("apikey") == key
+js = Path(sys.argv[3]).read_text(encoding="utf-8")
+assert f'window.__lampac_jacred_apikey = "{key}";' in js
+assert "localStorage.setItem('jackett_key'" in js
+# secret must not appear in command log if fixture logs commands
+PY
+	# tracked-style sanity: whitepattern not required in fixture
+}
+
+test_env_skips_lampac_jacred_secrets_when_disabled() {
+	make_fixture
+	mkdir -p "$INSTALL_ROOT/lampac/config" "$INSTALL_ROOT/lampac/plugins/override"
+	printf '%s\n' '{"JacRed":{}}' >"$INSTALL_ROOT/lampac/config/init.conf"
+	export ENABLE_LAMPAC=false
+	run_installer run env
+	[[ ! -f "$INSTALL_ROOT/lampac/plugins/override/jacred-apikey.local.js" ]] \
+		|| fail "disabled Lampac must not write jacred inject"
+}
+
 test_env_normalizes_global_boolean_values() {
 	make_fixture
 	export ENABLE_LAMPAC=off
@@ -1709,6 +1752,8 @@ test_env_reports_permission_problem_before_backup
 test_env_preserves_existing_state_defaults
 test_env_renders_mihomo_config_with_generated_secret
 test_env_persists_generated_lampac_jacred_apikey
+test_env_applies_lampac_jacred_secrets_when_enabled
+test_env_skips_lampac_jacred_secrets_when_disabled
 test_env_normalizes_global_boolean_values
 test_env_rejects_invalid_global_boolean_values
 test_state_loader_preserves_literal_dollars

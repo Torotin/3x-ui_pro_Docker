@@ -387,6 +387,12 @@ install_env_command() {
 	render_env_template "$templates/docker.env.template" "$compose_env"
 	render_telemt_configs
 	render_mihomo_config
+	if install_lampac_enabled; then
+		if [[ -f "$INSTALL_ROOT/lampac/config/init.conf" ]]; then
+			apply_lampac_jacred_secrets
+			run_cmd env.lampac_jacred printf 'applied lampac JacRed secrets\n'
+		fi
+	fi
 	run_cmd env.render printf 'rendered env files\n'
 	printf 'rendered:\n- %s\n- %s\n' "$install_env" "$compose_env"
 	if install_telemt_enabled; then
