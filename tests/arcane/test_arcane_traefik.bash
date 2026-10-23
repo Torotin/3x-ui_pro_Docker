@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+ARCANE_YML="$ROOT_DIR/docker-proxy/traefik/dynamic/arcane.yml"
+COMPOSE_ARCANE="$ROOT_DIR/docker-proxy/compose.d/07-arcane.yml"
+FIXTURE="$ROOT_DIR/tests/arcane/fixtures/sample-chunk.js"
+
+fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+pass() { printf 'PASS: %s\n' "$*"; }
+
+test_arcane_yml_comments_have_no_go_template_delimiters() {
+	# Strip YAML {{ printf ... }} replacement lines; remaining {{ or }} is forbidden (comments/raw).
+	local bad
+	bad=$(grep -nE '\{\{|\}\}' "$ARCANE_YML" | grep -vE 'replacement:.*\{\{ printf' || true)
+	[[ -z "$bad" ]] || fail "Go-template delimiters outside printf replacements:\n$bad"
+	pass "arcane.yml has no stray {{ }}"
+}
+
+test_arcane_yml_js_rewrites_are_semantic_not_minified_names() {
+	grep -qE "var Q=\\\\?\(e,t\)" "$ARCANE_YML" && fail "JS rewrite still keys on minified var Q"
+	grep -qE "function Ph\\\\?\(e,t,n,r" "$ARCANE_YML" && fail "JS rewrite still keys on minified function Ph"
+	grep -q 'location\.replace(`/login\?redirect=' "$ARCANE_YML" || fail "missing location.replace login rewrite"
+	grep -q 'e\.startsWith\(`\\\$\{t\}/`\)' "$ARCANE_YML" || fail 'missing semantic startsWith(`${t}/`) guard matcher'
+	grep -q 'i=!1,a=`/dashboard`' "$ARCANE_YML" || fail "missing semantic dashboard-guard matcher"
+	pass "JS rewrites are semantic"
+}
+
+test_arcane_yml_replacements_avoid_broken_js_regex_lookahead() {
+	grep -nE '\(\?=/\|\$\)' "$ARCANE_YML" && fail "forbidden (?=/|$) lookahead present" || true
+	grep -q 'e.slice(b.length)' "$ARCANE_YML" || fail "expected startsWith/slice style replacement"
+	pass "no broken lookahead; slice strip present"
+}
+
+test_compose_pins_arcane_image_not_latest() {
+	local img
+	img=$(grep -E '^\s*image:' "$COMPOSE_ARCANE" | head -1)
+	[[ "$img" == *':latest'* ]] && fail "image still uses :latest — $img"
+	[[ "$img" == *'@sha256:'* || "$img" == *'manager:'* ]] || fail "unexpected image line: $img"
+	[[ "$img" != *':latest'* ]] || fail "latest not allowed"
+	# require digest pin explicitly
+	[[ "$img" == *'@sha256:'* ]] || fail "image must be pinned by @sha256 digest"
+	pass "compose pins Arcane by digest"
+}
+
+test_fixture_contains_unstable_names_for_semantic_coverage() {
+	grep -q 'function Xx(' "$FIXTURE" || fail "fixture must use non-Ph name Xx"
+	grep -q 'var Guard=' "$FIXTURE" || fail "fixture must use non-Q name Guard"
+	grep -q 'location.replace(`/login?redirect=' "$FIXTURE" || fail "fixture missing login replace"
+	pass "fixture ready"
+}
+
+main() {
+	test_fixture_contains_unstable_names_for_semantic_coverage
+	test_arcane_yml_comments_have_no_go_template_delimiters
+	test_arcane_yml_js_rewrites_are_semantic_not_minified_names
+	test_arcane_yml_replacements_avoid_broken_js_regex_lookahead
+	test_compose_pins_arcane_image_not_latest
+	printf 'All arcane traefik tests passed\n'
+}
+
+main "$@"
