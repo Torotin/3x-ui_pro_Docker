@@ -46,6 +46,14 @@ http:
               replacement: '{{ printf "location.replace(`/%s/login?redirect=" (env "URI_ARCANE") }}'
             - regex: '\[`/login`,`/logout`,`/oidc`,`/auth/oidc`,`/mobile/passkey`\]'
               replacement: '{{ printf "[`/%s/login`,`/login`,`/%s/logout`,`/logout`,`/%s/oidc`,`/oidc`,`/%s/auth/oidc`,`/auth/oidc`,`/%s/mobile/passkey`,`/mobile/passkey`]" (env "URI_ARCANE") (env "URI_ARCANE") (env "URI_ARCANE") (env "URI_ARCANE") (env "URI_ARCANE") }}'
+            # Strip URI_ARCANE from pathname before route-guard compares.
+            # Match the arrow shape, not a minified identifier.
+            # Do not put Go-template delimiters in comments.
+            - regex: '=\(e,t\)=>t\.some\(t=>e===t\|\|e\.startsWith\(`\$\{t\}/`\)\);'
+              replacement: '{{ printf "=(e,t)=>{var b=\"/%s\";e=(e===b||e.startsWith(b+\"/\"))?(e.slice(b.length)||\"/\"):e;return t.some(t=>e===t||e.startsWith(t+\"/\"));};" (env "URI_ARCANE") }}'
+            # Match dashboard redirect-guard by signature, not function name.
+            - regex: '\(e,t,n,r,i=!1,a=`/dashboard`\)\{if\(e===`/`\)'
+              replacement: '{{ printf "(e,t,n,r,i=!1,a=`/dashboard`){var b=\"/%s\";e=(e===b||e.startsWith(b+\"/\"))?(e.slice(b.length)||\"/\"):e;if(e===`/`)" (env "URI_ARCANE") }}'
 
     arcane-spa-redirect:
       redirectRegex:
