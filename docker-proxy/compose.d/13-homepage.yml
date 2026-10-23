@@ -90,8 +90,9 @@ services:
       - traefik.http.routers.homepage-router.tls.certresolver=le
       - traefik.http.routers.homepage-router.priority=950
 
-      # Include /api/auth so NextAuth is not stolen by Arcane's root PathPrefix(`/api`) (prio 900).
-      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/auth`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`))
+      # NextAuth only (not PathPrefix(/api/auth)): Arcane owns /api/auth/login|me|refresh|...
+      # Broad /api/auth stole Arcane auth and triggered a second Basic Auth (realm Homepage).
+      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/auth/signin`) || PathPrefix(`/api/auth/signout`) || PathPrefix(`/api/auth/session`) || PathPrefix(`/api/auth/csrf`) || PathPrefix(`/api/auth/providers`) || PathPrefix(`/api/auth/error`) || PathPrefix(`/api/auth/_log`) || PathPrefix(`/api/auth/callback`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`))
       - traefik.http.routers.homepage-static.entrypoints=websecure
       - traefik.http.routers.homepage-static.middlewares=homepage-static-chain
       - traefik.http.routers.homepage-static.service=homepage-svc
