@@ -515,6 +515,23 @@ if not re.fullmatch(r"[A-Za-z0-9]{48,64}", secret):
 PY
 }
 
+test_env_persists_generated_lampac_jacred_apikey() {
+	make_fixture
+	run_installer run env
+	assert_contains 'LAMPAC_JACRED_APIKEY="' "$INSTALL_STATE_DIR/install.env" "env must persist generated JacRed apikey"
+	assert_contains 'LAMPAC_JACRED_APIKEY="' "$INSTALL_ROOT/compose.d/.env" "compose env must receive JacRed apikey"
+	python3 - "$INSTALL_STATE_DIR/install.env" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r'^LAMPAC_JACRED_APIKEY="([0-9a-f]+)"$', text, re.M)
+if not m:
+    raise SystemExit("LAMPAC_JACRED_APIKEY missing or not hex-quoted")
+if len(m.group(1)) != 32:
+    raise SystemExit("LAMPAC_JACRED_APIKEY must be 32 hex chars (generate_hex_secret 16)")
+PY
+}
+
 test_env_normalizes_global_boolean_values() {
 	make_fixture
 	export ENABLE_LAMPAC=off
@@ -1691,6 +1708,7 @@ test_compose_installs_docker_maintenance_timer
 test_env_reports_permission_problem_before_backup
 test_env_preserves_existing_state_defaults
 test_env_renders_mihomo_config_with_generated_secret
+test_env_persists_generated_lampac_jacred_apikey
 test_env_normalizes_global_boolean_values
 test_env_rejects_invalid_global_boolean_values
 test_state_loader_preserves_literal_dollars
