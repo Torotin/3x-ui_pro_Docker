@@ -9,11 +9,11 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
 test_arcane_yml_comments_have_no_go_template_delimiters() {
-	# Strip YAML {{ printf ... }} replacement lines; remaining {{ or }} is forbidden (comments/raw).
+	# Traefik templates the whole file; {{ }} in YAML comments break parsing. Values may use templates.
 	local bad
-	bad=$(grep -nE '\{\{|\}\}' "$ARCANE_YML" | grep -vE 'replacement:.*\{\{ printf' || true)
-	[[ -z "$bad" ]] || fail "Go-template delimiters outside printf replacements:\n$bad"
-	pass "arcane.yml has no stray {{ }}"
+	bad=$(grep -nE '^\s*#' "$ARCANE_YML" | grep -E '\{\{|\}\}' || true)
+	[[ -z "$bad" ]] || fail "Go-template delimiters in YAML comments:\n$bad"
+	pass "arcane.yml comments have no {{ }}"
 }
 
 test_arcane_yml_js_rewrites_are_semantic_not_minified_names() {
