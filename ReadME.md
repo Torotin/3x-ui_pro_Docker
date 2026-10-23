@@ -210,7 +210,7 @@ Wizard submenu (`t`):
 - `ENABLE_HYSTERIA2` включает inbound в Xray desired state; **не** убирает host `443/udp` mapping и UFW.
 - Не открывать наружу: `4443`, `9118`, panel ports, metrics, CrowdSec.
 - Traefik HTTP/3 entrypoints в clean install отключены / high-risk — не включать без отдельного плана отката.
-- Админки: path-routes на `https://${WEBDOMAIN}/...` + BasicAuth + CrowdSec + rate-limit + noindex. Arcane также владеет корневыми маршрутами `/api` (priority 900, ниже Homepage `/api/*` 949), `/_app`, SPA — [`07-arcane.yml`](docker-proxy/compose.d/07-arcane.yml).
+- Админки: path-routes на `https://${WEBDOMAIN}/...` + BasicAuth + CrowdSec + rate-limit + noindex. Arcane: `/${URI_ARCANE}` + root `/api` (prio 900), `/_app`, SPA — [`07-arcane.yml`](docker-proxy/compose.d/07-arcane.yml). Homepage NextAuth только узкие `/api/auth/signin|session|callback|…` (prio 949), не весь `/api/auth` — иначе крадёт Arcane login.
 - Lampac routing (root front без BasicAuth; sensitive `/admin` / `/adminpanel` / `/stats` / `/weblog` — admin middleware) — **только при** `ENABLE_LAMPAC=true`.
 - `ENABLE_VLESS_GRPC`: inbound-only toggle (default false); не compose-сервис.
 
@@ -444,9 +444,9 @@ SSH apply логирует auth mode, пользователя, порт, backup
     Проверка: `cscli decisions list` — ложный `http-probing`, когда path временно уходит в Caddy-fallback.  
     Действие: снять decision для своего IP или дождаться expiry; дождаться healthy целевого сервиса.
 
-15. **Homepage NextAuth `CLIENT_FETCH_ERROR` на `/api/auth/*`**  
-    Проверка: `homepage-static` включает `PathPrefix(/api/auth)`, priority 949 > Arcane `/api` 900; labels в [`13-homepage.yml`](docker-proxy/compose.d/13-homepage.yml).  
-    Действие: обновить labels + restart homepage (и Traefik при необходимости).
+15. **Двойной Basic Auth / Arcane login не работает; Homepage NextAuth `CLIENT_FETCH_ERROR`**  
+    Проверка: `homepage-static` должен держать **только** NextAuth-пути (`/api/auth/signin|signout|session|csrf|providers|error|_log|callback`), prio 949; Arcane `/api/auth/login|me|…` уходит в `arcane-api` (prio 900, realm Basic Authentication). Labels — [`13-homepage.yml`](docker-proxy/compose.d/13-homepage.yml), [`07-arcane.yml`](docker-proxy/compose.d/07-arcane.yml).  
+    Действие: не возвращать широкий `PathPrefix(/api/auth)`; обновить labels + recreate homepage (Traefik при необходимости).
 
 ## Удаление
 
