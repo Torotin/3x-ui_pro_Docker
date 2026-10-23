@@ -168,11 +168,26 @@ function lampainit_suppress_alcopa_free_notice() {
   } catch (e) {}
 }
 
+// Stock Lampa default screensaver_type is 'aerial' (Apple sylvan HTTP videos).
+// On HTTPS pages the browser upgrades to HTTPS → ERR_CERT_AUTHORITY_INVALID.
+// Migrate once from aerial → nature; leave chrome/cub/user picks alone.
+function lampainit_default_screensaver() {
+  try {
+    if (Lampa.Storage.get('lampainit_screensaver_v1', '')) return;
+    var t = Lampa.Storage.get('screensaver_type', 'aerial');
+    if (!t || t === 'aerial') {
+      Lampa.Storage.set('screensaver_type', 'nature');
+    }
+    Lampa.Storage.set('lampainit_screensaver_v1', '1');
+  } catch (e) {}
+}
+
 function lampainit_apply_local() {
   // CUB domain/mirrors: leave Lampa defaults (no forced cub_domain / cub_mirrors).
   Lampa.Storage.set('proxy_tmdb', 'true');
   lampainit_capture_accsdb_uid();
   lampainit_suppress_alcopa_free_notice();
+  lampainit_default_screensaver();
 }
 
 function lampainit_ensure_exact_plugins(list) {
