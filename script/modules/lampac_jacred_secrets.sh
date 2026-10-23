@@ -15,6 +15,9 @@ apply_lampac_jacred_secrets() {
 	fi
 
 	mkdir -p "$override_dir"
+	if [[ -d "$inject" ]]; then
+		rm -rf -- "$inject"
+	fi
 	backup_file "$initf"
 
 	python3 - "$initf" "$key" "$inject" <<'PY'

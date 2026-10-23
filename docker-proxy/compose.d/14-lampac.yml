@@ -57,6 +57,7 @@ services:
       # FileCache does not pick this from override/ for plugins/rch_nws.js — bind-mount required.
       - ../lampac/plugins/override/rch_nws.js:/lampac/plugins/rch_nws.js:ro
       # JacRed apikey inject (gitignored). Lampac serves wwwroot/* at /{basename}.
+      # Run apply-secrets (installer env) before first compose up, or remove a stray host directory and re-apply.
       - ../lampac/plugins/override/jacred-apikey.local.js:/lampac/wwwroot/jacred-apikey.local.js:ro
       # Optional: extra user module dir (see README → Docker → manifest.json). Example name is illustrative.
       # - ../lampac/mods/BulbaCrawler:/lampac/mods/BulbaCrawler

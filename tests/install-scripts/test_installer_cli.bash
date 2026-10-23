@@ -543,10 +543,12 @@ test_env_applies_lampac_jacred_secrets_when_enabled() {
   }
 }
 JSON
+	local inject="$INSTALL_ROOT/lampac/plugins/override/jacred-apikey.local.js"
+	mkdir -p "$inject"
+	[[ -d "$inject" ]] || fail "fixture must simulate compose-created directory at inject path"
 	export ENABLE_LAMPAC=true
 	run_installer run env
 	local initf="$INSTALL_ROOT/lampac/config/init.conf"
-	local inject="$INSTALL_ROOT/lampac/plugins/override/jacred-apikey.local.js"
 	[[ -f "$inject" ]] || fail "apply-secrets must write jacred-apikey.local.js"
 	python3 - "$INSTALL_STATE_DIR/install.env" "$initf" "$inject" <<'PY'
 import json, re, sys
