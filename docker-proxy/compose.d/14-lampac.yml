@@ -92,8 +92,8 @@ services:
       - traefik.http.middlewares.lampac-nws-headers.headers.customRequestHeaders.X-Forwarded-Proto=https
 
       # Lampac APIs under /api/* that must not hit Traefik dashboard (prio 145) or Arcane (900).
-      # JacRed: /api/v1.0, /api/v2.0. Alcopa OpenSubs menu: /api/opensubs.
-      - traefik.http.routers.lampac-api-override.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/api/v1.0`) || PathPrefix(`/api/v2.0`) || PathPrefix(`/api/opensubs`))
+      # JacRed: /api/v1.0, /api/v2.0.
+      - traefik.http.routers.lampac-api-override.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/api/v1.0`) || PathPrefix(`/api/v2.0`))
       - traefik.http.routers.lampac-api-override.entrypoints=websecure
       - traefik.http.routers.lampac-api-override.tls=true
       - traefik.http.routers.lampac-api-override.tls.certresolver=le

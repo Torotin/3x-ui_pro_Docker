@@ -82,6 +82,14 @@
       if (earlyKey) localStorage.setItem('jackett_key', earlyKey);
     }
   } catch (e) {}
+  // Alcopa snack_langs: voice priority ru.
+  try {
+    localStorage.setItem('alc_auto_langs', 'ru');
+  } catch (e) {}
+  // ts-preload.js only hooks Player when torrserver_preload is on.
+  try {
+    localStorage.setItem('torrserver_preload', 'true');
+  } catch (e) {}
 
   function markStorage() {
     try {
@@ -236,6 +244,62 @@ function lampainit_pin_alcopa_server() {
   } catch (e) {}
 }
 
+// Alcopa snack_langs: voice language priority (alc_auto).
+function lampainit_pin_alcopa_langs() {
+  try {
+    Lampa.Storage.set('alc_auto_langs', 'ru');
+    try {
+      localStorage.setItem('alc_auto_langs', 'ru');
+    } catch (e2) {}
+  } catch (e) {}
+}
+
+// Enable Lampa TorrServer preload so ts-preload.js can show the progress UI.
+function lampainit_pin_torrserver_preload() {
+  try {
+    Lampa.Storage.set('torrserver_preload', true);
+    try {
+      localStorage.setItem('torrserver_preload', 'true');
+    } catch (e2) {}
+  } catch (e) {}
+}
+
+// Drop opensubs_menu if a previous install left it in client plugin storage.
+function lampainit_remove_opensubs_menu() {
+  try {
+    if (!window.Lampa || !Lampa.Plugins) return;
+    var installed = Lampa.Plugins.get() || [];
+    var drop = installed.filter(function (p) {
+      var u = (p && p.url) ? String(p.url) : '';
+      return u.indexOf('opensubs_menu') >= 0;
+    });
+    if (!drop.length) return;
+    drop.forEach(function (p) {
+      try {
+        if (typeof Lampa.Plugins.remove === 'function') Lampa.Plugins.remove(p);
+      } catch (eR) {}
+    });
+    var left = (Lampa.Plugins.get() || []).filter(function (p) {
+      var u = (p && p.url) ? String(p.url) : '';
+      return u.indexOf('opensubs_menu') < 0;
+    });
+    if (left.length !== (Lampa.Plugins.get() || []).length) {
+      try {
+        if (Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set('plugins', left);
+      } catch (eS) {}
+    }
+    try {
+      Lampa.Plugins.save();
+    } catch (eSave) {}
+  } catch (e) {}
+  try {
+    localStorage.removeItem('opensubs_langs');
+  } catch (e2) {}
+  try {
+    if (window.Lampa && Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set('opensubs_langs', '');
+  } catch (e3) {}
+}
+
 // Stock lampainit sets jackett_url only inside first_initiale (lampac_initiale).
 // Clients that already passed that gate keep an empty Jackett link →
 // "Укажите ссылку для парсинга: Jackett". JacRed is Jackett-compatible on this host.
@@ -272,6 +336,9 @@ function lampainit_apply_local() {
   lampainit_force_tmdb_proxy();
   lampainit_force_jacred_parser();
   lampainit_pin_alcopa_server();
+  lampainit_pin_alcopa_langs();
+  lampainit_pin_torrserver_preload();
+  lampainit_remove_opensubs_menu();
   lampainit_capture_accsdb_uid();
   lampainit_suppress_alcopa_free_notice();
   lampainit_default_screensaver();
@@ -296,8 +363,9 @@ function lampainit_ensure_exact_plugins(list) {
   Lampa.Utils.putScript(push, function () {}, function () {}, function () {}, true);
 }
 
-// Keep in sync with LampaWeb.customPlugins (status:1 Alcopa entries) in init.conf.
+// Keep in sync with LampaWeb.customPlugins (status:1 forced entries) in init.conf.
 function lampainit_ensure_alcopa_plugins() {
+  lampainit_remove_opensubs_menu();
   lampainit_ensure_exact_plugins([
     {
       url: 'https://hub.alcopa.cc/dl/alc_auto/v2.1.44/plugin.js',
@@ -310,8 +378,8 @@ function lampainit_ensure_alcopa_plugins() {
       status: 1
     },
     {
-      url: 'https://hub.alcopa.cc/dl/opensubs_menu/v1.2.9/plugin.js',
-      name: 'OpenSubtitles · Закусь',
+      url: 'https://plugin.rootu.top/ts-preload.js',
+      name: 'TorrServer Preload',
       status: 1
     }
   ]);
@@ -330,6 +398,12 @@ lampainit_invc.appready = function appready() {
   setTimeout(lampainit_force_tmdb_proxy, 1500);
   setTimeout(lampainit_force_jacred_parser, 0);
   setTimeout(lampainit_force_jacred_parser, 1500);
+  setTimeout(lampainit_pin_alcopa_langs, 0);
+  setTimeout(lampainit_pin_alcopa_langs, 1500);
+  setTimeout(lampainit_pin_torrserver_preload, 0);
+  setTimeout(lampainit_pin_torrserver_preload, 1500);
+  setTimeout(lampainit_remove_opensubs_menu, 0);
+  setTimeout(lampainit_remove_opensubs_menu, 1500);
 };
 
 lampainit_invc.first_initiale = function firstinitiale() {
