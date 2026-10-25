@@ -41,12 +41,9 @@ desktop.ini
 .idea/
 *.iml
 .cursor/
+# Local agent scratch and design docs — never commit
 .superpowers/
-docs/**
-# Track design specs / plans under docs/superpowers (rest of docs/ stays ignored)
-!docs/superpowers/
-!docs/superpowers/**
-
+docs/
 # ==== Python / test leftovers ====
 __pycache__/
 *.py[cod]
