@@ -7,11 +7,14 @@ PORT_LOCAL_ADMIN="${PORT_LOCAL_ADMIN:-9443}"
 SUB_PATH="${URI_SUB_PATH:?set URI_SUB_PATH}"
 
 echo "== break-glass localhost admin (expect 401 without auth) =="
-for host in arcane homepage adguard traefik lampac-admin; do
+for host in arcane homepage adguard lampac-admin; do
   code=$(curl -k -sS -o /dev/null -w "%{http_code}" -H "Host: ${host}.${WEBDOMAIN}" \
     "https://127.0.0.1:${PORT_LOCAL_ADMIN}/" || true)
   echo "${host}: ${code}"
 done
+code=$(curl -k -sS -o /dev/null -w "%{http_code}" -H "Host: traefik.${WEBDOMAIN}" \
+  "https://127.0.0.1:${PORT_LOCAL_ADMIN}/dashboard/" || true)
+echo "traefik: ${code}"
 code=$(curl -k -sS -o /dev/null -w "%{http_code}" -H "Host: 3x-ui.${WEBDOMAIN}" \
   "https://127.0.0.1:${PORT_LOCAL_ADMIN}/${URI_PANEL_PATH:-panel}/" || true)
 echo "3x-ui: ${code}"
