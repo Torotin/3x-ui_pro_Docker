@@ -66,63 +66,21 @@ services:
       # Статические файлы — только compress
       - traefik.http.middlewares.static-chain.chain.middlewares=compress
 
-      # ---------- Traefik admin hostname ----------
-      # Метрики под защищённым admin hostname
-      - traefik.http.routers.traefik-metrics.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_TRAEFIK_DASHBOARD}/metrics`)
-      - traefik.http.routers.traefik-metrics.entrypoints=websecure
-      - traefik.http.routers.traefik-metrics.middlewares=secured-chain
+      # ---------- Traefik dashboard on private admin Host (self-signed) ----------
+      - traefik.http.middlewares.admin-dash-chain.chain.middlewares=basic-auth,rate-limit,admin-security-headers@file,compress
+      - traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${WEBDOMAIN}`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+      - traefik.http.routers.traefik-dashboard.entrypoints=admin
+      - traefik.http.routers.traefik-dashboard.middlewares=admin-dash-chain
+      - traefik.http.routers.traefik-dashboard.service=api@internal
+      - traefik.http.routers.traefik-dashboard.tls=true
+      - traefik.http.routers.traefik-dashboard.priority=100
+
+      - traefik.http.routers.traefik-metrics.rule=Host(`traefik.${WEBDOMAIN}`) && Path(`/metrics`)
+      - traefik.http.routers.traefik-metrics.entrypoints=admin
+      - traefik.http.routers.traefik-metrics.middlewares=admin-dash-chain
       - traefik.http.routers.traefik-metrics.service=api@internal
-      - traefik.http.routers.traefik-metrics.tls.certresolver=le
-
-      # ---------- Dashboard: редиректы, API, UI ----------
-      # Удаление префикса /${URI_TRAEFIK_DASHBOARD} для path-compat режима
-      - traefik.http.middlewares.dash-strip-prefix.stripPrefix.prefixes=/${URI_TRAEFIK_DASHBOARD}
-
-      # Редирект с /dashboard → /${URI_TRAEFIK_DASHBOARD}/dashboard
-      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.regex=^/dashboard(.*)$$
-      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard$$1
-      - traefik.http.middlewares.dash-redirect-to-prefixed.redirectRegex.permanent=true
-
-      # Редирект с /${URI_TRAEFIK_DASHBOARD}/ → UI
-      - traefik.http.middlewares.dash-redirect-root.redirectRegex.regex=^/${URI_TRAEFIK_DASHBOARD}/?$$
-      - traefik.http.middlewares.dash-redirect-root.redirectRegex.replacement=/${URI_TRAEFIK_DASHBOARD}/dashboard/
-      - traefik.http.middlewares.dash-redirect-root.redirectRegex.permanent=true
-
-      # Корневой путь /${URI_TRAEFIK_DASHBOARD} → UI
-      - traefik.http.routers.traefik-dashboard-root-to-ui.rule=Host(`${WEBDOMAIN}`) && (Path(`/${URI_TRAEFIK_DASHBOARD}`) || Path(`/${URI_TRAEFIK_DASHBOARD}/`))
-      - traefik.http.routers.traefik-dashboard-root-to-ui.entrypoints=websecure
-      - traefik.http.routers.traefik-dashboard-root-to-ui.middlewares=secured-chain,dash-redirect-root
-      - traefik.http.routers.traefik-dashboard-root-to-ui.service=api@internal
-      - traefik.http.routers.traefik-dashboard-root-to-ui.tls.certresolver=le
-      - traefik.http.routers.traefik-dashboard-root-to-ui.priority=100
-
-      # Перезапись абсолютных /api внутри Dashboard
-      - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.regex=^https?://([^/]+)/api/(.*)
-      - traefik.http.middlewares.dash-api-rewrite.plugin.fullUrlRewrite.replacement=https://$$1/${URI_TRAEFIK_DASHBOARD}/api/$$2
-
-      # Основной UI и API под префиксом
-      - traefik.http.routers.traefik-dashboard-prefixed.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/${URI_TRAEFIK_DASHBOARD}/dashboard`) || PathPrefix(`/${URI_TRAEFIK_DASHBOARD}/api`))
-      - traefik.http.routers.traefik-dashboard-prefixed.entrypoints=websecure
-      - traefik.http.routers.traefik-dashboard-prefixed.middlewares=secured-chain,dash-strip-prefix
-      - traefik.http.routers.traefik-dashboard-prefixed.service=api@internal
-      - traefik.http.routers.traefik-dashboard-prefixed.tls.certresolver=le
-      - traefik.http.routers.traefik-dashboard-prefixed.priority=140
-
-      # API Dashboard использует абсолютные /api/* запросы из UI
-      - traefik.http.routers.traefik-dashboard-api-root.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/api`)
-      - traefik.http.routers.traefik-dashboard-api-root.entrypoints=websecure
-      - traefik.http.routers.traefik-dashboard-api-root.middlewares=secured-chain
-      - traefik.http.routers.traefik-dashboard-api-root.service=api@internal
-      - traefik.http.routers.traefik-dashboard-api-root.tls.certresolver=le
-      - traefik.http.routers.traefik-dashboard-api-root.priority=145
-
-      # Manifest.json Dashboard
-      - traefik.http.routers.traefik-dashboard-manifest.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_TRAEFIK_DASHBOARD}/dashboard/manifest.json`)
-      - traefik.http.routers.traefik-dashboard-manifest.entrypoints=websecure
-      - traefik.http.routers.traefik-dashboard-manifest.middlewares=dashboard-manifest-chain
-      - traefik.http.routers.traefik-dashboard-manifest.service=api@internal
-      - traefik.http.routers.traefik-dashboard-manifest.tls.certresolver=le
-      - traefik.http.routers.traefik-dashboard-manifest.priority=150
+      - traefik.http.routers.traefik-metrics.tls=true
+      - traefik.http.routers.traefik-metrics.priority=110
 
       # ---------- CROWDSEC BOUNCER ----------
       # - traefik.http.middlewares.bouncer.plugin.bouncer.enabled=true
