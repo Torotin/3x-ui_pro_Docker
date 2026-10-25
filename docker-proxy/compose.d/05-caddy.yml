@@ -21,9 +21,8 @@ services:
     volumes:
       - ../_logs/caddy:/var/log/caddy
       - ../caddy/config:/etc/caddy
-      # /srv itself stays image-owned so entrypoint randomfakehtml can re-roll
-      # the public decoy template on recreate. Only subscription HTML is bind-mounted.
-      - ../caddy/subs:/srv/subs:ro
+      # /srv stays image-owned so entrypoint randomfakehtml can re-roll
+      # the public decoy template on recreate.
     env_file:
       - ./.env
     security_opt:
@@ -84,12 +83,3 @@ services:
       - traefik.http.routers.caddy-fallback.tls.certresolver=le
       - traefik.http.routers.caddy-fallback.priority=1
       - traefik.http.routers.caddy-fallback.service=caddy-error
-
-      # Кастомная страница для JSON-подписок
-      # - traefik.http.routers.caddy-jsonpage.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_JSON_PATH}`)
-      # - traefik.http.routers.caddy-jsonpage.entrypoints=websecure
-      # - traefik.http.routers.caddy-jsonpage.middlewares=caddy-chain
-      # - traefik.http.routers.caddy-jsonpage.tls.certresolver=le
-      # - traefik.http.routers.caddy-jsonpage.priority=10001
-      # - traefik.http.routers.caddy-jsonpage.service=caddy-jsonpage-svc
-      # - traefik.http.services.caddy-jsonpage-svc.loadbalancer.server.port=${PORT_TEST}

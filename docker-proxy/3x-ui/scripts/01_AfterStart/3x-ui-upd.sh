@@ -95,7 +95,11 @@ main() {
 	if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
 		ensure_hysteria2_client "$hysteria2_id" "$desired"
 	fi
-	repair_shared_client_after_inbound_sync "$desired"
+	repair_shared_client_after_inbound_sync "$desired" "$vision_id" "$xhttp_id" "$grpc_id"
+	# Inbounds are created after the early outbound restart; restart again so
+	# Vision/XHTTP/gRPC/Hysteria listeners exist, then wait for them.
+	restart_xray_if_needed
+	wait_managed_xray_ports || log WARN "One or more managed Xray inbounds are not listening after inbound sync."
 	update_builtin_geofiles_if_enabled
 	restart_panel_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"

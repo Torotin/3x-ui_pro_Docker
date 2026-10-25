@@ -301,13 +301,48 @@ wait_udp_port_listener() {
 	return 1
 }
 
-# Проверяет, что управляемые inbounds снова слушают после рестарта.
+# Возвращает 0, если в списке inbounds уже есть заданный порт/протокол.
+managed_inbound_present() {
+	local inbounds=$1 port=$2 protocol=$3 id
+	[[ -n "$inbounds" && "$inbounds" != "null" ]] || return 1
+	id=$(find_inbound_by_port "$inbounds" "$port" "$protocol")
+	[[ -n "$id" ]]
+}
+
+# Проверяет, что уже созданные managed inbounds снова слушают после рестарта.
+# На первом буте (inbounds ещё нет) ожидание пропускается — иначе 60s ложных WARN.
 wait_managed_xray_ports() {
-	local timeout=${XRAY_RESTART_PORT_TIMEOUT:-30} failed=0
-	wait_tcp_port 127.0.0.1 "$PORT_LOCAL_VISION" "$timeout" "Vision inbound ${PORT_LOCAL_VISION}" || failed=1
-	wait_tcp_port 127.0.0.1 "$PORT_LOCAL_XHTTP" "$timeout" "XHTTP inbound ${PORT_LOCAL_XHTTP}" || failed=1
+	local timeout=${XRAY_RESTART_PORT_TIMEOUT:-30} failed=0 inbounds="" waiting=0
+	if xui_list_inbounds && http_success_json; then
+		inbounds=$(jq -c '.obj // []' "$HTTP_BODY_FILE")
+	else
+		log WARN "Could not list inbounds before port wait; skipping managed inbound readiness checks."
+		return 0
+	fi
+
+	if managed_inbound_present "$inbounds" "$PORT_LOCAL_VISION" "vless"; then
+		waiting=1
+		wait_tcp_port 127.0.0.1 "$PORT_LOCAL_VISION" "$timeout" "Vision inbound ${PORT_LOCAL_VISION}" || failed=1
+	else
+		log INFO "Skipping Vision port wait; inbound on ${PORT_LOCAL_VISION} is not present yet."
+	fi
+	if managed_inbound_present "$inbounds" "$PORT_LOCAL_XHTTP" "vless"; then
+		waiting=1
+		wait_tcp_port 127.0.0.1 "$PORT_LOCAL_XHTTP" "$timeout" "XHTTP inbound ${PORT_LOCAL_XHTTP}" || failed=1
+	else
+		log INFO "Skipping XHTTP port wait; inbound on ${PORT_LOCAL_XHTTP} is not present yet."
+	fi
 	if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
-		wait_udp_port_listener "$PORT_LOCAL_HYSTERIA" "$timeout" "Hysteria2 inbound ${PORT_LOCAL_HYSTERIA}/udp" || failed=1
+		if managed_inbound_present "$inbounds" "$PORT_LOCAL_HYSTERIA" "hysteria" ||
+			managed_inbound_present "$inbounds" "$PORT_LOCAL_HYSTERIA" "hysteria2"; then
+			waiting=1
+			wait_udp_port_listener "$PORT_LOCAL_HYSTERIA" "$timeout" "Hysteria2 inbound ${PORT_LOCAL_HYSTERIA}/udp" || failed=1
+		else
+			log INFO "Skipping Hysteria2 port wait; inbound on ${PORT_LOCAL_HYSTERIA}/udp is not present yet."
+		fi
+	fi
+	if ((waiting == 0)); then
+		log INFO "No managed inbounds to wait for yet."
 	fi
 	return "$failed"
 }
@@ -320,6 +355,7 @@ restart_xray_if_needed() {
 	fi
 	if ((RESTART_XRAY_REQUIRED == 1)); then
 		xui_restart_xray || log WARN "Xray restart request failed: $(http_body)"
+		RESTART_XRAY_REQUIRED=0
 		sleep "${XRAY_RESTART_SETTLE_SECONDS:-5}"
 		wait_managed_xray_ports || log WARN "One or more managed Xray inbounds are not listening after restart."
 	fi

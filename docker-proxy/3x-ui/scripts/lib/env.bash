@@ -108,7 +108,7 @@ init_defaults() {
 	: "${CUSTOM_GEO_RESOURCES:=}"
 	: "${GEODATA_CRON:=0 4 * * *}"
 	: "${GEOFILES_UPDATE_ON_START:=true}"
-	: "${DOWNLOAD_GEO_DIRECT:=false}"
+	: "${DOWNLOAD_GEO_DIRECT:=true}"
 	: "${DOWNLOAD_TRANSPORTS:=}"
 	: "${DOWNLOAD_URL_FALLBACKS:=}"
 	: "${DOWNLOAD_CONNECT_TIMEOUT:=5}"

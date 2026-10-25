@@ -290,7 +290,18 @@ for env_template_name, env_template in [("install.env.template", install_env_tem
     assert_true("XRAY_TLS_KEY_FILE=${XRAY_TLS_KEY_FILE}" in env_template, f"{env_template_name} must persist Xray TLS key path")
 
 lampac_compose = load_yaml("docker-proxy/compose.d/14-lampac.yml")
+lampac_fix_perms = lampac_compose["services"]["lampac-fix-perms"]
+assert_true(lampac_fix_perms.get("restart") == "no", "lampac-fix-perms must exit after chown")
+assert_true(
+    lampac_fix_perms.get("network_mode") == "none",
+    "lampac-fix-perms must not join stack networks",
+)
 lampac_service = lampac_compose["services"]["lampac"]
+assert_true(
+    (lampac_service.get("depends_on") or {}).get("lampac-fix-perms", {}).get("condition")
+    == "service_completed_successfully",
+    "lampac must wait for lampac-fix-perms oneshot",
+)
 assert_true(not lampac_service.get("ports"), "Lampac must not publish direct ports")
 lampac_labels = labels_for(lampac_service)
 public_middleware = lampac_labels.get("traefik.http.routers.lampac-https.middlewares", "")

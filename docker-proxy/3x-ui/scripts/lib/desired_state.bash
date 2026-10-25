@@ -147,7 +147,7 @@ build_desired_state() {
             hysteria2: {managed: true, protocol: "hysteria", port: ($hysteria2Port|tonumber), remark: $hysteria2Remark}
           },
           clients: {
-            shared: {email: $sharedEmail, subId: $subId, flow: "", visionFlow: "xtls-rprx-vision", xhttpFlow: "", grpcFlow: ""}
+            shared: {email: $sharedEmail, subId: $subId, flow: "xtls-rprx-vision", visionFlow: "xtls-rprx-vision", xhttpFlow: "", grpcFlow: ""}
           },
           tls: {
             certFile: $xrayTlsCert,
@@ -196,7 +196,7 @@ geoip|geoip_zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/downl
 geoip|geoip_v2fly|https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
 geoip|geoip_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat
 geosite|adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
-geosite|geosite_RU|https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat
+geosite|geosite_RU|https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
 EOF
 }
 

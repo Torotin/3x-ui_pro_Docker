@@ -1,9 +1,45 @@
 services:
+  # Oneshot: Lampac image runs as uid 1000; host files often arrive as 1001/root
+  # and SQLite then fails with "readonly database". Fix ownership, then exit
+  # (restart: "no") so this container does not stay running.
+  lampac-fix-perms:
+    image: alpine:latest
+    container_name: lampac-fix-perms
+    restart: "no"
+    network_mode: none
+    user: "0:0"
+    security_opt:
+      - no-new-privileges=true
+    volumes:
+      - ../lampac/config/passwd:/lampac/passwd
+      - ../lampac/config/init.conf:/lampac/init.conf
+      - ../lampac/cache:/lampac/cache
+      - ../lampac/database:/lampac/database
+      - ../lampac/data:/lampac/data
+      - ../_data/lampac/lampa-main:/lampac/wwwroot/lampa-main
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        for f in /lampac/passwd /lampac/init.conf; do
+          if [ -e "$$f" ]; then chown 1000:1000 "$$f"; fi
+        done
+        for d in /lampac/cache /lampac/database /lampac/data /lampac/wwwroot/lampa-main; do
+          if [ -e "$$d" ]; then chown -R 1000:1000 "$$d"; fi
+        done
+        echo "lampac-fix-perms: ownership set to 1000:1000"
+    logging:
+      options:
+        tag: "{{.Name}}"
+
   lampac:
     image: ghcr.io/lampac-nextgen/lampac
     container_name: lampac
     # Use host networking instead of bridge below: uncomment the next line and remove or adjust `ports` / `networks`.
     # network_mode: host
+    depends_on:
+      lampac-fix-perms:
+        condition: service_completed_successfully
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.14

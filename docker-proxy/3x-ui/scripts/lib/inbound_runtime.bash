@@ -613,13 +613,95 @@ ensure_shared_client() {
 	ensure_vless_stream "$xhttp_id" xhttp "XHTTP"
 }
 
+# 3x-ui first-class clients.flow is a single field. updateClient(flow="") wipes
+# Vision inbound flow, and updateInbound cannot restore it while clients.flow is
+# empty. Force per-inbound flows in SQLite after API sync.
+repair_inbound_vless_client_flows_db() {
+	local vision_id=$1 xhttp_id=$2 grpc_id=$3 desired=$4
+	local email vision_flow xhttp_flow grpc_flow db=${XUI_DB_PATH:-/etc/x-ui/x-ui.db} changed
+	[[ "$MODE" == "apply" ]] || return 0
+	[[ -s "$db" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || {
+		log WARN "Inbound VLESS flow repair skipped: python3 is unavailable."
+		return 0
+	}
+	email=$(jq -r '.clients.shared.email' <<<"$desired")
+	vision_flow=$(jq -r '.clients.shared.visionFlow' <<<"$desired")
+	xhttp_flow=$(jq -r '.clients.shared.xhttpFlow' <<<"$desired")
+	grpc_flow=$(jq -r '.clients.shared.grpcFlow' <<<"$desired")
+	changed=$(
+		XUI_DB_PATH="$db" \
+			REPAIR_EMAIL="$email" \
+			REPAIR_VISION_ID="$vision_id" \
+			REPAIR_XHTTP_ID="$xhttp_id" \
+			REPAIR_GRPC_ID="$grpc_id" \
+			REPAIR_VISION_FLOW="$vision_flow" \
+			REPAIR_XHTTP_FLOW="$xhttp_flow" \
+			REPAIR_GRPC_FLOW="$grpc_flow" \
+			python3 - <<'PY'
+import json
+import os
+import sqlite3
+
+db = os.environ.get("XUI_DB_PATH", "/etc/x-ui/x-ui.db")
+email = os.environ.get("REPAIR_EMAIL", "")
+targets = []
+for key, flow_key in (
+    ("REPAIR_VISION_ID", "REPAIR_VISION_FLOW"),
+    ("REPAIR_XHTTP_ID", "REPAIR_XHTTP_FLOW"),
+    ("REPAIR_GRPC_ID", "REPAIR_GRPC_FLOW"),
+):
+    inbound_id = (os.environ.get(key) or "").strip()
+    if not inbound_id:
+        continue
+    targets.append((int(inbound_id), os.environ.get(flow_key, "")))
+
+con = sqlite3.connect(db)
+cur = con.cursor()
+changed = 0
+for inbound_id, flow in targets:
+    row = cur.execute("select settings from inbounds where id=?", (inbound_id,)).fetchone()
+    if not row or not row[0]:
+        continue
+    try:
+        obj = json.loads(row[0])
+    except Exception:
+        continue
+    dirty = False
+    for client in obj.get("clients") or []:
+        if client.get("email") != email:
+            continue
+        if (client.get("flow") or "") != flow:
+            client["flow"] = flow
+            dirty = True
+    if dirty:
+        cur.execute(
+            "update inbounds set settings=? where id=?",
+            (json.dumps(obj, separators=(",", ":")), inbound_id),
+        )
+        changed += 1
+con.commit()
+con.close()
+print(changed)
+PY
+	) || {
+		log WARN "Inbound VLESS flow repair skipped: sqlite/python update failed."
+		return 0
+	}
+	if [[ "${changed:-0}" != "0" ]]; then
+		log INFO "Repaired VLESS client flow in $changed inbound settings row(s)."
+		RESTART_XRAY_REQUIRED=1
+	fi
+}
+
 repair_shared_client_after_inbound_sync() {
-	local desired=$1 email sub_id flow
+	local desired=$1 vision_id=${2:-} xhttp_id=${3:-} grpc_id=${4:-} email sub_id flow
 	[[ -n "${ENSURE_SHARED_CLIENT_ID:-}" ]] || return 0
 	email=$(jq -r '.clients.shared.email' <<<"$desired")
 	sub_id=$(jq -r '.clients.shared.subId' <<<"$desired")
 	flow=$(jq -r '.clients.shared.flow' <<<"$desired")
 	repair_shared_client_db "$email" "$ENSURE_SHARED_CLIENT_ID" "$sub_id" "$flow" "$ENSURE_SHARED_CLIENT_PASSWORD" "$ENSURE_SHARED_CLIENT_AUTH"
+	repair_inbound_vless_client_flows_db "$vision_id" "$xhttp_id" "$grpc_id" "$desired"
 }
 
 # Синхронизирует VLESS client object внутри конкретного inbound settings.

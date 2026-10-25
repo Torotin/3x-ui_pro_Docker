@@ -17,7 +17,7 @@ fi
 
 : "${XUI_BIN_FOLDER:=/app/bin}"
 : "${URL_LIST_FILE:=}"
-: "${DOWNLOAD_GEO_DIRECT:=false}"
+: "${DOWNLOAD_GEO_DIRECT:=true}"
 
 URL_LIST_DEFAULT='https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat|geosite_refilter.dat
 https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat|geosite_v2fly.dat
@@ -26,7 +26,7 @@ https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat|geoi
 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat|geoip_v2fly.dat
 https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat|geoip_refilter.dat
 https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat|adlist.dat
-https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat|geosite_RU.dat'
+https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat|geosite_RU.dat'
 
 # При разрешенном прямом режиме обновляет локальные dat-файлы геобаз до старта панели.
 main() {

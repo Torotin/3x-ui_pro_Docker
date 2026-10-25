@@ -94,7 +94,7 @@ test_desired_clients_are_deterministic() {
 	grpc_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.grpcFlow')
 	assert_eq autogen "$shared_email" "shared client email default mismatch"
 	assert_eq stable-sub "$shared_sub" "shared client sub id mismatch"
-	assert_eq "" "$shared_flow" "shared first-class client flow must stay empty"
+	assert_eq "xtls-rprx-vision" "$shared_flow" "shared first-class client flow must match Vision (panel updateClient(flow=\"\") wipes inbound Vision flow)"
 	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision inbound client flow mismatch"
 	assert_eq "" "$xhttp_flow" "XHTTP VLESS client flow must stay empty"
 	assert_eq "" "$grpc_flow" "gRPC VLESS client flow must stay empty"
@@ -922,6 +922,38 @@ test_existing_shared_client_with_invalid_uuid_is_repaired() {
 	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
 }
 
+test_repair_inbound_vless_client_flows_db_sets_vision_only() {
+	local tmp db desired vision_flow xhttp_flow
+	command -v python3 >/dev/null 2>&1 || {
+		printf 'SKIP: python3 unavailable for inbound flow repair test\n'
+		return 0
+	}
+	command -v sqlite3 >/dev/null 2>&1 || {
+		printf 'SKIP: sqlite3 unavailable for inbound flow repair test\n'
+		return 0
+	}
+	tmp=$(mktemp -d)
+	db="$tmp/x-ui.db"
+	sqlite3 "$db" 'create table inbounds(id integer primary key, settings text);'
+	sqlite3 "$db" "insert into inbounds(id, settings) values
+          (1, '{\"clients\":[{\"email\":\"autogen\",\"flow\":\"\"}]}'),
+          (2, '{\"clients\":[{\"email\":\"autogen\",\"flow\":\"xtls-rprx-vision\"}]}');"
+	export MODE=apply
+	export CLIENT_EMAIL_PREFIX=autogen
+	export CLIENT_SUB_ID=stable-sub
+	# shellcheck disable=SC2034 # repair_inbound_vless_client_flows_db mutates this runtime global
+	RESTART_XRAY_REQUIRED=0
+	desired=$(build_desired_state)
+	XUI_DB_PATH="$db" repair_inbound_vless_client_flows_db 1 2 "" "$desired"
+	vision_flow=$(sqlite3 "$db" "select json_extract(settings, '\$.clients[0].flow') from inbounds where id=1;")
+	xhttp_flow=$(sqlite3 "$db" "select json_extract(settings, '\$.clients[0].flow') from inbounds where id=2;")
+	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision inbound flow must be repaired in SQLite"
+	assert_eq "" "$xhttp_flow" "XHTTP inbound flow must be cleared in SQLite"
+	assert_eq 1 "$RESTART_XRAY_REQUIRED" "flow repair must request Xray restart"
+	rm -rf "$tmp"
+	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID XUI_DB_PATH
+}
+
 test_vless_inbound_client_sync_writes_uuid() {
 	local inbound desired current_settings desired_settings client_id
 	desired=$(build_desired_state)
@@ -1198,7 +1230,7 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"' \
 		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
 		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
-		'repair_shared_client_after_inbound_sync "$desired"' \
+		'repair_shared_client_after_inbound_sync "$desired" "$vision_id" "$xhttp_id" "$grpc_id"' \
 		'update_builtin_geofiles_if_enabled' \
 		'restart_panel_if_needed'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
@@ -1255,6 +1287,10 @@ test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
 	export PORT_LOCAL_XHTTP=2443
 	export PORT_LOCAL_HYSTERIA=3443
 	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[{"id":1,"port":1443,"protocol":"vless"},{"id":2,"port":2443,"protocol":"vless"},{"id":3,"port":3443,"protocol":"hysteria"}]}' >"$HTTP_BODY_FILE"
 	wait_tcp_port() {
 		checks+=("tcp:$2:$4")
 		return 0
@@ -1268,8 +1304,48 @@ test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
 
 	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
 	assert_eq "tcp:1443:Vision inbound 1443 tcp:2443:XHTTP inbound 2443 udp:3443:Hysteria2 inbound 3443/udp" "$joined" "managed port wait must include Hysteria2 UDP listener"
-	unset -f wait_tcp_port wait_udp_port_listener
-	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
+test_wait_managed_xray_ports_skips_missing_inbounds_on_first_boot() {
+	local checks
+	checks=()
+	export ENABLE_HYSTERIA2=true
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_HYSTERIA=3443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[]}' >"$HTTP_BODY_FILE"
+	wait_tcp_port() {
+		checks+=("tcp:$2")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	assert_eq "" "$(printf '%s' "${checks[*]-}")" "first-boot port wait must skip when no managed inbounds exist yet"
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
 }
@@ -1362,6 +1438,8 @@ test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
 test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled
+test_wait_managed_xray_ports_skips_missing_inbounds_on_first_boot
+test_repair_inbound_vless_client_flows_db_sets_vision_only
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol
