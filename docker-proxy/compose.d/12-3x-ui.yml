@@ -104,33 +104,30 @@ services:
 
       # ---------- Роутеры (HTTPS) ----------
 
-      # Health-чек панели
-      - traefik.http.routers.3xui-health.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_PANEL_PATH}/health`)
-      - traefik.http.routers.3xui-health.entrypoints=websecure
-      - traefik.http.routers.3xui-health.middlewares=bouncer@file,3xui-panel-chain
-      - traefik.http.routers.3xui-health.tls.certresolver=le
+      # NOTE: do NOT claim root PathPrefix(`/assets/`) on public WEBDOMAIN.
+      # Panel UI moved to private admin Host; keep panel webBasePath under URI_PANEL_PATH.
+
+      # Health-чек панели (admin plane)
+      - traefik.http.routers.3xui-health.rule=Host(`3x-ui.${WEBDOMAIN}`) && Path(`/${URI_PANEL_PATH}/health`)
+      - traefik.http.routers.3xui-health.entrypoints=admin
+      - traefik.http.routers.3xui-health.middlewares=3xui-panel-chain
+      - traefik.http.routers.3xui-health.tls=true
       - traefik.http.routers.3xui-health.service=3xui-panel-svc
       - traefik.http.routers.3xui-health.priority=9995
 
-      # NOTE: do NOT claim root PathPrefix(`/assets/`) here.
-      # Modern 3x-ui serves hashed UI assets under `/${URI_PANEL_PATH}/assets/...`
-      # (covered by 3xui-panel). A root `/assets/` router returns 404 from the
-      # subscribe port and steals the Caddy decoy site's /assets/* (404 for visitors).
-
-      # Панель администратора
-      - traefik.http.routers.3xui-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)
-      - traefik.http.routers.3xui-panel.entrypoints=websecure
-      - traefik.http.routers.3xui-panel.middlewares=bouncer@file,3xui-panel-chain
-      - traefik.http.routers.3xui-panel.tls.certresolver=le
+      # Панель администратора (admin plane)
+      - traefik.http.routers.3xui-panel.rule=Host(`3x-ui.${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)
+      - traefik.http.routers.3xui-panel.entrypoints=admin
+      - traefik.http.routers.3xui-panel.middlewares=3xui-panel-chain
+      - traefik.http.routers.3xui-panel.tls=true
       - traefik.http.routers.3xui-panel.service=3xui-panel-svc
       - traefik.http.routers.3xui-panel.priority=9997
 
-      # Bearer-token API for bots and remote 3x-ui nodes. Keep UI/session
-      # routes on the BasicAuth-protected panel router above.
-      - traefik.http.routers.3xui-api.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}/panel/api`)
-      - traefik.http.routers.3xui-api.entrypoints=websecure
-      - traefik.http.routers.3xui-api.middlewares=bouncer@file,3xui-api-chain
-      - traefik.http.routers.3xui-api.tls.certresolver=le
+      # Bearer-token API for bots and remote 3x-ui nodes (admin plane)
+      - traefik.http.routers.3xui-api.rule=Host(`3x-ui.${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}/panel/api`)
+      - traefik.http.routers.3xui-api.entrypoints=admin
+      - traefik.http.routers.3xui-api.middlewares=3xui-api-chain
+      - traefik.http.routers.3xui-api.tls=true
       - traefik.http.routers.3xui-api.service=3xui-panel-svc
       - traefik.http.routers.3xui-api.priority=10001
 
