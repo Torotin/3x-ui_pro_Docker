@@ -1,4 +1,6 @@
 # Arcane path-prefix helpers (response-body rewrite + SPA root redirects).
+# Unused while Arcane is served at Host arcane.WEBDOMAIN on Traefik admin (root).
+# Kept so the file provider still loads and unit tests cover rewrite regexes.
 # Requires Traefik file provider directory mode and env URI_ARCANE + WEBDOMAIN.
 http:
   middlewares:
