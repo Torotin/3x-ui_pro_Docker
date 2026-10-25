@@ -199,6 +199,38 @@ json_replace_warp_routing_rules() {
     ' <<<"$current"
 }
 
+# Private admin Hosts → Traefik admin entrypoint (self-signed :9443). Forced to
+# the front of routing.rules so WARP domain:WEBDOMAIN does not steal subdomains.
+json_upsert_admin_traefik_route() {
+	local current=$1 webdomain=$2
+	local admin_ob admin_rule
+	[[ -n "$webdomain" ]] || {
+		printf '%s' "$current"
+		return 0
+	}
+	admin_ob=$(jq -nc '{tag:"admin-traefik",protocol:"freedom",settings:{redirect:"traefik:9443",domainStrategy:"AsIs"}}')
+	admin_rule=$(jq -nc --arg w "$webdomain" '{
+      type:"field",
+      outboundTag:"admin-traefik",
+      domain:[
+        "full:arcane."+$w,
+        "full:homepage."+$w,
+        "full:adguard."+$w,
+        "full:3x-ui."+$w,
+        "full:traefik."+$w,
+        "full:lampac-admin."+$w
+      ]
+    }')
+	current=$(json_upsert_outbound_by_tag "$current" "$admin_ob")
+	jq -c --argjson rule "$admin_rule" '
+      .xraySetting.routing = (.xraySetting.routing // {}) |
+      .xraySetting.routing.rules = (.xraySetting.routing.rules // []) |
+      .xraySetting.routing.rules = (
+        [$rule] + [.xraySetting.routing.rules[] | select((.outboundTag // "") != "admin-traefik")]
+      )
+    ' <<<"$current"
+}
+
 # Накладывает доступные WARP/TOR/DNS/Mihomo интеграции на очищенное состояние Xray.
 json_apply_managed_xray_state() {
 	local current=$1 dns_servers=$2 warp_enabled=$3 tor_enabled=$4 dns_enabled=$5 warp_endpoints=${6:-'[]'} webdomain=$7 tor_endpoints=${8:-'[]'} warp_console_ob=${9:-} mihomo_enabled=${10:-false} mihomo_endpoints=${11:-'[]'}
@@ -279,6 +311,8 @@ json_apply_managed_xray_state() {
           )
         ' <<<"$updated")
 	fi
+	# Admin plane last so the rule stays ahead of WARP domain:WEBDOMAIN matches.
+	updated=$(json_upsert_admin_traefik_route "$updated" "$webdomain")
 	printf '%s' "$updated"
 }
 

@@ -1041,8 +1041,20 @@ test_existing_mihomo_outbound_and_rule_are_preserved() {
 	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
 
 	assert_eq 17890 "$port" "existing Mihomo outbound must not be overwritten"
-	assert_eq 0 "$rule_index" "existing Mihomo routing rule must not be moved"
+	assert_eq 1 "$rule_index" "existing Mihomo routing rule stays after prepended admin-traefik"
 	assert_eq blocked "$last_rule_tag" "existing terminal rule order must be preserved when Mihomo rule already exists"
+}
+
+test_admin_traefik_route_prepended_for_webdomain_hosts() {
+	local base updated ob_count first_tag domains
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
+	updated=$(json_apply_managed_xray_state "$base" '[]' false false false '[]' "screenhub.linkpc.net")
+	ob_count=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="admin-traefik" and .protocol=="freedom" and .settings.redirect=="traefik:9443")] | length')
+	first_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[0].outboundTag')
+	domains=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[0].domain | sort | join(",")')
+	assert_eq 1 "$ob_count" "admin-traefik freedom outbound must target traefik:9443"
+	assert_eq admin-traefik "$first_tag" "admin-traefik rule must be first so WARP cannot steal admin Hosts"
+	assert_eq "full:3x-ui.screenhub.linkpc.net,full:adguard.screenhub.linkpc.net,full:arcane.screenhub.linkpc.net,full:homepage.screenhub.linkpc.net,full:lampac-admin.screenhub.linkpc.net,full:traefik.screenhub.linkpc.net" "$domains" "admin Host FQDNs mismatch"
 }
 
 test_managed_burst_observatory_preserves_custom_subjects() {
@@ -1423,6 +1435,7 @@ test_warp_balancer_uses_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp
 test_mihomo_outbound_and_terminal_rule_are_added_when_available
 test_existing_mihomo_outbound_and_rule_are_preserved
+test_admin_traefik_route_prepended_for_webdomain_hosts
 test_managed_burst_observatory_preserves_custom_subjects
 test_managed_xray_preserves_unmanaged_balancers_and_rules
 test_unhealthy_external_proxies_create_no_managed_xray_artifacts
