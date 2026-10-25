@@ -51,7 +51,25 @@ test_no_tailscale_compose() {
   pass "no Tailscale compose"
 }
 
+test_admin_host_routers_present() {
+  local patterns=(
+    'routers.arcane-ui.entrypoints=admin'
+    'routers.homepage-router.entrypoints=admin'
+    'routers.adguard-panel.entrypoints=admin'
+    'routers.3xui-panel.entrypoints=admin'
+    'routers.traefik-dashboard.entrypoints=admin'
+    'routers.lampac-sensitive.entrypoints=admin'
+  )
+  local p
+  for p in "${patterns[@]}"; do
+    grep -R -n --fixed-strings "$p" "$COMPOSE"/*.yml >/dev/null 2>&1 \
+      || fail "missing admin router: $p"
+  done
+  pass "admin Host routers present"
+}
+
 test_admin_entrypoint_exists
 test_no_public_admin_entrypoints
 test_subscription_and_doh_remain_public
 test_no_tailscale_compose
+test_admin_host_routers_present
