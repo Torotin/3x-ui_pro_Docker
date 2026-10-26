@@ -13,10 +13,57 @@ admin_sub_clash_default_mode() {
 	printf '%s\n' "rules-proxy"
 }
 
-# Live panel capability: json_routing_effective=no (see docs/superpowers/specs/2026-10-26-client-sub-admin-routing-capability.md).
+# Happ/INCY-style profile for subJsonRoutingRules (object, not Xray rules array).
+# Live reference: DomainStrategy + DnsHosts + ProxySites + RouteOrder.
 build_admin_sub_json_routing_rules() {
-	# Clash subClashRules is canonical for admin DNS/routing until JSON merge is proven effective.
-	printf ''
+	local webdomain=$1 public_ipv4=${2:-}
+	[[ -n "$webdomain" ]] || {
+		printf ''
+		return 0
+	}
+	admin_sub_hostnames | jq -Rsc --arg domain "$webdomain" --arg ip "$public_ipv4" '
+		(split("\n") | map(select(length > 0))) as $hosts
+		| {
+			DomainStrategy: "AsIs",
+			ProxySites: ($hosts | map("full:" + . + "." + $domain)),
+			RouteOrder: "proxy-direct-block"
+		}
+		| if ($ip | length) > 0 then
+			.DnsHosts = (
+				([$domain] + ($hosts | map(. + "." + $domain)))
+				| map({key: ., value: $ip})
+				| from_entries
+			)
+		  else .
+		  end
+	'
+}
+
+# Full client dns block for subJsonDns (overrides baked profile dns when set).
+build_admin_sub_json_dns() {
+	local webdomain=$1 public_ipv4=${2:-}
+	[[ -n "$webdomain" && -n "$public_ipv4" ]] || {
+		printf ''
+		return 0
+	}
+	admin_sub_hostnames | jq -Rsc --arg domain "$webdomain" --arg ip "$public_ipv4" '
+		(split("\n") | map(select(length > 0))) as $hosts
+		| {
+			hosts: (
+				([$domain] + ($hosts | map(. + "." + $domain)))
+				| map({key: ., value: $ip})
+				| from_entries
+			),
+			queryStrategy: "UseIP",
+			servers: [
+				{
+					address: "8.8.8.8",
+					skipFallback: false
+				}
+			],
+			tag: "dns_out"
+		}
+	'
 }
 
 build_admin_sub_clash_rules() {

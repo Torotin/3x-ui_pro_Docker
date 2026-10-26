@@ -21,7 +21,11 @@ panel_settings_json() {
           )
         ' <<<"$merged")
 	done < <(desired_panel_keys)
-	merged=$(jq -c 'if ((.smtpPort|tostring|tonumber?) // 0) < 1 then .smtpPort = 587 else . end' <<<"$merged")
+	# 3x-ui 3.7+ rejects smtpPort/ldapPort < 1 (zod min). Keep schema-valid placeholders when unused.
+	merged=$(jq -c '
+		if ((.smtpPort|tostring|tonumber?) // 0) < 1 then .smtpPort = 587 else . end
+		| if ((.ldapPort|tostring|tonumber?) // 0) < 1 then .ldapPort = 389 else . end
+	' <<<"$merged")
 	if [[ -z "${panelOutbound:-}" ]]; then
 		merged=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$merged")
 	fi
@@ -40,6 +44,10 @@ panel_desired_json() {
 		fi
 		desired=$(jq -c --arg key "$var" --arg value "$value" '.[$key] = $value' <<<"$desired")
 	done < <(desired_panel_keys)
+	# Keep desired comparable to normalized AllSetting (env may still carry ldapPort=0 placeholders).
+	desired=$(jq -c '
+		if ((.ldapPort|tostring|tonumber?) // 0) < 1 then .ldapPort = "389" else . end
+	' <<<"$desired")
 	if [[ -z "${panelOutbound:-}" ]]; then
 		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$desired")
 	fi

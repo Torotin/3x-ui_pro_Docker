@@ -578,9 +578,10 @@ test_desired_panel_keys_include_clash_routing() {
 test_panel_settings_json_defaults_panel_outbound() {
 	local body
 	unset panelOutbound
-	body=$(panel_settings_json '{"webPort":2053,"smtpPort":0,"tgBotEnable":false}')
+	body=$(panel_settings_json '{"webPort":2053,"smtpPort":0,"ldapPort":0,"tgBotEnable":false}')
 	assert_eq usque "$(printf '%s' "$body" | jq -r '.panelOutbound')" "panel settings JSON must default panelOutbound to usque"
 	assert_eq 587 "$(printf '%s' "$body" | jq -r '.smtpPort')" "panel settings JSON must normalize invalid smtpPort"
+	assert_eq 389 "$(printf '%s' "$body" | jq -r '.ldapPort')" "panel settings JSON must normalize invalid ldapPort"
 	assert_eq number "$(printf '%s' "$body" | jq -r '.webPort | type')" "webPort must remain a JSON number for 3.7 AllSetting"
 	assert_eq boolean "$(printf '%s' "$body" | jq -r '.tgBotEnable | type')" "boolean AllSetting fields must remain JSON booleans"
 }
@@ -1288,21 +1289,51 @@ test_afterstart_exports_admin_clash_routing_only() {
 	fi
 }
 
-test_afterstart_defers_json_sub_routing_until_effective() {
+test_afterstart_exports_json_sub_routing_and_dns() {
 	local script
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
-	grep -Fq 'build_admin_sub_json_routing_rules "${WEBDOMAIN}"' "$script" ||
-		fail "after-start must compute JSON routing for future effective panels"
-	grep -Fq 'if [[ -n "$subJsonRoutingRules" ]]; then' "$script" ||
-		fail "after-start must export subJsonRoutingRules only when non-empty"
+	grep -Fq 'build_admin_sub_json_routing_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}"' "$script" ||
+		fail "after-start must compute Happ-style subJsonRoutingRules"
+	grep -Fq 'build_admin_sub_json_dns "${WEBDOMAIN}" "${PUBLIC_IPV4:-}"' "$script" ||
+		fail "after-start must compute subJsonDns"
+	grep -Fq 'export subJsonRoutingRules' "$script" ||
+		fail "after-start must export subJsonRoutingRules"
+}
+
+test_desired_panel_keys_include_json_routing() {
+	local keys
+	keys=$(desired_panel_keys)
+	grep -qx subJsonRoutingRules <<<"$keys" || fail "subJsonRoutingRules missing"
+	grep -qx subJsonDns <<<"$keys" || fail "subJsonDns missing"
 }
 
 test_build_admin_sub_json_routing_rules() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
 	local out
-	out=$(build_admin_sub_json_routing_rules "example.test")
-	assert_eq "" "$out" "json_routing_effective=no: builder must return empty (no fake JSON routing)"
+	out=$(build_admin_sub_json_routing_rules "example.test" "198.51.100.10")
+	assert_eq AsIs "$(jq -r '.DomainStrategy' <<<"$out")" "DomainStrategy must be AsIs"
+	assert_eq proxy-direct-block "$(jq -r '.RouteOrder' <<<"$out")" "RouteOrder must match live reference"
+	assert_eq full:arcane.example.test "$(jq -r '.ProxySites[0]' <<<"$out")" "ProxySites must use full: FQDNs"
+	assert_eq 6 "$(jq -r '.ProxySites | length' <<<"$out")" "ProxySites must list all admin hosts"
+	assert_eq 198.51.100.10 "$(jq -r '.DnsHosts["arcane.example.test"]' <<<"$out")" "DnsHosts must map admin FQDN"
+	assert_eq 198.51.100.10 "$(jq -r '.DnsHosts["example.test"]' <<<"$out")" "DnsHosts must include apex"
+	out=$(build_admin_sub_json_routing_rules "example.test" "")
+	assert_eq null "$(jq -r '.DnsHosts' <<<"$out")" "empty PUBLIC_IPV4 must omit DnsHosts"
+	assert_eq 6 "$(jq -r '.ProxySites | length' <<<"$out")" "ProxySites remain without IPv4"
+}
+
+test_build_admin_sub_json_dns() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(build_admin_sub_json_dns "example.test" "")
+	assert_eq "" "$out" "empty PUBLIC_IPV4 must omit subJsonDns"
+	out=$(build_admin_sub_json_dns "example.test" "198.51.100.10")
+	assert_eq dns_out "$(jq -r '.tag' <<<"$out")" "dns tag must be dns_out"
+	assert_eq UseIP "$(jq -r '.queryStrategy' <<<"$out")" "dns queryStrategy must be UseIP"
+	assert_eq 198.51.100.10 "$(jq -r '.hosts["lampac-admin.example.test"]' <<<"$out")" "dns hosts must include all admin FQDNs"
+	assert_eq 7 "$(jq -r '.hosts | length' <<<"$out")" "dns hosts = apex + 6 admin labels"
 }
 
 test_afterstart_check_mode_bootstraps_without_apply() {
@@ -1543,7 +1574,8 @@ test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_exports_admin_clash_routing_only
-test_afterstart_defers_json_sub_routing_until_effective
+test_afterstart_exports_json_sub_routing_and_dns
+test_desired_panel_keys_include_json_routing
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
@@ -1559,4 +1591,5 @@ test_admin_sub_clash_default_mode_is_rules_proxy
 test_build_admin_sub_clash_rules_proxy_mode_with_ipv4_adds_hosts_dns_only
 test_build_admin_sub_clash_rules_skips_hosts_without_ipv4
 test_build_admin_sub_json_routing_rules
+test_build_admin_sub_json_dns
 printf 'test_libs.bash: OK\n'
