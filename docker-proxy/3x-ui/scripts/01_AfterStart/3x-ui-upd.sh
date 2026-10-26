@@ -53,6 +53,14 @@ main() {
 	TMP_ROOT=$(mktemp -d)
 	http_init "$TMP_ROOT"
 	load_runtime_env "$SCRIPT_DIR"
+	# shellcheck source=../lib/sub_admin_routing.bash
+	. "$LIB_DIR/sub_admin_routing.bash"
+	subClashEnableRouting=true
+	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")
+	export subClashEnableRouting subClashRules
+	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
+		log WARN "PUBLIC_IPV4 empty: admin Clash hosts map omitted"
+	fi
 	require_apply_mode
 	check_dependencies
 	log INFO "3x-ui managed runtime started MODE=$MODE"

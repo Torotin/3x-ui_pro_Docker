@@ -568,6 +568,13 @@ test_panel_keys_restore_old_cert_fields() {
 	grep -qx panelOutbound <<<"$keys" || fail "panelOutbound is missing from desired panel keys"
 }
 
+test_desired_panel_keys_include_clash_routing() {
+	local keys
+	keys=$(desired_panel_keys)
+	grep -qx subClashEnableRouting <<<"$keys" || fail "subClashEnableRouting missing"
+	grep -qx subClashRules <<<"$keys" || fail "subClashRules missing"
+}
+
 test_panel_settings_json_defaults_panel_outbound() {
 	local body
 	unset panelOutbound
@@ -708,6 +715,7 @@ test_grpc_stream_uses_tls_backend_settings() {
 
 test_hysteria2_stream_and_settings_use_required_auth() {
 	local stream settings components network security alpn masq_type masq_url auth stream_auth email protocol tg_id group comment
+	unset HYSTERIA2_MASQ_URL
 	stream=$(build_hysteria2_stream_json screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key transport-auth)
 	settings=$(build_hysteria2_settings_json '' "$(build_desired_state)")
 	components=$(build_inbound_components_json hysteria2 "$(build_desired_state)")
@@ -727,7 +735,7 @@ test_hysteria2_stream_and_settings_use_required_auth() {
 	assert_eq tls "$security" "Hysteria2 stream must use TLS"
 	assert_eq h3 "$alpn" "Hysteria2 TLS ALPN must use h3"
 	assert_eq proxy "$masq_type" "Hysteria2 masquerade must proxy the public site"
-	assert_eq https://screenhub.linkpc.net/ "$masq_url" "Hysteria2 masquerade URL mismatch"
+	assert_eq https://traefik:4443/ "$masq_url" "Hysteria2 masquerade URL mismatch"
 	[[ -n "$auth" ]] || fail "Hysteria2 client auth must be generated"
 	[[ -n "$stream_auth" ]] || fail "Hysteria2 transport auth must match the managed client auth"
 	assert_eq "$(printf '%s' "$components" | jq -r '.settings.clients[0].auth')" "$stream_auth" "Hysteria2 transport auth must mirror inbound client auth"
@@ -1041,7 +1049,7 @@ test_existing_mihomo_outbound_and_rule_are_preserved() {
 	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
 
 	assert_eq 17890 "$port" "existing Mihomo outbound must not be overwritten"
-	assert_eq 1 "$rule_index" "existing Mihomo routing rule stays after prepended admin-traefik"
+	assert_eq 2 "$rule_index" "existing Mihomo routing rule stays after prepended admin-traefik"
 	assert_eq blocked "$last_rule_tag" "existing terminal rule order must be preserved when Mihomo rule already exists"
 }
 
@@ -1266,6 +1274,20 @@ test_afterstart_entrypoint_initializes_optional_inbound_ids() {
 		fail "gRPC must default to disabled in the runtime entrypoint"
 }
 
+test_afterstart_exports_admin_clash_routing_only() {
+	local script
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	grep -Fq '. "$LIB_DIR/sub_admin_routing.bash"' "$script" ||
+		fail "after-start entrypoint must source admin subscription routing builder"
+	grep -Fq 'subClashEnableRouting=true' "$script" ||
+		fail "after-start entrypoint must enable native Clash routing"
+	grep -Fq 'subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")' "$script" ||
+		fail "after-start entrypoint must compute Clash rules at runtime"
+	if grep -Eq '(^|[[:space:]])(export[[:space:]].*subEnableRouting|subEnableRouting=|subRoutingRules=)' "$script"; then
+		fail "after-start entrypoint must not export Happ routing fields for this feature"
+	fi
+}
+
 test_afterstart_check_mode_bootstraps_without_apply() {
 	local output
 	output=$(MODE=check LIB_DIR="$SCRIPTS_DIR/lib" bash "$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh" 2>&1) ||
@@ -1469,6 +1491,7 @@ test_panel_settings_fallback_to_legacy_route_on_404
 test_custom_geo_resources_default_to_requested_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields
+test_desired_panel_keys_include_clash_routing
 test_panel_settings_json_defaults_panel_outbound
 test_geodata_block_uses_usque_outbound
 test_inbound_components_json_preserves_nested_objects
@@ -1502,6 +1525,7 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable
 test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
+test_afterstart_exports_admin_clash_routing_only
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart

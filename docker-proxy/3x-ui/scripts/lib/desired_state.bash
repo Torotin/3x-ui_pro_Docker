@@ -178,7 +178,7 @@ desired_panel_keys() {
 		subEnableRouting subRoutingRules subListen subPort subPath subDomain \
 		externalTrafficInformEnable externalTrafficInformURI subCertFile subKeyFile \
 		subUpdates subEncrypt subShowInfo subURI subJsonPath subJsonURI \
-		subClashEnable subClashPath subClashURI \
+		subClashEnable subClashPath subClashURI subClashEnableRouting subClashRules \
 		subJsonFragment subJsonNoises subJsonMux subJsonRules \
 		ldapEnable ldapHost ldapPort ldapUseTLS ldapBindDN ldapPassword ldapBaseDN \
 		ldapUserFilter ldapUserAttr ldapVlessField ldapSyncCron ldapFlagField \
