@@ -167,6 +167,7 @@ build_desired_state() {
 }
 
 # Перечисляет настройки панели, которыми разрешено управлять из окружения.
+# subJsonRoutingRules/subJsonDns omitted: json_routing_effective=no on live panel; panel_settings_json skips empty env overlays.
 desired_panel_keys() {
 	printf '%s\n' \
 		webListen webDomain webPort webCertFile webKeyFile webBasePath \

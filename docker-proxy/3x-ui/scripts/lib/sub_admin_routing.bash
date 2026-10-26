@@ -13,6 +13,12 @@ admin_sub_clash_default_mode() {
 	printf '%s\n' "rules-proxy"
 }
 
+# Live panel capability: json_routing_effective=no (see docs/superpowers/specs/2026-10-26-client-sub-admin-routing-capability.md).
+build_admin_sub_json_routing_rules() {
+	# Clash subClashRules is canonical for admin DNS/routing until JSON merge is proven effective.
+	printf ''
+}
+
 build_admin_sub_clash_rules() {
 	local webdomain=$1 public_ipv4=${2:-} mode=${3:-$(admin_sub_clash_default_mode)}
 	local host

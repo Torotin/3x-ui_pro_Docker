@@ -58,6 +58,10 @@ main() {
 	subClashEnableRouting=true
 	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")
 	export subClashEnableRouting subClashRules
+	subJsonRoutingRules=$(build_admin_sub_json_routing_rules "${WEBDOMAIN}")
+	if [[ -n "$subJsonRoutingRules" ]]; then
+		export subJsonRoutingRules
+	fi
 	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
 		log WARN "PUBLIC_IPV4 empty: admin Clash hosts map omitted"
 	fi

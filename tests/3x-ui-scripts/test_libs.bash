@@ -1288,6 +1288,23 @@ test_afterstart_exports_admin_clash_routing_only() {
 	fi
 }
 
+test_afterstart_defers_json_sub_routing_until_effective() {
+	local script
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	grep -Fq 'build_admin_sub_json_routing_rules "${WEBDOMAIN}"' "$script" ||
+		fail "after-start must compute JSON routing for future effective panels"
+	grep -Fq 'if [[ -n "$subJsonRoutingRules" ]]; then' "$script" ||
+		fail "after-start must export subJsonRoutingRules only when non-empty"
+}
+
+test_build_admin_sub_json_routing_rules() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(build_admin_sub_json_routing_rules "example.test")
+	assert_eq "" "$out" "json_routing_effective=no: builder must return empty (no fake JSON routing)"
+}
+
 test_afterstart_check_mode_bootstraps_without_apply() {
 	local output
 	output=$(MODE=check LIB_DIR="$SCRIPTS_DIR/lib" bash "$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh" 2>&1) ||
@@ -1526,6 +1543,7 @@ test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_exports_admin_clash_routing_only
+test_afterstart_defers_json_sub_routing_until_effective
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
@@ -1540,4 +1558,5 @@ test_build_admin_sub_clash_rules_proxy_mode
 test_admin_sub_clash_default_mode_is_rules_proxy
 test_build_admin_sub_clash_rules_proxy_mode_with_ipv4_adds_hosts_dns_only
 test_build_admin_sub_clash_rules_skips_hosts_without_ipv4
+test_build_admin_sub_json_routing_rules
 printf 'test_libs.bash: OK\n'
