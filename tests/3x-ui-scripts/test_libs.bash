@@ -1407,6 +1407,32 @@ test_build_admin_sub_clash_rules_proxy_mode() {
 	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN group" || true
 }
 
+test_admin_sub_clash_default_mode_is_rules_proxy() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local mode
+	mode=$(admin_sub_clash_default_mode)
+	assert_eq rules-proxy "$mode" "admin Clash default mode must avoid unsafe proxy-groups"
+}
+
+test_build_admin_sub_clash_rules_proxy_mode_with_ipv4_adds_hosts_dns_only() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "203.0.113.9" "rules-proxy")
+	grep -Fq 'hosts:' <<<"$yaml" || fail "rules-proxy with IPv4 must include hosts"
+	grep -Fq '  example.test: 203.0.113.9' <<<"$yaml" || fail "rules-proxy must include apex host"
+	grep -Fq '  arcane.example.test: 203.0.113.9' <<<"$yaml" || fail "rules-proxy must include admin host"
+	grep -Fq 'dns:' <<<"$yaml" || fail "rules-proxy with IPv4 must include dns"
+	grep -Fq '  fake-ip-filter:' <<<"$yaml" || fail "rules-proxy must include fake-ip-filter"
+	grep -Fq '    - example.test' <<<"$yaml" || fail "rules-proxy must filter webdomain"
+	grep -Fq '    - "+.example.test"' <<<"$yaml" || fail "rules-proxy must filter webdomain wildcard"
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" || fail "rules-proxy must route admin domains to PROXY"
+	grep -Fq 'proxy-groups:' <<<"$yaml" && fail "rules-proxy must not emit proxy-groups" || true
+	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN group" || true
+	grep -Fq ',ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN rules" || true
+}
+
 test_build_admin_sub_clash_rules_skips_hosts_without_ipv4() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
@@ -1487,5 +1513,7 @@ test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol
 test_admin_sub_hostnames_list
 test_build_admin_sub_clash_rules_proxy_mode
+test_admin_sub_clash_default_mode_is_rules_proxy
+test_build_admin_sub_clash_rules_proxy_mode_with_ipv4_adds_hosts_dns_only
 test_build_admin_sub_clash_rules_skips_hosts_without_ipv4
 printf 'test_libs.bash: OK\n'

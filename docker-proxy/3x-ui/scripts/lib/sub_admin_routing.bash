@@ -9,9 +9,13 @@ admin_sub_hostnames() {
 	printf '%s\n' arcane homepage adguard 3x-ui traefik lampac-admin
 }
 
+admin_sub_clash_default_mode() {
+	printf '%s\n' "rules-proxy"
+}
+
 build_admin_sub_clash_rules() {
-	local webdomain=$1 public_ipv4=${2:-} mode=${3:-rules-proxy}
-	local host fqdn
+	local webdomain=$1 public_ipv4=${2:-} mode=${3:-$(admin_sub_clash_default_mode)}
+	local host
 	local rules=$'rules:\n'
 	local target=PROXY
 
@@ -31,7 +35,7 @@ build_admin_sub_clash_rules() {
 			'      - PROXY'
 	fi
 
-	if [[ "$mode" == "full" && -n "$public_ipv4" ]]; then
+	if [[ -n "$public_ipv4" ]]; then
 		printf '%s\n' 'hosts:'
 		printf '  %s: %s\n' "$webdomain" "$public_ipv4"
 		while IFS= read -r host; do
