@@ -1685,10 +1685,18 @@ test_final_summary_prints_details() {
 	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include public Mihomo UI URL"
 	assert_contains "Mihomo secret    :" "$tmpdir/stdout" "final summary must print Mihomo controller secret for copy-paste"
 	assert_contains "Traefik Dashboard: https://traefik.example.test:9443/dashboard/#/" "$tmpdir/stdout" "final summary must include admin Traefik dashboard URL"
+	assert_contains "Subscriptions:" "$tmpdir/stdout" "final summary must include subscription URLs section"
+	assert_contains "Clash/Mihomo     : https://example.test/" "$tmpdir/stdout" "final summary must include Clash/Mihomo subscription URL"
+	assert_contains "Xray JSON        : https://example.test/" "$tmpdir/stdout" "final summary must include Xray JSON subscription URL"
+	assert_contains "Standard/base64  : https://example.test/" "$tmpdir/stdout" "final summary must include standard/base64 subscription URL"
+	assert_contains "Note             : Admin panels require Clash or JSON" "$tmpdir/stdout" "final summary must explain admin-compatible subscription formats"
 	assert_contains "Admin plane (personal Xray" "$tmpdir/stdout" "final summary must describe Xray admin plane"
 	assert_contains "Compose validate : $INSTALL_ROOT/compose.d/run-compose.sh validate" "$tmpdir/stdout" "final summary must include operational commands"
 	assert_contains "Summary saved: $INSTALL_STATE_DIR/install.summary" "$tmpdir/stdout" "final summary must print saved summary path"
 	assert_contains "INSTALLATION SUMMARY" "$INSTALL_STATE_DIR/install.summary" "final step must persist summary file"
+	assert_contains "Clash/Mihomo     : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Clash/Mihomo subscription URL"
+	assert_contains "Xray JSON        : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Xray JSON subscription URL"
+	assert_contains "Standard/base64  : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include standard/base64 subscription URL"
 	assert_contains "Mihomo secret    :" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Mihomo controller secret for copy-paste"
 	assert_contains "Password         : configured, not printed" "$INSTALL_STATE_DIR/install.summary" "final summary must not print web password"
 	assert_not_contains "Password         : $PASS_WEB" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak web password"
@@ -1701,17 +1709,23 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 	. "$ROOT_DIR/script/modules/09_finalize.sh"
 	SUMMARY_DOMAIN=example.test
 	SUMMARY_PORT_LOCAL_ADMIN=9443
-	local panel doh traefik mihomo homepage
+	local panel doh traefik mihomo homepage clash json standard
 	panel=$(install_summary_admin_url 3x-ui "nC4sRgYpwUgiad")
 	homepage=$(install_summary_admin_url homepage)
 	doh=$(install_summary_url "3pDA9wdT58rg0aMC" "" noslash)
 	traefik=$(install_summary_admin_url traefik "dashboard/#/")
 	mihomo=$(install_summary_url "mihomoPath" "ui/")
+	clash=$(install_summary_url "clashPath" "" noslash)
+	json=$(install_summary_url "/jsonPath/" "" noslash)
+	standard=$(install_summary_url "/subPath/" "" noslash)
 	[[ "$panel" == "https://3x-ui.example.test:9443/nC4sRgYpwUgiad/" ]] || fail "admin panel summary URL must end with trailing slash; got: $panel"
 	[[ "$homepage" == "https://homepage.example.test:9443/" ]] || fail "admin homepage URL must end with trailing slash; got: $homepage"
 	[[ "$doh" == "https://example.test/3pDA9wdT58rg0aMC" ]] || fail "DoH summary URL must stay exact Path without slash; got: $doh"
 	[[ "$traefik" == "https://traefik.example.test:9443/dashboard/#/" ]] || fail "Traefik admin summary URL must keep dashboard fragment; got: $traefik"
 	[[ "$mihomo" == "https://example.test/mihomoPath/ui/" ]] || fail "Mihomo UI summary URL must keep ui/ suffix; got: $mihomo"
+	[[ "$clash" == "https://example.test/clashPath" ]] || fail "Clash subscription summary URL must stay exact Path without slash; got: $clash"
+	[[ "$json" == "https://example.test/jsonPath" ]] || fail "JSON subscription summary URL must stay exact Path without slash; got: $json"
+	[[ "$standard" == "https://example.test/subPath" ]] || fail "standard subscription summary URL must stay exact Path without slash; got: $standard"
 
 	export ENABLE_MIHOMO=true
 	run_installer run env final
@@ -1719,14 +1733,23 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 		local key=$1
 		grep -E "^${key}=" "$INSTALL_STATE_DIR/install.env" | head -n1 | cut -d= -f2- | tr -d '"'
 	}
-	local panel_path doh_path
+	local panel_path doh_path clash_path json_path sub_path
 	panel_path=$(uri_from_env URI_PANEL_PATH)
 	doh_path=$(uri_from_env URI_ADGUARD_DOH)
-	[[ -n "$panel_path" && -n "$doh_path" ]] || fail "install.env must define panel/doh URI paths"
+	clash_path=$(uri_from_env URI_CLASH_PATH)
+	json_path=$(uri_from_env URI_JSON_PATH)
+	sub_path=$(uri_from_env URI_SUB_PATH)
+	[[ -n "$panel_path" && -n "$doh_path" && -n "$clash_path" && -n "$json_path" && -n "$sub_path" ]] || fail "install.env must define panel/doh/subscription URI paths"
 	assert_contains "3X-UI Panel      : https://3x-ui.example.test:9443/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted admin panel URL must include trailing slash"
 	assert_contains "Arcane           : https://arcane.example.test:9443/" "$INSTALL_STATE_DIR/install.summary" "persisted Arcane admin URL must include trailing slash"
 	assert_contains "AdGuard DoH      : https://example.test/${doh_path}" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must omit trailing slash"
 	assert_not_contains "AdGuard DoH      : https://example.test/${doh_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must not gain a trailing slash"
+	assert_contains "Clash/Mihomo     : https://example.test/${clash_path}" "$INSTALL_STATE_DIR/install.summary" "persisted Clash subscription URL must omit trailing slash"
+	assert_contains "Xray JSON        : https://example.test/${json_path}" "$INSTALL_STATE_DIR/install.summary" "persisted JSON subscription URL must omit trailing slash"
+	assert_contains "Standard/base64  : https://example.test/${sub_path}" "$INSTALL_STATE_DIR/install.summary" "persisted standard subscription URL must omit trailing slash"
+	assert_not_contains "Clash/Mihomo     : https://example.test/${clash_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted Clash subscription URL must not gain a trailing slash"
+	assert_not_contains "Xray JSON        : https://example.test/${json_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted JSON subscription URL must not gain a trailing slash"
+	assert_not_contains "Standard/base64  : https://example.test/${sub_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted standard subscription URL must not gain a trailing slash"
 }
 
 test_doctor_rejects_unsupported_os() {

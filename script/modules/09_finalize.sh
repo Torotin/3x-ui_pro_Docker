@@ -77,6 +77,9 @@ install_prepare_summary_env() {
 	SUMMARY_URL_ADGUARD_DOH=$(install_summary_url "${URI_ADGUARD_DOH:-}" "" noslash)
 	SUMMARY_URL_TELEMT_PANEL=$(install_summary_url "${URI_TELEMT_PANEL:-}")
 	SUMMARY_URL_MIHOMO_UI=$(install_summary_url "${URI_MIHOMO:-}" "ui/")
+	SUMMARY_URL_SUB_CLASH=$(install_summary_url "${URI_CLASH_PATH:-}" "" noslash)
+	SUMMARY_URL_SUB_JSON=$(install_summary_url "${URI_JSON_PATH:-}" "" noslash)
+	SUMMARY_URL_SUB_STD=$(install_summary_url "${URI_SUB_PATH:-}" "" noslash)
 	SUMMARY_MIHOMO_SECRET=${MIHOMO_SECRET:-not generated; run env first}
 	if ! install_telemt_enabled; then
 		SUMMARY_URL_TELEMT_PANEL=disabled
@@ -98,6 +101,7 @@ install_prepare_summary_env() {
 	export SUMMARY_PORT_LOCAL_CROWDSEC_API
 	export SUMMARY_URL_HOMEPAGE SUMMARY_URL_3X_UI SUMMARY_URL_ADGUARD SUMMARY_URL_ADGUARD_DOH
 	export SUMMARY_URL_ARCANE SUMMARY_URL_DOZZLE SUMMARY_URL_TRAEFIK SUMMARY_URL_LAMPAC_ADMIN SUMMARY_URL_TELEMT_PANEL SUMMARY_URL_MIHOMO_UI
+	export SUMMARY_URL_SUB_CLASH SUMMARY_URL_SUB_JSON SUMMARY_URL_SUB_STD
 	export SUMMARY_MIHOMO_SECRET
 }
 

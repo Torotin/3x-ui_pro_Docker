@@ -41,6 +41,12 @@ Public HTTPS (no admin panels):
   Mihomo UI        : ${SUMMARY_URL_MIHOMO_UI}
   Mihomo secret    : ${SUMMARY_MIHOMO_SECRET}
 
+Subscriptions:
+  Clash/Mihomo     : ${SUMMARY_URL_SUB_CLASH}
+  Xray JSON        : ${SUMMARY_URL_SUB_JSON}
+  Standard/base64  : ${SUMMARY_URL_SUB_STD}
+  Note             : Admin panels require Clash or JSON (client routing). Standard may be disabled.
+
 Local service endpoints:
   Traefik admin    : 127.0.0.1:${SUMMARY_PORT_LOCAL_ADMIN}
   Traefik HTTPS    : internal Docker websecure :${SUMMARY_PORT_LOCAL_TRAEFIK} (not public)
