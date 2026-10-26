@@ -13,6 +13,95 @@ admin_sub_clash_default_mode() {
 	printf '%s\n' "rules-proxy"
 }
 
+# Managed inbound remark slugs used to recognize subscription proxy nodes.
+_clash_managed_inbound_remark_slug_pattern() {
+	printf '%s' 'vless-tcp-reality|vless-xhttp|vless-grpc-tls|hysteria2|managed:'
+}
+
+# Normalizes remark/proxy name lines for AUTO/PROXY membership (never emits DIRECT).
+discover_clash_proxy_node_names_from_lines() {
+	local line
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line=${line//$'\r'/}
+		[[ -n "${line//[[:space:]]/}" ]] || continue
+		[[ "$line" == "DIRECT" ]] && continue
+		printf '%s\n' "$line"
+	done
+}
+
+# Extracts proxy names from a Clash/Mihomo subscription YAML body (proxies: section only).
+discover_clash_proxy_node_names_from_clash_body() {
+	local clash_body_file=$1
+	[[ -n "$clash_body_file" && -f "$clash_body_file" ]] || return 0
+	discover_clash_proxy_node_names_from_lines < <(
+		awk '
+			/^proxies:[[:space:]]*$/ { in_proxies = 1; next }
+			in_proxies && /^[^[:space:]#-]/ { in_proxies = 0 }
+			in_proxies && /^[[:space:]]*-[[:space:]]*name:/ {
+				sub(/^[[:space:]]*-[[:space:]]*name:[[:space:]]*/, "")
+				gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+				gsub(/^["'\''"]|["'\''"]$/, "")
+				if (length > 0) {
+					print
+				}
+			}
+		' "$clash_body_file"
+	)
+}
+
+# Prints managed inbound remarks from a remarks file or panel inbound list JSON/API body.
+discover_clash_proxy_node_remark_lines() {
+	local remarks_file=${1:-${CLASH_PROXY_NODE_REMARKS_FILE:-}}
+	local inbounds_file=${2:-${CLASH_DISCOVERY_INBOUNDS_JSON_FILE:-}}
+
+	if [[ -n "$remarks_file" && -f "$remarks_file" ]]; then
+		cat "$remarks_file"
+		return 0
+	fi
+
+	if [[ -n "$inbounds_file" && -f "$inbounds_file" ]]; then
+		discover_clash_proxy_node_remark_lines_from_inbounds_json "$inbounds_file"
+		return 0
+	fi
+
+	if [[ -n "${HTTP_BODY_FILE:-}" && -f "$HTTP_BODY_FILE" ]] &&
+		jq -e '.success == true and (.obj | type) == "array"' "$HTTP_BODY_FILE" >/dev/null 2>&1; then
+		discover_clash_proxy_node_remark_lines_from_inbounds_json "$HTTP_BODY_FILE"
+		return 0
+	fi
+
+	return 0
+}
+
+discover_clash_proxy_node_remark_lines_from_inbounds_json() {
+	local json_file=$1 slug_pattern
+	slug_pattern=$(_clash_managed_inbound_remark_slug_pattern)
+	jq -r --arg pattern "$slug_pattern" '
+		(.obj // .)
+		| if type == "array" then . else [.] end
+		| .[]
+		| .remark // empty
+		| select(length > 0)
+		| select(test($pattern))
+	' "$json_file" | sort -u
+}
+
+# Prefer managed inbound remarks; otherwise parse a saved Clash subscription body.
+discover_clash_proxy_node_names() {
+	local clash_body_file=${1:-${CLASH_DISCOVERY_BODY_FILE:-}}
+	local remark_lines
+
+	remark_lines=$(discover_clash_proxy_node_remark_lines)
+	if [[ -n "$remark_lines" ]]; then
+		discover_clash_proxy_node_names_from_lines <<<"$remark_lines"
+		return 0
+	fi
+
+	if [[ -n "$clash_body_file" && -f "$clash_body_file" ]]; then
+		discover_clash_proxy_node_names_from_clash_body "$clash_body_file"
+	fi
+}
+
 # Happ/INCY-style profile for subJsonRoutingRules (object, not Xray rules array).
 # Live reference: DomainStrategy + DnsHosts + ProxySites + RouteOrder.
 build_admin_sub_json_routing_rules() {

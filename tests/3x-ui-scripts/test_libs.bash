@@ -1574,6 +1574,41 @@ test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block() {
 	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "full+nodes must not emit ADMIN group" || true
 }
 
+test_discover_clash_proxy_node_names_from_remarks() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(
+		printf '%s\n' '🇩🇪 vless-tcp-reality-example-autogen' 'vless-xhttp' 'DIRECT' |
+			discover_clash_proxy_node_names_from_lines
+	)
+	grep -Fq 'vless-xhttp' <<<"$out" || fail "must keep remark lines as node names"
+	grep -Fq 'DIRECT' <<<"$out" && fail "must not invent DIRECT" || true
+}
+
+test_discover_clash_proxy_node_names_from_clash_body() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local body out
+	body=$(mktemp)
+	cat >"$body" <<'EOF'
+proxies:
+  - name: node-alpha
+    type: vless
+  - name: DIRECT
+    type: direct
+proxy-groups:
+  - name: PROXY
+    proxies:
+      - AUTO
+      - DIRECT
+EOF
+	out=$(discover_clash_proxy_node_names_from_clash_body "$body")
+	rm -f "$body"
+	grep -Fx 'node-alpha' <<<"$out" || fail "must parse proxy names from Clash body"
+	grep -Fq 'DIRECT' <<<"$out" && fail "must not emit DIRECT from Clash body" || true
+}
+
 test_redaction_masks_secrets
 test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
@@ -1658,6 +1693,8 @@ test_build_admin_sub_clash_rules_with_nodes_emits_auto
 test_build_admin_sub_clash_rules_without_nodes_omits_groups
 test_build_admin_sub_clash_rules_admin_modes_domain_proxy
 test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block
+test_discover_clash_proxy_node_names_from_remarks
+test_discover_clash_proxy_node_names_from_clash_body
 test_build_admin_sub_json_routing_rules
 test_build_admin_sub_json_dns
 printf 'test_libs.bash: OK\n'
