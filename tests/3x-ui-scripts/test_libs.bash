@@ -408,6 +408,7 @@ test_panel_api_does_not_read_bearer_token_from_sqlite() {
 	local call_log auth_count
 	call_log=$(mktemp)
 	XUI_API_TOKEN=
+	# shellcheck disable=SC2034 # xui_api_auth_args reads this cached token global.
 	XUI_API_TOKEN_RESOLVED=
 	URL_BASE_RESOLVED=http://127.0.0.1:2053
 	sqlite3() {
@@ -505,6 +506,7 @@ test_panel_settings_fallback_to_legacy_route_on_404() {
 			printf '' >"$HTTP_BODY_FILE"
 			;;
 		*/panel/setting/all)
+			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state.
 			HTTP_CODE=200
 			HTTP_BODY_FILE=$(mktemp)
 			printf '{"success":true,"obj":{"webPort":2053}}' >"$HTTP_BODY_FILE"
@@ -1303,8 +1305,36 @@ test_afterstart_exports_json_sub_routing_and_dns() {
 test_desired_panel_keys_include_json_routing() {
 	local keys
 	keys=$(desired_panel_keys)
+	grep -qx subJsonRules <<<"$keys" || fail "subJsonRules missing"
 	grep -qx subJsonRoutingRules <<<"$keys" || fail "subJsonRoutingRules missing"
 	grep -qx subJsonDns <<<"$keys" || fail "subJsonDns missing"
+}
+
+test_ensure_panel_settings_force_clears_sub_json_routing_rules() {
+	local updated_body cleared
+	export CLEAR_SUB_JSON_ROUTING_RULES=true
+	# shellcheck disable=SC2034 # ensure_panel_settings reads MODE through plan_or_apply fixtures.
+	MODE=apply
+	xui_get_panel_settings() {
+		return 0
+	}
+	http_success_json() {
+		return 0
+	}
+	api_obj_json() {
+		printf '%s' '{"webPort":2053,"smtpPort":587,"ldapPort":389,"tgBotEnable":false,"panelOutbound":"usque","subJsonRoutingRules":"{\"RouteOrder\":\"proxy-direct-block\"}"}'
+	}
+	plan_or_apply() {
+		return 0
+	}
+	xui_update_panel_settings() {
+		updated_body=$1
+	}
+	ensure_panel_settings
+	cleared=$(printf '%s' "$updated_body" | jq -r '.subJsonRoutingRules')
+	unset -f xui_get_panel_settings http_success_json api_obj_json plan_or_apply xui_update_panel_settings
+	unset CLEAR_SUB_JSON_ROUTING_RULES MODE
+	assert_eq "" "$cleared" "CLEAR_SUB_JSON_ROUTING_RULES must force empty subJsonRoutingRules into update body"
 }
 
 test_build_admin_sub_json_routing_rules() {
@@ -1312,15 +1342,19 @@ test_build_admin_sub_json_routing_rules() {
 	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
 	local out
 	out=$(build_admin_sub_json_routing_rules "example.test" "198.51.100.10")
-	assert_eq AsIs "$(jq -r '.DomainStrategy' <<<"$out")" "DomainStrategy must be AsIs"
-	assert_eq proxy-direct-block "$(jq -r '.RouteOrder' <<<"$out")" "RouteOrder must match live reference"
-	assert_eq full:arcane.example.test "$(jq -r '.ProxySites[0]' <<<"$out")" "ProxySites must use full: FQDNs"
-	assert_eq 6 "$(jq -r '.ProxySites | length' <<<"$out")" "ProxySites must list all admin hosts"
-	assert_eq 198.51.100.10 "$(jq -r '.DnsHosts["arcane.example.test"]' <<<"$out")" "DnsHosts must map admin FQDN"
-	assert_eq 198.51.100.10 "$(jq -r '.DnsHosts["example.test"]' <<<"$out")" "DnsHosts must include apex"
-	out=$(build_admin_sub_json_routing_rules "example.test" "")
-	assert_eq null "$(jq -r '.DnsHosts' <<<"$out")" "empty PUBLIC_IPV4 must omit DnsHosts"
-	assert_eq 6 "$(jq -r '.ProxySites | length' <<<"$out")" "ProxySites remain without IPv4"
+	assert_eq "" "$out" "subJsonRoutingRules must be cleared, not populated with Happ-style routing"
+}
+
+test_build_admin_sub_json_rules_admin_then_direct() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(build_admin_sub_json_rules "example.test")
+	assert_eq field "$(jq -r '.[0].type' <<<"$out")" "rule type field"
+	assert_eq proxy "$(jq -r '.[0].outboundTag' <<<"$out")" "admin to proxy"
+	assert_eq full:arcane.example.test "$(jq -r '.[0].domain[0]' <<<"$out")" "full: domain"
+	assert_eq direct "$(jq -r '.[-1].outboundTag' <<<"$out")" "catch-all direct"
+	assert_eq 'tcp,udp' "$(jq -r '.[-1].network' <<<"$out")" "catch-all network"
 }
 
 test_build_admin_sub_json_dns() {
@@ -1674,6 +1708,7 @@ test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_exports_admin_clash_routing_only
 test_afterstart_exports_json_sub_routing_and_dns
 test_desired_panel_keys_include_json_routing
+test_ensure_panel_settings_force_clears_sub_json_routing_rules
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
@@ -1696,5 +1731,6 @@ test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block
 test_discover_clash_proxy_node_names_from_remarks
 test_discover_clash_proxy_node_names_from_clash_body
 test_build_admin_sub_json_routing_rules
+test_build_admin_sub_json_rules_admin_then_direct
 test_build_admin_sub_json_dns
 printf 'test_libs.bash: OK\n'

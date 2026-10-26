@@ -27,7 +27,7 @@ download_test_join() {
 }
 
 download_test_stub_curl() {
-	local out= transport=direct
+	local out='' transport=direct
 	while (($# > 0)); do
 		case "$1" in
 		-o)
@@ -72,7 +72,9 @@ test_download_default_transports_include_stack_proxies() {
 test_download_default_transports_honor_disabled_flags() {
 	local got
 	local -a got_arr
+	# shellcheck disable=SC2034 # download_default_transports reads these globals.
 	ENABLE_MIHOMO=false
+	# shellcheck disable=SC2034 # download_default_transports reads these globals.
 	XRAY_MANAGED_TOR=false
 	mapfile -t got_arr < <(download_default_transports)
 	got=$(download_test_join "${got_arr[@]}")
@@ -85,7 +87,9 @@ test_download_transport_candidates_prefer_cache() {
 	local -a got_arr
 	tmp=$(mktemp -d)
 	printf 'http://mihomo:7890\n' >"$tmp/cache"
+	# shellcheck disable=SC2034 # download_transport_candidates reads this global.
 	DOWNLOAD_TRANSPORT_CACHE="$tmp/cache"
+	# shellcheck disable=SC2034 # download_transport_candidates reads this global.
 	DOWNLOAD_TRANSPORTS="direct,socks5h://usque:1080,http://mihomo:7890"
 	mapfile -t got_arr < <(download_transport_candidates)
 	got=$(download_test_join "${got_arr[@]}")
@@ -159,11 +163,14 @@ test_download_url_fallbacks_are_tried_after_primary() {
 	DOWNLOAD_TEST_CURL_LOG=()
 	DOWNLOAD_TEST_FAIL_TRANSPORTS="|direct|"
 	DOWNLOAD_TEST_PAYLOAD=from-fallback-url
+	# shellcheck disable=SC2034 # download_with_fallbacks reads this global.
 	DOWNLOAD_TRANSPORT_CACHE="$tmp/cache"
+	# shellcheck disable=SC2034 # download_with_fallbacks reads this global.
 	DOWNLOAD_TRANSPORTS=direct
+	# shellcheck disable=SC2034 # download_with_fallbacks reads this global.
 	DOWNLOAD_URL_FALLBACKS="https://mirror.example/xray.zip"
 	curl() {
-		local out= url=
+		local out='' url=''
 		while (($# > 0)); do
 			case "$1" in
 			-o)

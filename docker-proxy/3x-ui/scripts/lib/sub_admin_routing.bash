@@ -50,6 +50,7 @@ discover_clash_proxy_node_names_from_clash_body() {
 }
 
 # Prints managed inbound remarks from a remarks file or panel inbound list JSON/API body.
+# shellcheck disable=SC2120 # Optional positional overrides are used by callers/tests.
 discover_clash_proxy_node_remark_lines() {
 	local remarks_file=${1:-${CLASH_PROXY_NODE_REMARKS_FILE:-}}
 	local inbounds_file=${2:-${CLASH_DISCOVERY_INBOUNDS_JSON_FILE:-}}
@@ -102,30 +103,34 @@ discover_clash_proxy_node_names() {
 	fi
 }
 
-# Happ/INCY-style profile for subJsonRoutingRules (object, not Xray rules array).
-# Live reference: DomainStrategy + DnsHosts + ProxySites + RouteOrder.
-build_admin_sub_json_routing_rules() {
-	local webdomain=$1 public_ipv4=${2:-}
+# Xray-style JSON subscription rules: keep admin FQDNs on proxy, all residual traffic direct.
+build_admin_sub_json_rules() {
+	local webdomain=$1
 	[[ -n "$webdomain" ]] || {
 		printf ''
 		return 0
 	}
-	admin_sub_hostnames | jq -Rsc --arg domain "$webdomain" --arg ip "$public_ipv4" '
+	admin_sub_hostnames | jq -Rsc --arg domain "$webdomain" '
 		(split("\n") | map(select(length > 0))) as $hosts
-		| {
-			DomainStrategy: "AsIs",
-			ProxySites: ($hosts | map("full:" + . + "." + $domain)),
-			RouteOrder: "proxy-direct-block"
-		}
-		| if ($ip | length) > 0 then
-			.DnsHosts = (
-				([$domain] + ($hosts | map(. + "." + $domain)))
-				| map({key: ., value: $ip})
-				| from_entries
-			)
-		  else .
-		  end
+		| [
+			{
+				type: "field",
+				domain: ($hosts | map("full:" + . + "." + $domain)),
+				outboundTag: "proxy"
+			},
+			{
+				type: "field",
+				network: "tcp,udp",
+				outboundTag: "direct"
+			}
+		]
 	'
+}
+
+# Deprecated for desired apply: legacy Happ/INCY subJsonRoutingRules did not route JSON clients reliably.
+# The managed runtime clears this panel field with CLEAR_SUB_JSON_ROUTING_RULES=true instead.
+build_admin_sub_json_routing_rules() {
+	printf ''
 }
 
 # Full client dns block for subJsonDns (overrides baked profile dns when set).

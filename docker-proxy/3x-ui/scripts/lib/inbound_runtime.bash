@@ -487,6 +487,7 @@ ensure_inbound() {
 		xui_add_inbound "$(inbound_components_json "$desired_components")" || die "Failed to add $kind inbound."
 		http_success_json || die "$kind inbound add failed: $(http_body)"
 		RESTART_XRAY_REQUIRED=1
+		# shellcheck disable=SC2034 # Entrypoint reads this shared result after ensure_inbound returns.
 		ENSURE_INBOUND_ID=$(jq -r '.obj.id // empty' "$HTTP_BODY_FILE")
 	fi
 }
@@ -693,6 +694,7 @@ PY
 	}
 	if [[ "${changed:-0}" != "0" ]]; then
 		log INFO "Repaired VLESS client flow in $changed inbound settings row(s)."
+		# shellcheck disable=SC2034 # Entrypoint restart helpers read this shared runtime flag.
 		RESTART_XRAY_REQUIRED=1
 	fi
 }

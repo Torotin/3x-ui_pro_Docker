@@ -32,6 +32,10 @@ panel_settings_json() {
 	printf '%s' "$merged"
 }
 
+clear_sub_json_routing_rules_requested() {
+	[[ "${CLEAR_SUB_JSON_ROUTING_RULES:-false}" == "true" ]]
+}
+
 # Строит сравнимый JSON желаемых настроек панели из окружения и текущего состояния.
 panel_desired_json() {
 	local current=$1 var env_val value desired='{}'
@@ -50,6 +54,9 @@ panel_desired_json() {
 	' <<<"$desired")
 	if [[ -z "${panelOutbound:-}" ]]; then
 		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$desired")
+	fi
+	if clear_sub_json_routing_rules_requested; then
+		desired=$(jq -c '.subJsonRoutingRules = ""' <<<"$desired")
 	fi
 	printf '%s' "$desired"
 }
@@ -77,6 +84,9 @@ ensure_panel_settings() {
 		return 0
 	fi
 	body=$(panel_settings_json "$current")
+	if clear_sub_json_routing_rules_requested; then
+		body=$(jq -c '.subJsonRoutingRules = ""' <<<"$body")
+	fi
 
 	if plan_or_apply "panel settings updated"; then
 		xui_update_panel_settings "$body" || die "Failed to update panel settings."
