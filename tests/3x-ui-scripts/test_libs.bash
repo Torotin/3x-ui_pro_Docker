@@ -1473,7 +1473,8 @@ test_build_admin_sub_clash_rules_proxy_mode() {
 	yaml=$(build_admin_sub_clash_rules "example.test" "203.0.113.9" "rules-proxy")
 	grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" || fail "missing arcane DOMAIN→PROXY"
 	grep -Fq 'DOMAIN,3x-ui.example.test,PROXY' <<<"$yaml" || fail "missing 3x-ui DOMAIN→PROXY"
-	grep -Fq 'MATCH,PROXY' <<<"$yaml" || fail "missing MATCH,PROXY"
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "missing MATCH,DIRECT"
+	grep -Fq 'MATCH,PROXY' <<<"$yaml" && fail "MATCH,PROXY must not remain"
 	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN group" || true
 }
 
@@ -1509,6 +1510,41 @@ test_build_admin_sub_clash_rules_skips_hosts_without_ipv4() {
 	local yaml
 	yaml=$(build_admin_sub_clash_rules "example.test" "" "full")
 	grep -Fq 'hosts:' <<<"$yaml" && fail "empty PUBLIC_IPV4 must omit hosts" || true
+}
+
+test_build_admin_sub_clash_rules_match_direct() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "198.51.100.10" "rules-proxy")
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "residual must be MATCH,DIRECT"
+	grep -Fq 'MATCH,PROXY' <<<"$yaml" && fail "MATCH,PROXY must not remain"
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" || fail "admin still PROXY"
+}
+
+test_build_admin_sub_clash_rules_with_nodes_emits_auto() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local nodes yaml
+	nodes=$(mktemp)
+	printf '%s\n' 'node-a' 'node-b' >"$nodes"
+	yaml=$(build_admin_sub_clash_rules "example.test" "198.51.100.10" "rules-proxy" "$nodes")
+	rm -f "$nodes"
+	grep -Fq 'name: AUTO' <<<"$yaml" || fail "missing AUTO group"
+	grep -Fq 'type: url-test' <<<"$yaml" || fail "AUTO must be url-test"
+	grep -Fq 'https://www.gstatic.com/generate_204' <<<"$yaml" || fail "missing probe URL"
+	grep -Fq 'name: PROXY' <<<"$yaml" || fail "missing PROXY group"
+	grep -Fq 'AUTO' <<<"$yaml" || fail "PROXY must list AUTO"
+	grep -Fq 'node-a' <<<"$yaml" || fail "PROXY must list discovered nodes"
+}
+
+test_build_admin_sub_clash_rules_without_nodes_omits_groups() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "" "rules-proxy" "")
+	grep -Fq 'proxy-groups:' <<<"$yaml" && fail "no nodes => no custom proxy-groups"
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "still MATCH,DIRECT"
 }
 
 test_redaction_masks_secrets
@@ -1590,6 +1626,9 @@ test_build_admin_sub_clash_rules_proxy_mode
 test_admin_sub_clash_default_mode_is_rules_proxy
 test_build_admin_sub_clash_rules_proxy_mode_with_ipv4_adds_hosts_dns_only
 test_build_admin_sub_clash_rules_skips_hosts_without_ipv4
+test_build_admin_sub_clash_rules_match_direct
+test_build_admin_sub_clash_rules_with_nodes_emits_auto
+test_build_admin_sub_clash_rules_without_nodes_omits_groups
 test_build_admin_sub_json_routing_rules
 test_build_admin_sub_json_dns
 printf 'test_libs.bash: OK\n'

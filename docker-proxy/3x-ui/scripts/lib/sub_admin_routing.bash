@@ -67,8 +67,9 @@ build_admin_sub_json_dns() {
 }
 
 build_admin_sub_clash_rules() {
-	local webdomain=$1 public_ipv4=${2:-} mode=${3:-$(admin_sub_clash_default_mode)}
-	local host
+	local webdomain=$1 public_ipv4=${2:-} mode=${3:-$(admin_sub_clash_default_mode)} node_names_file=${4:-}
+	local host node
+	local -a nodes=()
 	local rules=$'rules:\n'
 	local target=PROXY
 
@@ -78,6 +79,14 @@ build_admin_sub_clash_rules() {
 	*) die "build_admin_sub_clash_rules: unknown mode $mode" ;;
 	esac
 
+	if [[ -n "$node_names_file" && -f "$node_names_file" ]]; then
+		while IFS= read -r node || [[ -n "$node" ]]; do
+			node=${node//$'\r'/}
+			[[ -n "${node//[[:space:]]/}" ]] || continue
+			nodes+=("$node")
+		done <"$node_names_file"
+	fi
+
 	if [[ "$target" == "ADMIN" ]]; then
 		printf '%s\n' \
 			'proxy-groups:' \
@@ -86,6 +95,27 @@ build_admin_sub_clash_rules() {
 			'    hidden: true' \
 			'    proxies:' \
 			'      - PROXY'
+	fi
+
+	if ((${#nodes[@]} > 0)); then
+		printf '%s\n' \
+			'proxy-groups:' \
+			'  - name: AUTO' \
+			'    type: url-test' \
+			'    url: https://www.gstatic.com/generate_204' \
+			'    interval: 300' \
+			'    proxies:'
+		for node in "${nodes[@]}"; do
+			printf '      - %s\n' "$node"
+		done
+		printf '%s\n' \
+			'  - name: PROXY' \
+			'    type: select' \
+			'    proxies:' \
+			'      - AUTO'
+		for node in "${nodes[@]}"; do
+			printf '      - %s\n' "$node"
+		done
 	fi
 
 	if [[ -n "$public_ipv4" ]]; then
@@ -101,5 +131,5 @@ build_admin_sub_clash_rules() {
 	while IFS= read -r host; do
 		printf '  - DOMAIN,%s.%s,%s\n' "$host" "$webdomain" "$target"
 	done < <(admin_sub_hostnames)
-	printf '  - MATCH,PROXY\n'
+	printf '  - MATCH,DIRECT\n'
 }
