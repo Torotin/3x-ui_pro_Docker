@@ -58,13 +58,17 @@ main() {
 	subClashEnableRouting=true
 	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")
 	export subClashEnableRouting subClashRules
-	# Happ-style JSON routing profile + full dns block (live panel reference).
-	subJsonRoutingRules=$(build_admin_sub_json_routing_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}")
+	# JSON clients use subJsonRules; legacy subJsonRoutingRules must be cleared.
+	subJsonRules=$(build_admin_sub_json_rules "${WEBDOMAIN}")
 	subJsonDns=$(build_admin_sub_json_dns "${WEBDOMAIN}" "${PUBLIC_IPV4:-}")
-	export subJsonRoutingRules
+	CLEAR_SUB_JSON_ROUTING_RULES=true
+	if [[ -n "$subJsonRules" ]]; then
+		export subJsonRules
+	fi
 	if [[ -n "$subJsonDns" ]]; then
 		export subJsonDns
 	fi
+	export CLEAR_SUB_JSON_ROUTING_RULES
 	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
 		log WARN "PUBLIC_IPV4 empty: admin Clash/JSON hosts maps omitted"
 	fi

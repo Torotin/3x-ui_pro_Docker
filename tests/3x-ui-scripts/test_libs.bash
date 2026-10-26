@@ -1291,15 +1291,22 @@ test_afterstart_exports_admin_clash_routing_only() {
 	fi
 }
 
-test_afterstart_exports_json_sub_routing_and_dns() {
+test_afterstart_exports_json_sub_rules_and_clears_legacy_routing() {
 	local script
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
-	grep -Fq 'build_admin_sub_json_routing_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}"' "$script" ||
-		fail "after-start must compute Happ-style subJsonRoutingRules"
+	grep -Fq 'subJsonRules=$(build_admin_sub_json_rules "${WEBDOMAIN}")' "$script" ||
+		fail "after-start must compute subJsonRules"
 	grep -Fq 'build_admin_sub_json_dns "${WEBDOMAIN}" "${PUBLIC_IPV4:-}"' "$script" ||
 		fail "after-start must compute subJsonDns"
-	grep -Fq 'export subJsonRoutingRules' "$script" ||
-		fail "after-start must export subJsonRoutingRules"
+	grep -Fq 'export subJsonRules' "$script" ||
+		fail "after-start must export subJsonRules"
+	grep -Fq 'CLEAR_SUB_JSON_ROUTING_RULES=true' "$script" ||
+		fail "after-start must force-clear legacy subJsonRoutingRules"
+	grep -Fq 'export CLEAR_SUB_JSON_ROUTING_RULES' "$script" ||
+		fail "after-start must export legacy subJsonRoutingRules clear flag"
+	if grep -Eq '(^|[[:space:]])subJsonRoutingRules=|export[[:space:]].*subJsonRoutingRules' "$script"; then
+		fail "after-start must not compute or export deprecated subJsonRoutingRules"
+	fi
 }
 
 test_desired_panel_keys_include_json_routing() {
@@ -1706,7 +1713,7 @@ test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_exports_admin_clash_routing_only
-test_afterstart_exports_json_sub_routing_and_dns
+test_afterstart_exports_json_sub_rules_and_clears_legacy_routing
 test_desired_panel_keys_include_json_routing
 test_ensure_panel_settings_force_clears_sub_json_routing_rules
 test_afterstart_check_mode_bootstraps_without_apply
