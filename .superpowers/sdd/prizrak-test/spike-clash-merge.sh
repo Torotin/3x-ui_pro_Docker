@@ -49,8 +49,18 @@ api_obj_json
 INNER
 }
 
+base64_one_line() {
+	if base64 -w0 </dev/null >/dev/null 2>&1; then
+		base64 -w0
+	else
+		base64 | tr -d '\n'
+	fi
+}
+
 container_apply_panel_settings() {
-	docker exec -i 3x-ui bash -s <<'INNER'
+	local body=$1 body_b64
+	body_b64=$(printf '%s' "$body" | base64_one_line)
+	docker exec -e PANEL_BODY_B64="$body_b64" -i 3x-ui bash -s <<'INNER'
 set -Eeuo pipefail
 LIB=/mnt/sh/lib
 . "$LIB/log.bash"
@@ -63,10 +73,28 @@ LIB=/mnt/sh/lib
 load_runtime_env /mnt/sh/01_AfterStart
 TMP_ROOT=$(mktemp -d); http_init "$TMP_ROOT"
 resolve_panel_base || die "login failed"
-body=$(cat)
+body=$(printf '%s' "$PANEL_BODY_B64" | base64 -d)
 xui_update_panel_settings "$body" || die "update settings failed"
 http_success_json || die "update settings body failed: $(http_body)"
 INNER
+}
+
+wait_subscription_ready() {
+	local url=$1 i
+	for i in $(seq 1 45); do
+		if docker exec 3x-ui wget -qO- --timeout=2 --header "Host: ${WEBDOMAIN}" "$url" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+restart_panel_for_subscriptions() {
+	local url=$1
+	docker restart 3x-ui >/dev/null
+	wait_subscription_ready "$url" || true
+	sleep 2
 }
 
 normalize_path() {
@@ -122,7 +150,9 @@ restore_panel_settings() {
 	[[ -s "$PANEL_BACKUP" ]] || return 0
 	[[ "$RESTORE_DONE" == "0" ]] || return 0
 	echo "restore_started=yes"
-	if container_apply_panel_settings <"$PANEL_BACKUP"; then
+	if container_apply_panel_settings "$(cat "$PANEL_BACKUP")"; then
+		docker restart 3x-ui >/dev/null
+		sleep 5
 		echo "restore_ok=yes"
 		RESTORE_DONE=1
 	else
@@ -209,9 +239,14 @@ EOF
 	echo "JSON_PATH=${JSON_PATH}"
 	echo "SUB_ID=${SUB_ID}"
 
-	container_apply_panel_settings <<<"$probe_json"
-
 	clash_url=$(join_sub_url_path "$CLASH_PATH" "$SUB_ID")
+	container_apply_panel_settings "$probe_json"
+	local live
+	live=$(container_panel_settings)
+	echo "stored_enable=$(jq -r '.subClashEnableRouting' <<<"$live")"
+	echo "stored_rules_has_spike=$(jq -r --arg rule "$probe_rule" '(.subClashRules // "") | contains($rule)' <<<"$live")"
+	restart_panel_for_subscriptions "http://127.0.0.1:${SUB_PORT}${clash_url}"
+
 	docker exec 3x-ui wget -qO- --header "Host: ${WEBDOMAIN}" "http://127.0.0.1:${SUB_PORT}${clash_url}" \
 		| tee "$CLASH_OUT" >/dev/null
 
