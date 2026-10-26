@@ -1767,6 +1767,38 @@ test_discover_clash_proxy_node_names_from_remarks() {
 	grep -Fq 'DIRECT' <<<"$out" && fail "must not invent DIRECT" || true
 }
 
+test_clash_subscription_proxy_name_for_vision_appends_host_email() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(clash_subscription_proxy_name_for_kind vision '🇩🇪 vless-tcp-reality' 'streambase.linkpc.net' 'streambase.linkpc.net-autogen')
+	assert_eq '🇩🇪 vless-tcp-reality-streambase.linkpc.net-autogen' "$out" \
+		"Vision Clash name must append shared client email"
+	out=$(clash_subscription_proxy_name_for_kind xhttp '🇩🇪 vless-xhttp' 'streambase.linkpc.net' autogen)
+	assert_eq '🇩🇪 vless-xhttp' "$out" "non-Vision Clash names keep inbound remark"
+}
+
+test_map_clash_remarks_to_published_proxy_names_prefix() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local body remarks out
+	body=$(mktemp)
+	remarks=$(mktemp)
+	cat >"$body" <<'EOF'
+proxies:
+  - name: 🇩🇪 vless-tcp-reality-streambase.linkpc.net-autogen
+    type: vless
+  - name: 🇩🇪 vless-xhttp
+    type: vless
+EOF
+	printf '%s\n' '🇩🇪 vless-tcp-reality' '🇩🇪 vless-xhttp' >"$remarks"
+	out=$(map_clash_remarks_to_published_proxy_names "$remarks" "$body")
+	rm -f "$body" "$remarks"
+	grep -Fx '🇩🇪 vless-tcp-reality-streambase.linkpc.net-autogen' <<<"$out" ||
+		fail "must map Vision remark to published Reality proxy name"
+	grep -Fx '🇩🇪 vless-xhttp' <<<"$out" || fail "must keep exact-match remarks"
+}
+
 test_discover_clash_proxy_node_names_from_clash_body() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
@@ -1878,6 +1910,8 @@ test_build_admin_sub_clash_rules_without_nodes_omits_groups
 test_build_admin_sub_clash_rules_admin_modes_domain_proxy
 test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block
 test_discover_clash_proxy_node_names_from_remarks
+test_clash_subscription_proxy_name_for_vision_appends_host_email
+test_map_clash_remarks_to_published_proxy_names_prefix
 test_discover_clash_proxy_node_names_from_clash_body
 test_build_admin_sub_json_routing_rules
 test_build_admin_sub_json_rules_admin_then_direct

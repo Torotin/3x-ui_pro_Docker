@@ -87,12 +87,68 @@ discover_clash_proxy_node_remark_lines_from_inbounds_json() {
 	' "$json_file" | sort -u
 }
 
-# Prefer managed inbound remarks; otherwise parse a saved Clash subscription body.
+# 3x-ui Clash export renames Reality/externalProxy nodes to remark-dest-email.
+# Other managed inbounds keep the inbound remark as the proxy name.
+clash_subscription_proxy_name_for_kind() {
+	local kind=$1 remark=$2 webdomain=${3:-} email=${4:-}
+	[[ -n "$remark" ]] || return 0
+	case "$kind" in
+	vision)
+		# Panel Clash export: Reality/externalProxy node name is remark-email
+		# (shared email already includes WEBDOMAIN prefix when configured).
+		if [[ -n "$email" ]]; then
+			printf '%s\n' "${remark}-${email}"
+		else
+			printf '%s\n' "$remark"
+		fi
+		;;
+	*)
+		printf '%s\n' "$remark"
+		;;
+	esac
+}
+
+# Map inbound remarks onto published Clash proxy names (exact, else unique remark- prefix).
+map_clash_remarks_to_published_proxy_names() {
+	local remarks_file=$1 body_file=$2
+	local published remark matches match_count
+	[[ -f "$remarks_file" && -f "$body_file" ]] || return 0
+	published=$(discover_clash_proxy_node_names_from_clash_body "$body_file")
+	[[ -n "$published" ]] || return 0
+	while IFS= read -r remark || [[ -n "$remark" ]]; do
+		remark=${remark//$'\r'/}
+		[[ -n "${remark//[[:space:]]/}" ]] || continue
+		[[ "$remark" == "DIRECT" ]] && continue
+		if grep -Fxq -- "$remark" <<<"$published"; then
+			printf '%s\n' "$remark"
+			continue
+		fi
+		matches=$(grep -F -- "$remark-" <<<"$published" || true)
+		match_count=$(grep -c . <<<"$matches" || true)
+		if [[ "${match_count:-0}" -eq 1 ]]; then
+			printf '%s\n' "$matches"
+			continue
+		fi
+		# Fall back to the remark so callers can still omit groups on total miss later.
+		printf '%s\n' "$remark"
+	done <"$remarks_file"
+}
+
+# Prefer managed inbound remarks; when a Clash body is also available, remap to
+# published proxy names (Reality/externalProxy may append -host-email). Else body-only.
 discover_clash_proxy_node_names() {
 	local clash_body_file=${1:-${CLASH_DISCOVERY_BODY_FILE:-}}
-	local remark_lines
+	local remark_lines remarks_file
 
 	remark_lines=$(discover_clash_proxy_node_remark_lines)
+	if [[ -n "$remark_lines" && -n "$clash_body_file" && -f "$clash_body_file" ]]; then
+		remarks_file=$(mktemp)
+		printf '%s\n' "$remark_lines" >"$remarks_file"
+		map_clash_remarks_to_published_proxy_names "$remarks_file" "$clash_body_file"
+		rm -f "$remarks_file"
+		return 0
+	fi
+
 	if [[ -n "$remark_lines" ]]; then
 		discover_clash_proxy_node_names_from_lines <<<"$remark_lines"
 		return 0

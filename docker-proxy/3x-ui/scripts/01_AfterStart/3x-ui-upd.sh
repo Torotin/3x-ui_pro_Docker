@@ -94,8 +94,12 @@ main() {
 	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
 	remarks_file=$(mktemp "$TMP_ROOT/clash-remarks.XXXXXX")
 	# Only remarks for kinds AfterStart will ensure (grpc/hysteria2 follow ENABLE_*).
+	# Vision/Reality Clash nodes are published as remark-WEBDOMAIN-email (externalProxy).
+	shared_email=$(jq -r '.clients.shared.email // empty' <<<"$desired")
 	{
-		jq -r '.inbounds.vision.remark // empty, .inbounds.xhttp.remark // empty' <<<"$desired"
+		vision_remark=$(jq -r '.inbounds.vision.remark // empty' <<<"$desired")
+		clash_subscription_proxy_name_for_kind vision "$vision_remark" "${WEBDOMAIN:-}" "$shared_email"
+		jq -r '.inbounds.xhttp.remark // empty' <<<"$desired"
 		if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
 			jq -r '.inbounds.grpc.remark // empty' <<<"$desired"
 		fi
