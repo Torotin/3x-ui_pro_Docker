@@ -180,7 +180,7 @@ desired_panel_keys() {
 		subUpdates subEncrypt subShowInfo subURI subJsonPath subJsonURI \
 		subClashEnable subClashPath subClashURI subClashEnableRouting subClashRules \
 		subJsonFragment subJsonNoises subJsonMux subJsonRules \
-		subJsonRoutingRules subJsonDns \
+		subJsonRoutingRules subJsonDns subJsonObservatory \
 		ldapEnable ldapHost ldapPort ldapUseTLS ldapBindDN ldapPassword ldapBaseDN \
 		ldapUserFilter ldapUserAttr ldapVlessField ldapSyncCron ldapFlagField \
 		ldapTruthyValues ldapInvertFlag ldapInboundTags ldapAutoCreate ldapAutoDelete \

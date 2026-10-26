@@ -1317,6 +1317,12 @@ test_desired_panel_keys_include_json_routing() {
 	grep -qx subJsonDns <<<"$keys" || fail "subJsonDns missing"
 }
 
+test_desired_panel_keys_include_sub_json_observatory() {
+	local keys
+	keys=$(desired_panel_keys)
+	grep -qx subJsonObservatory <<<"$keys" || fail "subJsonObservatory must be managed"
+}
+
 test_ensure_panel_settings_force_clears_sub_json_routing_rules() {
 	local updated_body cleared
 	export CLEAR_SUB_JSON_ROUTING_RULES=true
@@ -1375,6 +1381,123 @@ test_build_admin_sub_json_dns() {
 	assert_eq UseIP "$(jq -r '.queryStrategy' <<<"$out")" "dns queryStrategy must be UseIP"
 	assert_eq 198.51.100.10 "$(jq -r '.hosts["lampac-admin.example.test"]' <<<"$out")" "dns hosts must include all admin FQDNs"
 	assert_eq 7 "$(jq -r '.hosts | length' <<<"$out")" "dns hosts = apex + 6 admin labels"
+}
+
+test_build_admin_sub_json_observatory() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local out
+	out=$(build_admin_sub_json_observatory)
+	jq -e '.destination and .interval and .timeout and .httpMethod' <<<"$out" >/dev/null ||
+		fail "observatory fields"
+	assert_eq 'https://www.gstatic.com/generate_204' "$(jq -r .destination <<<"$out")" "probe destination"
+	assert_eq '300s' "$(jq -r .interval <<<"$out")" "probe interval"
+	assert_eq '5s' "$(jq -r .timeout <<<"$out")" "probe timeout"
+	assert_eq 'HEAD' "$(jq -r .httpMethod <<<"$out")" "probe method"
+	assert_eq '2' "$(jq -r .sampling <<<"$out")" "probe sampling"
+}
+
+test_sub_balancer_api_wrappers_use_documented_routes() {
+	local observed=()
+	xui_api_get() {
+		observed+=("GET:$1")
+	}
+	xui_api_post() {
+		observed+=("POST:$1:$2:$3")
+	}
+	xui_list_sub_balancers
+	xui_add_sub_balancer --data-urlencode remark=AUTO
+	xui_update_sub_balancer 7 --data-urlencode strategy=leastPing
+	unset -f xui_api_get xui_api_post
+	assert_eq "GET:/panel/api/sub-balancers" "${observed[0]}" "sub balancer list route mismatch"
+	assert_eq "POST:/panel/api/sub-balancers:--data-urlencode:remark=AUTO" "${observed[1]}" "sub balancer create route mismatch"
+	assert_eq "POST:/panel/api/sub-balancers/7:--data-urlencode:strategy=leastPing" "${observed[2]}" "sub balancer update route mismatch"
+}
+
+test_ensure_auto_sub_balancer_plan_does_not_call_api() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local changes=()
+	export MODE=plan
+	CHANGE_COUNT=0
+	record_change() {
+		changes+=("$*")
+	}
+	xui_list_sub_balancers() {
+		fail "plan mode must not call sub balancer list API"
+	}
+	ensure_auto_sub_balancer 1 "" 2 || fail "plan mode must return success"
+	unset -f record_change xui_list_sub_balancers
+	unset MODE
+	grep -Fq 'PLAN: AUTO sub balancer ensured inboundIds=1,2' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must log intended AUTO sub balancer ensure"
+}
+
+test_ensure_auto_sub_balancer_updates_existing_auto() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local updated_id update_args=()
+	export MODE=apply
+	CHANGE_COUNT=0
+	record_change() {
+		return 0
+	}
+	xui_list_sub_balancers() {
+		HTTP_BODY_FILE=$(mktemp)
+		printf '%s\n' '{"success":true,"obj":[{"id":7,"remark":"AUTO","strategy":"random","enabled":false,"inboundIds":[2]}]}' >"$HTTP_BODY_FILE"
+	}
+	http_success_json() {
+		return 0
+	}
+	xui_add_sub_balancer() {
+		fail "existing AUTO balancer must be updated, not created"
+	}
+	xui_update_sub_balancer() {
+		updated_id=$1
+		shift
+		update_args=("$@")
+		HTTP_BODY_FILE=$(mktemp)
+		printf '%s\n' '{"success":true,"obj":{"id":7}}' >"$HTTP_BODY_FILE"
+	}
+	ensure_auto_sub_balancer 1 2 || fail "apply update must return success"
+	rm -f "${HTTP_BODY_FILE:-}"
+	unset -f record_change xui_list_sub_balancers http_success_json xui_add_sub_balancer xui_update_sub_balancer
+	unset MODE
+	assert_eq 7 "$updated_id" "AUTO balancer id mismatch"
+	grep -Fq -- '--data-urlencode remark=AUTO' <<<"${update_args[*]}" || fail "update must include remark"
+	grep -Fq -- '--data-urlencode strategy=leastPing' <<<"${update_args[*]}" || fail "update must include leastPing strategy"
+	grep -Fq -- '--data-urlencode inboundIds=1' <<<"${update_args[*]}" || fail "update must include inbound 1"
+	grep -Fq -- '--data-urlencode inboundIds=2' <<<"${update_args[*]}" || fail "update must include inbound 2"
+	grep -Fq -- '--data-urlencode enabled=true' <<<"${update_args[*]}" || fail "update must enable AUTO balancer"
+}
+
+test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local logs=()
+	export MODE=apply
+	# shellcheck disable=SC2034 # plan_or_apply mutates this runtime global when the API call reaches apply mode.
+	CHANGE_COUNT=0
+	log() {
+		logs+=("$1:$2")
+	}
+	record_change() {
+		return 0
+	}
+	xui_list_sub_balancers() {
+		return 1
+	}
+	ensure_auto_sub_balancer 1 || fail "API failure must not fail after-start flow"
+	unset -f log record_change xui_list_sub_balancers
+	unset MODE
+	grep -Fq 'WARN:' <<<"$(printf '%s\n' "${logs[@]}")" ||
+		fail "API failure must log WARN"
 }
 
 test_afterstart_check_mode_bootstraps_without_apply() {
@@ -1715,6 +1838,7 @@ test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_exports_admin_clash_routing_only
 test_afterstart_exports_json_sub_rules_and_clears_legacy_routing
 test_desired_panel_keys_include_json_routing
+test_desired_panel_keys_include_sub_json_observatory
 test_ensure_panel_settings_force_clears_sub_json_routing_rules
 test_afterstart_check_mode_bootstraps_without_apply
 test_xray_template_update_requests_core_restart
@@ -1740,4 +1864,9 @@ test_discover_clash_proxy_node_names_from_clash_body
 test_build_admin_sub_json_routing_rules
 test_build_admin_sub_json_rules_admin_then_direct
 test_build_admin_sub_json_dns
+test_build_admin_sub_json_observatory
+test_sub_balancer_api_wrappers_use_documented_routes
+test_ensure_auto_sub_balancer_plan_does_not_call_api
+test_ensure_auto_sub_balancer_updates_existing_auto
+test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success
 printf 'test_libs.bash: OK\n'
