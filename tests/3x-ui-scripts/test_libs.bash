@@ -1547,6 +1547,33 @@ test_build_admin_sub_clash_rules_without_nodes_omits_groups() {
 	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "still MATCH,DIRECT"
 }
 
+test_build_admin_sub_clash_rules_admin_modes_domain_proxy() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml mode
+	for mode in rules-admin full; do
+		yaml=$(build_admin_sub_clash_rules "example.test" "203.0.113.9" "$mode")
+		grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" ||
+			fail "$mode must route admin domains to PROXY"
+		grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "$mode must end with MATCH,DIRECT"
+		grep -Fq 'name: ADMIN' <<<"$yaml" && fail "$mode must not emit ADMIN group" || true
+		grep -Fq ',ADMIN' <<<"$yaml" && fail "$mode must not route to ADMIN" || true
+	done
+}
+
+test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local nodes yaml count
+	nodes=$(mktemp)
+	printf '%s\n' 'node-a' >"$nodes"
+	yaml=$(build_admin_sub_clash_rules "example.test" "198.51.100.10" "full" "$nodes")
+	rm -f "$nodes"
+	count=$(grep -c '^proxy-groups:' <<<"$yaml" || true)
+	assert_eq 1 "$count" "with nodes must emit exactly one proxy-groups block"
+	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "full+nodes must not emit ADMIN group" || true
+}
+
 test_redaction_masks_secrets
 test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
@@ -1629,6 +1656,8 @@ test_build_admin_sub_clash_rules_skips_hosts_without_ipv4
 test_build_admin_sub_clash_rules_match_direct
 test_build_admin_sub_clash_rules_with_nodes_emits_auto
 test_build_admin_sub_clash_rules_without_nodes_omits_groups
+test_build_admin_sub_clash_rules_admin_modes_domain_proxy
+test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block
 test_build_admin_sub_json_routing_rules
 test_build_admin_sub_json_dns
 printf 'test_libs.bash: OK\n'

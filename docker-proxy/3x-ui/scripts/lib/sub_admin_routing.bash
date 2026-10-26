@@ -71,11 +71,9 @@ build_admin_sub_clash_rules() {
 	local host node
 	local -a nodes=()
 	local rules=$'rules:\n'
-	local target=PROXY
 
 	case "$mode" in
-	rules-admin | full) target=ADMIN ;;
-	rules-proxy) target=PROXY ;;
+	rules-admin | full | rules-proxy) ;;
 	*) die "build_admin_sub_clash_rules: unknown mode $mode" ;;
 	esac
 
@@ -85,16 +83,6 @@ build_admin_sub_clash_rules() {
 			[[ -n "${node//[[:space:]]/}" ]] || continue
 			nodes+=("$node")
 		done <"$node_names_file"
-	fi
-
-	if [[ "$target" == "ADMIN" ]]; then
-		printf '%s\n' \
-			'proxy-groups:' \
-			'  - name: ADMIN' \
-			'    type: select' \
-			'    hidden: true' \
-			'    proxies:' \
-			'      - PROXY'
 	fi
 
 	if ((${#nodes[@]} > 0)); then
@@ -129,7 +117,7 @@ build_admin_sub_clash_rules() {
 
 	printf '%s' "$rules"
 	while IFS= read -r host; do
-		printf '  - DOMAIN,%s.%s,%s\n' "$host" "$webdomain" "$target"
+		printf '  - DOMAIN,%s.%s,PROXY\n' "$host" "$webdomain"
 	done < <(admin_sub_hostnames)
 	printf '  - MATCH,DIRECT\n'
 }
