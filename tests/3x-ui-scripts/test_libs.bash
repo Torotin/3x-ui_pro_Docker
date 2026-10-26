@@ -1217,7 +1217,7 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
 test_afterstart_entrypoint_loads_runtime_modules() {
 	local script module function
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
-	for module in runtime_common panel_runtime inbound_runtime xray_runtime; do
+	for module in runtime_common panel_runtime inbound_runtime xray_runtime sub_balancer; do
 		[[ -f "$SCRIPTS_DIR/lib/$module.bash" ]] ||
 			fail "after-start runtime module is missing: $module.bash"
 		grep -Fq ". \"\$LIB_DIR/$module.bash\"" "$script" ||
@@ -1256,8 +1256,10 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
 		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
 		'repair_shared_client_after_inbound_sync "$desired" "$vision_id" "$xhttp_id" "$grpc_id"' \
+		'ensure_auto_sub_balancer "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id"' \
 		'update_builtin_geofiles_if_enabled' \
-		'restart_panel_if_needed'; do
+		'restart_panel_if_needed' \
+		'log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
 		[[ -n "$line" && "$line" -gt "$previous" ]] ||
 			fail "after-start pipeline order changed near: $expression"
@@ -1284,8 +1286,10 @@ test_afterstart_exports_admin_clash_routing_only() {
 		fail "after-start entrypoint must source admin subscription routing builder"
 	grep -Fq 'subClashEnableRouting=true' "$script" ||
 		fail "after-start entrypoint must enable native Clash routing"
-	grep -Fq 'subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")' "$script" ||
-		fail "after-start entrypoint must compute Clash rules at runtime"
+	grep -Fq 'discover_clash_proxy_node_names' "$script" ||
+		fail "after-start entrypoint must discover Clash proxy node names"
+	grep -Fq 'subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")' "$script" ||
+		fail "after-start entrypoint must compute Clash rules with discovered nodes"
 	if grep -Eq '(^|[[:space:]])(export[[:space:]].*subEnableRouting|subEnableRouting=|subRoutingRules=)' "$script"; then
 		fail "after-start entrypoint must not export Happ routing fields for this feature"
 	fi
@@ -1307,6 +1311,15 @@ test_afterstart_exports_json_sub_rules_and_clears_legacy_routing() {
 	if grep -Eq '(^|[[:space:]])subJsonRoutingRules=|export[[:space:]].*subJsonRoutingRules' "$script"; then
 		fail "after-start must not compute or export deprecated subJsonRoutingRules"
 	fi
+}
+
+test_afterstart_exports_json_sub_observatory() {
+	local script
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	grep -Fq 'subJsonObservatory=$(build_admin_sub_json_observatory)' "$script" ||
+		fail "after-start must compute subJsonObservatory"
+	grep -Fq 'export subJsonObservatory' "$script" ||
+		fail "after-start must export subJsonObservatory"
 }
 
 test_desired_panel_keys_include_json_routing() {
@@ -1837,6 +1850,7 @@ test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_exports_admin_clash_routing_only
 test_afterstart_exports_json_sub_rules_and_clears_legacy_routing
+test_afterstart_exports_json_sub_observatory
 test_desired_panel_keys_include_json_routing
 test_desired_panel_keys_include_sub_json_observatory
 test_ensure_panel_settings_force_clears_sub_json_routing_rules

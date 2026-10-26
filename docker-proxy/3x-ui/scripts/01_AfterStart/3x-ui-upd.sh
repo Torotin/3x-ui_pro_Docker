@@ -49,12 +49,16 @@ trap cleanup EXIT
 
 # Запускает полный цикл панели и Xray в выбранном режиме.
 main() {
-	local desired vision_id xhttp_id grpc_id="" hysteria2_id=""
+	local desired vision_id xhttp_id grpc_id="" hysteria2_id="" nodes_file remarks_file
 	TMP_ROOT=$(mktemp -d)
 	http_init "$TMP_ROOT"
 	load_runtime_env "$SCRIPT_DIR"
 	# shellcheck source=../lib/sub_admin_routing.bash
 	. "$LIB_DIR/sub_admin_routing.bash"
+	# shellcheck source=../lib/sub_balancer.bash
+	. "$LIB_DIR/sub_balancer.bash"
+	# Soft builders for MODE=check (no desired/panel). Final Clash+observatory
+	# passed into panel settings apply are rebuilt below once desired remarks exist.
 	subClashEnableRouting=true
 	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")
 	export subClashEnableRouting subClashRules
@@ -85,6 +89,21 @@ main() {
 	resolve_panel_base || die "Could not resolve and login to 3x-ui panel."
 	detect_country_flag || true
 	desired=$(build_desired_state)
+	# AUTO/PROXY groups need node names; prefer desired inbound remarks (chicken-egg
+	# vs live inbounds that may not exist yet).
+	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
+	remarks_file=$(mktemp "$TMP_ROOT/clash-remarks.XXXXXX")
+	jq -r '.inbounds | to_entries[] | .value.remark // empty' <<<"$desired" |
+		grep -E . >"$remarks_file" || true
+	CLASH_PROXY_NODE_REMARKS_FILE=$remarks_file \
+		discover_clash_proxy_node_names >"$nodes_file" || true
+	if [[ ! -s "$nodes_file" ]]; then
+		log WARN "Clash node names undiscoverable: omitting custom proxy-groups"
+	fi
+	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")
+	export subClashEnableRouting=true subClashRules
+	subJsonObservatory=$(build_admin_sub_json_observatory)
+	export subJsonObservatory
 	# Managed outbounds (usque/tor/…) must exist before panelOutbound injection,
 	# otherwise 3x-ui logs: panel egress: target tag [ usque ] not found.
 	apply_managed_xray
@@ -119,6 +138,7 @@ main() {
 	# Vision/XHTTP/gRPC/Hysteria listeners exist, then wait for them.
 	restart_xray_if_needed
 	wait_managed_xray_ports || log WARN "One or more managed Xray inbounds are not listening after inbound sync."
+	ensure_auto_sub_balancer "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id"
 	update_builtin_geofiles_if_enabled
 	restart_panel_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"
