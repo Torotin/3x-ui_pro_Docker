@@ -93,8 +93,16 @@ main() {
 	# vs live inbounds that may not exist yet).
 	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
 	remarks_file=$(mktemp "$TMP_ROOT/clash-remarks.XXXXXX")
-	jq -r '.inbounds | to_entries[] | .value.remark // empty' <<<"$desired" |
-		grep -E . >"$remarks_file" || true
+	# Only remarks for kinds AfterStart will ensure (grpc/hysteria2 follow ENABLE_*).
+	{
+		jq -r '.inbounds.vision.remark // empty, .inbounds.xhttp.remark // empty' <<<"$desired"
+		if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
+			jq -r '.inbounds.grpc.remark // empty' <<<"$desired"
+		fi
+		if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
+			jq -r '.inbounds.hysteria2.remark // empty' <<<"$desired"
+		fi
+	} | grep -E . >"$remarks_file" || true
 	CLASH_PROXY_NODE_REMARKS_FILE=$remarks_file \
 		discover_clash_proxy_node_names >"$nodes_file" || true
 	if [[ ! -s "$nodes_file" ]]; then

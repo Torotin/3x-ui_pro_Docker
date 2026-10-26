@@ -1288,6 +1288,10 @@ test_afterstart_exports_admin_clash_routing_only() {
 		fail "after-start entrypoint must enable native Clash routing"
 	grep -Fq 'discover_clash_proxy_node_names' "$script" ||
 		fail "after-start entrypoint must discover Clash proxy node names"
+	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
+		fail "Clash node discovery must gate grpc remarks on ENABLE_VLESS_GRPC"
+	grep -Fq 'ENABLE_HYSTERIA2:-true' "$script" ||
+		fail "Clash node discovery must gate hysteria2 remarks on ENABLE_HYSTERIA2"
 	grep -Fq 'subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")' "$script" ||
 		fail "after-start entrypoint must compute Clash rules with discovered nodes"
 	if grep -Eq '(^|[[:space:]])(export[[:space:]].*subEnableRouting|subEnableRouting=|subRoutingRules=)' "$script"; then
