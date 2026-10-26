@@ -1388,6 +1388,33 @@ test_xray_api_inbound_uses_documented_dokodemo_protocol() {
 	assert_eq dokodemo-door "$protocol" "Xray API inbound must use documented dokodemo-door protocol"
 }
 
+test_admin_sub_hostnames_list() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(admin_sub_hostnames | sort | tr '\n' ',')
+	assert_eq "3x-ui,adguard,arcane,homepage,lampac-admin,traefik," "$out" "admin host label set mismatch"
+}
+
+test_build_admin_sub_clash_rules_proxy_mode() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "203.0.113.9" "rules-proxy")
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" || fail "missing arcane DOMAIN→PROXY"
+	grep -Fq 'DOMAIN,3x-ui.example.test,PROXY' <<<"$yaml" || fail "missing 3x-ui DOMAIN→PROXY"
+	grep -Fq 'MATCH,PROXY' <<<"$yaml" || fail "missing MATCH,PROXY"
+	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN group" || true
+}
+
+test_build_admin_sub_clash_rules_skips_hosts_without_ipv4() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "" "full")
+	grep -Fq 'hosts:' <<<"$yaml" && fail "empty PUBLIC_IPV4 must omit hosts" || true
+}
+
 test_redaction_masks_secrets
 test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
@@ -1458,4 +1485,7 @@ test_repair_inbound_vless_client_flows_db_sets_vision_only
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol
+test_admin_sub_hostnames_list
+test_build_admin_sub_clash_rules_proxy_mode
+test_build_admin_sub_clash_rules_skips_hosts_without_ipv4
 printf 'test_libs.bash: OK\n'
