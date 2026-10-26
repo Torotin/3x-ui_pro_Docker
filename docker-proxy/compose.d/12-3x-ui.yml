@@ -25,6 +25,11 @@ services:
         ipv6_address: fd00:dead:beef:13::12
     dns:
       - 172.19.0.10
+    # hostname=${WEBDOMAIN} registers Docker DNSNames; without this override the
+    # container resolves WEBDOMAIN to itself (no :443 inside) and Hysteria
+    # masquerade / self-probes fail with connection refused.
+    extra_hosts:
+      - "${WEBDOMAIN}:172.18.0.6"
     volumes:
       - ../3x-ui/scripts/lib:/mnt/sh/lib:rw
       - ../3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
@@ -114,6 +119,17 @@ services:
       - traefik.http.routers.3xui-health.tls=true
       - traefik.http.routers.3xui-health.service=3xui-panel-svc
       - traefik.http.routers.3xui-health.priority=9995
+
+      # Root → panel path (opening https://3x-ui.${WEBDOMAIN}:9443/ otherwise 404)
+      - traefik.http.middlewares.3xui-root-redirect.redirectregex.regex=^(https?)://([^/]+)/?$$
+      - traefik.http.middlewares.3xui-root-redirect.redirectregex.replacement=$${1}://$${2}/${URI_PANEL_PATH}/
+      - traefik.http.middlewares.3xui-root-redirect.redirectregex.permanent=false
+      - traefik.http.routers.3xui-root.rule=Host(`3x-ui.${WEBDOMAIN}`) && Path(`/`)
+      - traefik.http.routers.3xui-root.entrypoints=admin
+      - traefik.http.routers.3xui-root.middlewares=3xui-root-redirect
+      - traefik.http.routers.3xui-root.tls=true
+      - traefik.http.routers.3xui-root.service=3xui-panel-svc
+      - traefik.http.routers.3xui-root.priority=9996
 
       # Панель администратора (admin plane)
       - traefik.http.routers.3xui-panel.rule=Host(`3x-ui.${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)

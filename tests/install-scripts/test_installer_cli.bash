@@ -1681,10 +1681,11 @@ test_final_summary_prints_details() {
 	assert_contains "INSTALLATION SUMMARY" "$tmpdir/stdout" "final step must print summary"
 	assert_contains "Domain           : example.test" "$tmpdir/stdout" "final summary must include domain"
 	assert_contains "Target           : deployer@198.51.100.10:22022" "$tmpdir/stdout" "final summary must include SSH target"
-	assert_contains "Homepage         : https://example.test/" "$tmpdir/stdout" "final summary must include service URLs"
-	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include Mihomo UI URL"
+	assert_contains "Homepage         : https://homepage.example.test:9443/" "$tmpdir/stdout" "final summary must include admin Homepage URL"
+	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include public Mihomo UI URL"
 	assert_contains "Mihomo secret    :" "$tmpdir/stdout" "final summary must print Mihomo controller secret for copy-paste"
-	assert_contains "Traefik Dashboard: https://example.test/" "$tmpdir/stdout" "final summary must include dashboard URL"
+	assert_contains "Traefik Dashboard: https://traefik.example.test:9443/dashboard/#/" "$tmpdir/stdout" "final summary must include admin Traefik dashboard URL"
+	assert_contains "Admin plane (personal Xray" "$tmpdir/stdout" "final summary must describe Xray admin plane"
 	assert_contains "Compose validate : $INSTALL_ROOT/compose.d/run-compose.sh validate" "$tmpdir/stdout" "final summary must include operational commands"
 	assert_contains "Summary saved: $INSTALL_STATE_DIR/install.summary" "$tmpdir/stdout" "final summary must print saved summary path"
 	assert_contains "INSTALLATION SUMMARY" "$INSTALL_STATE_DIR/install.summary" "final step must persist summary file"
@@ -1699,14 +1700,17 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 	# shellcheck source=script/modules/09_finalize.sh
 	. "$ROOT_DIR/script/modules/09_finalize.sh"
 	SUMMARY_DOMAIN=example.test
-	local panel doh traefik mihomo
-	panel=$(install_summary_url "nC4sRgYpwUgiad")
+	SUMMARY_PORT_LOCAL_ADMIN=9443
+	local panel doh traefik mihomo homepage
+	panel=$(install_summary_admin_url 3x-ui "nC4sRgYpwUgiad")
+	homepage=$(install_summary_admin_url homepage)
 	doh=$(install_summary_url "3pDA9wdT58rg0aMC" "" noslash)
-	traefik=$(install_summary_url "UoAJFIMva4GETi" "dashboard/#/")
+	traefik=$(install_summary_admin_url traefik "dashboard/#/")
 	mihomo=$(install_summary_url "mihomoPath" "ui/")
-	[[ "$panel" == "https://example.test/nC4sRgYpwUgiad/" ]] || fail "panel summary URL must end with trailing slash; got: $panel"
+	[[ "$panel" == "https://3x-ui.example.test:9443/nC4sRgYpwUgiad/" ]] || fail "admin panel summary URL must end with trailing slash; got: $panel"
+	[[ "$homepage" == "https://homepage.example.test:9443/" ]] || fail "admin homepage URL must end with trailing slash; got: $homepage"
 	[[ "$doh" == "https://example.test/3pDA9wdT58rg0aMC" ]] || fail "DoH summary URL must stay exact Path without slash; got: $doh"
-	[[ "$traefik" == "https://example.test/UoAJFIMva4GETi/dashboard/#/" ]] || fail "Traefik summary URL must keep dashboard fragment; got: $traefik"
+	[[ "$traefik" == "https://traefik.example.test:9443/dashboard/#/" ]] || fail "Traefik admin summary URL must keep dashboard fragment; got: $traefik"
 	[[ "$mihomo" == "https://example.test/mihomoPath/ui/" ]] || fail "Mihomo UI summary URL must keep ui/ suffix; got: $mihomo"
 
 	export ENABLE_MIHOMO=true
@@ -1715,13 +1719,12 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 		local key=$1
 		grep -E "^${key}=" "$INSTALL_STATE_DIR/install.env" | head -n1 | cut -d= -f2- | tr -d '"'
 	}
-	local panel_path dozzle_path doh_path
+	local panel_path doh_path
 	panel_path=$(uri_from_env URI_PANEL_PATH)
-	dozzle_path=$(uri_from_env URI_DOZZLE)
 	doh_path=$(uri_from_env URI_ADGUARD_DOH)
-	[[ -n "$panel_path" && -n "$dozzle_path" && -n "$doh_path" ]] || fail "install.env must define panel/dozzle/doh URI paths"
-	assert_contains "3X-UI Panel      : https://example.test/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted panel URL must include trailing slash"
-	assert_contains "Dozzle Logs      : https://example.test/${dozzle_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted Dozzle URL must include trailing slash"
+	[[ -n "$panel_path" && -n "$doh_path" ]] || fail "install.env must define panel/doh URI paths"
+	assert_contains "3X-UI Panel      : https://3x-ui.example.test:9443/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted admin panel URL must include trailing slash"
+	assert_contains "Arcane           : https://arcane.example.test:9443/" "$INSTALL_STATE_DIR/install.summary" "persisted Arcane admin URL must include trailing slash"
 	assert_contains "AdGuard DoH      : https://example.test/${doh_path}" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must omit trailing slash"
 	assert_not_contains "AdGuard DoH      : https://example.test/${doh_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must not gain a trailing slash"
 }

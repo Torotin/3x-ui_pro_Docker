@@ -68,6 +68,16 @@ services:
 
       # ---------- Traefik dashboard on private admin Host (self-signed) ----------
       - traefik.http.middlewares.admin-dash-chain.chain.middlewares=basic-auth,rate-limit,admin-security-headers@file,compress
+      # Root → /dashboard/ (URI_TRAEFIK_DASHBOARD is not a URL path)
+      - traefik.http.middlewares.traefik-root-redirect.redirectregex.regex=^(https?)://([^/]+)/?$$
+      - traefik.http.middlewares.traefik-root-redirect.redirectregex.replacement=$${1}://$${2}/dashboard/
+      - traefik.http.middlewares.traefik-root-redirect.redirectregex.permanent=false
+      - traefik.http.routers.traefik-root.rule=Host(`traefik.${WEBDOMAIN}`) && Path(`/`)
+      - traefik.http.routers.traefik-root.entrypoints=admin
+      - traefik.http.routers.traefik-root.middlewares=traefik-root-redirect
+      - traefik.http.routers.traefik-root.tls=true
+      - traefik.http.routers.traefik-root.service=api@internal
+      - traefik.http.routers.traefik-root.priority=90
       - traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${WEBDOMAIN}`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
       - traefik.http.routers.traefik-dashboard.entrypoints=admin
       - traefik.http.routers.traefik-dashboard.middlewares=admin-dash-chain

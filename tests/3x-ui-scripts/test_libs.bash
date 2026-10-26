@@ -1049,11 +1049,13 @@ test_admin_traefik_route_prepended_for_webdomain_hosts() {
 	local base updated ob_count first_tag domains
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
 	updated=$(json_apply_managed_xray_state "$base" '[]' false false false '[]' "screenhub.linkpc.net")
-	ob_count=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="admin-traefik" and .protocol=="freedom" and .settings.redirect=="traefik:9443")] | length')
+	ob_count=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="admin-traefik" and .protocol=="freedom" and .settings.redirect=="172.18.0.6:9443" and ((.settings.finalRules // []) | map(select(.action=="allow")) | length) > 0)] | length')
 	first_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[0].outboundTag')
+	port_rule=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[1] | "\(.outboundTag):\(.port):\(.network)"')
 	domains=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[0].domain | sort | join(",")')
-	assert_eq 1 "$ob_count" "admin-traefik freedom outbound must target traefik:9443"
+	assert_eq 1 "$ob_count" "admin-traefik freedom outbound must redirect to 172.18.0.6:9443 with finalRules allow"
 	assert_eq admin-traefik "$first_tag" "admin-traefik rule must be first so WARP cannot steal admin Hosts"
+	assert_eq "admin-traefik:9443:tcp" "$port_rule" "companion port:9443 rule must follow domain rule"
 	assert_eq "full:3x-ui.screenhub.linkpc.net,full:adguard.screenhub.linkpc.net,full:arcane.screenhub.linkpc.net,full:homepage.screenhub.linkpc.net,full:lampac-admin.screenhub.linkpc.net,full:traefik.screenhub.linkpc.net" "$domains" "admin Host FQDNs mismatch"
 }
 

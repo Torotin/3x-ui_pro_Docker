@@ -208,7 +208,11 @@ json_upsert_admin_traefik_route() {
 		printf '%s' "$current"
 		return 0
 	}
-	admin_ob=$(jq -nc '{tag:"admin-traefik",protocol:"freedom",settings:{redirect:"traefik:9443",domainStrategy:"AsIs"}}')
+	# Prefer fixed docker-proxy IPv4. Relying on name "traefik" can yield
+	# dns-net AAAA-only answers from some resolvers and break the redirect dial.
+	# finalRules must allow the docker-private redirect target. Newer Xray freedom
+	# blackholes geoip:private by default ("blocked target: tcp:172.18.0.6:9443").
+	admin_ob=$(jq -nc '{tag:"admin-traefik",protocol:"freedom",settings:{redirect:"172.18.0.6:9443",domainStrategy:"AsIs",finalRules:[{action:"allow"}]}}')
 	admin_rule=$(jq -nc --arg w "$webdomain" '{
       type:"field",
       outboundTag:"admin-traefik",
@@ -221,12 +225,16 @@ json_upsert_admin_traefik_route() {
         "full:lampac-admin."+$w
       ]
     }')
+	# Companion rule: clients that resolve admin FQDNs via hosts/A-record often dial
+	# IP:9443. Public :9443 is loopback-only, so IP dial must still hit admin-traefik.
+	# Port 9443 is dedicated to the Traefik admin entrypoint on this stack.
+	admin_port_rule=$(jq -nc '{type:"field",outboundTag:"admin-traefik",port:"9443",network:"tcp"}')
 	current=$(json_upsert_outbound_by_tag "$current" "$admin_ob")
-	jq -c --argjson rule "$admin_rule" '
+	jq -c --argjson rule "$admin_rule" --argjson portRule "$admin_port_rule" '
       .xraySetting.routing = (.xraySetting.routing // {}) |
       .xraySetting.routing.rules = (.xraySetting.routing.rules // []) |
       .xraySetting.routing.rules = (
-        [$rule] + [.xraySetting.routing.rules[] | select((.outboundTag // "") != "admin-traefik")]
+        [$rule, $portRule] + [.xraySetting.routing.rules[] | select((.outboundTag // "") != "admin-traefik")]
       )
     ' <<<"$current"
 }

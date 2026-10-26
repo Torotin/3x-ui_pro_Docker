@@ -655,7 +655,9 @@ build_hysteria2_stream_json() {
 	local host=$1 cert_file=$2 key_file=$3 auth=${4:-} tls_settings masq_url
 	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h3"]' "")
 	masq_url=${HYSTERIA2_MASQ_URL:-}
-	[[ -n "$masq_url" ]] || masq_url="https://${host}/"
+	# Prefer Traefik websecure inside docker-net. Do not use https://${host}/ —
+	# with hostname=${WEBDOMAIN} that resolves to this container and :443 is closed.
+	[[ -n "$masq_url" ]] || masq_url="https://traefik:4443/"
 	jq -nc \
 		--arg masqUrl "$masq_url" \
 		--arg auth "$auth" \
@@ -670,8 +672,8 @@ build_hysteria2_stream_json() {
             masquerade:{
               type:"proxy",
               url:$masqUrl,
-              rewriteHost:false,
-              insecure:false
+              rewriteHost:true,
+              insecure:true
             }
           }
         }'

@@ -411,9 +411,12 @@ build_inbound_components_json() {
 		HYSTERIA2_STREAM_AUTH=
 	fi
 	if [[ "$kind" == "hysteria2" ]]; then
-		sniffing=$(jq -nc '{enabled:false,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}')
+		# routeOnly keeps the client destination port (e.g. admin :9443) while still
+		# allowing sniffed SNI/Host to drive routing. destOverride without routeOnly
+		# often rewrites TLS destinations to :443 and misses admin-traefik port rules.
+		sniffing=$(jq -nc '{enabled:false,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	else
-		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}')
+		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	fi
 	allocate=$(jq -nc '{}')
 	jq -nc \
