@@ -92,7 +92,7 @@ Current local stack constraints:
 - XHTTP external proxy metadata points at the public domain on port 443, where Traefik terminates TLS.
 - gRPC, when enabled, uses TLS between Traefik and Xray; Traefik uses `grpc3xui-transport@file`.
 - Hysteria2, when enabled, uses UDP 443 direct publish with TLS/H3 masquerade settings.
-- Generated managed outbounds are applied before `panelOutbound` so tags like `usque` exist before the panel tries to use them.
+- Generated managed outbounds are applied before `panelOutbound` so tags exist before the panel tries to use them. Default `panelOutbound` is `direct` (empty env); set `panelOutbound=usque` explicitly when panel egress must go through WARP.
 
 Peer expectations:
 

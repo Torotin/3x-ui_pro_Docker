@@ -581,7 +581,7 @@ test_panel_settings_json_defaults_panel_outbound() {
 	local body
 	unset panelOutbound
 	body=$(panel_settings_json '{"webPort":2053,"smtpPort":0,"ldapPort":0,"tgBotEnable":false}')
-	assert_eq usque "$(printf '%s' "$body" | jq -r '.panelOutbound')" "panel settings JSON must default panelOutbound to usque"
+	assert_eq direct "$(printf '%s' "$body" | jq -r '.panelOutbound')" "panel settings JSON must default panelOutbound to direct"
 	assert_eq 587 "$(printf '%s' "$body" | jq -r '.smtpPort')" "panel settings JSON must normalize invalid smtpPort"
 	assert_eq 389 "$(printf '%s' "$body" | jq -r '.ldapPort')" "panel settings JSON must normalize invalid ldapPort"
 	assert_eq number "$(printf '%s' "$body" | jq -r '.webPort | type')" "webPort must remain a JSON number for 3.7 AllSetting"

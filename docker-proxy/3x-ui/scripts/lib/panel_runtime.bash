@@ -27,7 +27,9 @@ panel_settings_json() {
 		| if ((.ldapPort|tostring|tonumber?) // 0) < 1 then .ldapPort = 389 else . end
 	' <<<"$merged")
 	if [[ -z "${panelOutbound:-}" ]]; then
-		merged=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$merged")
+		# Prefer direct: RU/local subscription hosts are reachable without WARP,
+		# while panelOutbound=usque breaks outbound-sub refresh to those peers.
+		merged=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "direct" else . end' <<<"$merged")
 	fi
 	printf '%s' "$merged"
 }
@@ -53,7 +55,7 @@ panel_desired_json() {
 		if ((.ldapPort|tostring|tonumber?) // 0) < 1 then .ldapPort = "389" else . end
 	' <<<"$desired")
 	if [[ -z "${panelOutbound:-}" ]]; then
-		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$desired")
+		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "direct" else . end' <<<"$desired")
 	fi
 	if clear_sub_json_routing_rules_requested; then
 		desired=$(jq -c '.subJsonRoutingRules = ""' <<<"$desired")
