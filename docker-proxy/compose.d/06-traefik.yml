@@ -12,6 +12,12 @@ services:
         condition: service_healthy
     env_file:
       - ./.env
+    # DPI: plugins.traefik.io often times out on IPv4; pull plugins via usque/WARP.
+    # environment:
+    #   ALL_PROXY: socks5h://usque:1080
+    #   HTTPS_PROXY: socks5h://usque:1080
+    #   HTTP_PROXY: socks5h://usque:1080
+    #   NO_PROXY: localhost,127.0.0.1,crowdsec,usque,traefik,caddy,adguard,3x-ui,::1,172.18.0.0/24,172.19.0.0/24
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ../traefik/traefik.yml:/etc/traefik/traefik.yml:ro

@@ -24,6 +24,8 @@ import *.caddy
 	encode gzip zstd
 
 	route {
+		# Requires CrowdSec AppSec on :7422. If AppSec is down, Caddy returns 500
+		# and Traefik marks caddy-error unhealthy → public "/" = "no available server".
 		crowdsec
 		appsec
 
