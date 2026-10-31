@@ -220,7 +220,15 @@ install_self_update_fetch_tree() {
 		fi
 		return 0
 	fi
-	run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp"
+	if ! command -v git >/dev/null 2>&1; then
+		log ERROR "git is required for self-update (install via apt step first)"
+		return 1
+	fi
+	run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp" || return 1
+	[[ -f "$tmp/script/VERSION" ]] || {
+		log ERROR "version file not found after clone: $tmp/script/VERSION"
+		return 1
+	}
 }
 
 install_print_changelog_range() {
@@ -249,10 +257,22 @@ install_print_changelog_range() {
 install_self_update_prepare() {
 	local branch=$1 result_file=$2 tmp local_version remote_version compare
 	tmp=$(mktemp -d)
-	install_self_update_fetch_tree "$branch" "$tmp"
-	local_version=$(install_read_version_file "$(install_version_file)")
-	remote_version=$(install_read_version_file "$tmp/script/VERSION")
-	compare=$(install_compare_semver "$remote_version" "$local_version")
+	if ! install_self_update_fetch_tree "$branch" "$tmp"; then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if ! local_version=$(install_read_version_file "$(install_version_file)"); then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if ! remote_version=$(install_read_version_file "$tmp/script/VERSION"); then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if ! compare=$(install_compare_semver "$remote_version" "$local_version"); then
+		rm -rf "$tmp"
+		return 1
+	fi
 	{
 		printf 'tmp=%s\n' "$tmp"
 		printf 'local_version=%s\n' "$local_version"

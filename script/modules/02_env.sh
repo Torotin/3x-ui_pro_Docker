@@ -201,7 +201,7 @@ ensure_env_defaults() {
 	: "${XRAY_TLS_KEY_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	# Prefer Traefik inside docker-net. https://${WEBDOMAIN}/ self-loops when
 	# the 3x-ui container hostname is WEBDOMAIN (no TCP :443 inside).
-	: "${HYSTERIA2_MASQ_URL:=https://traefik:4443/}"
+	: "${HYSTERIA2_MASQ_URL:=https://${WEBDOMAIN}:4443/}"
 	if install_telemt_enabled; then
 		: "${VISION_FALLBACK_HOST:=telemt}"
 		: "${VISION_FALLBACK_PORT:=$PORT_LOCAL_TELEMT_PROXY}"

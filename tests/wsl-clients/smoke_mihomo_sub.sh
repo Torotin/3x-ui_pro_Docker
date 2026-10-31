@@ -64,15 +64,24 @@ BYTES=$(wc -c <"$PROFILE" | tr -d ' ')
 [[ "$BYTES" -gt 200 ]] || die "subscription body too small ($BYTES bytes)"
 pass "fetched $BYTES bytes"
 
-grep -Fq 'name: AUTO' "$PROFILE" || die "missing name: AUTO"
-pass "name: AUTO"
+AUTO_NAME="AUTO-${WEBDOMAIN}"
+PROXY_NAME="PROXY-${WEBDOMAIN}"
+grep -Fq "name: ${AUTO_NAME}" "$PROFILE" || die "missing name: ${AUTO_NAME}"
+pass "name: ${AUTO_NAME}"
+grep -Fq 'hidden: true' "$PROFILE" || die "AUTO must be hidden: true"
+pass "AUTO hidden: true"
+grep -Fq "name: ${PROXY_NAME}" "$PROFILE" || die "missing name: ${PROXY_NAME}"
+pass "name: ${PROXY_NAME}"
+grep -Fq "      - ${AUTO_NAME}" "$PROFILE" || grep -Fq -- "- ${AUTO_NAME}" "$PROFILE" ||
+	die "${PROXY_NAME} must list ${AUTO_NAME}"
+pass "${PROXY_NAME} lists ${AUTO_NAME}"
 grep -Fq 'type: url-test' "$PROFILE" || die "missing type: url-test"
 pass "type: url-test"
 grep -Fq 'MATCH,DIRECT' "$PROFILE" || die "missing MATCH,DIRECT"
 pass "MATCH,DIRECT"
-grep -Fq "DOMAIN,arcane.${WEBDOMAIN},PROXY" "$PROFILE" ||
-	die "missing DOMAIN,arcane.${WEBDOMAIN},PROXY"
-pass "admin DOMAIN,arcane…,PROXY"
+grep -Fq "DOMAIN,arcane.${WEBDOMAIN},${PROXY_NAME}" "$PROFILE" ||
+	die "missing DOMAIN,arcane.${WEBDOMAIN},${PROXY_NAME}"
+pass "admin DOMAIN,arcane…,${PROXY_NAME}"
 
 if grep -Eq '(^|[[:space:]-])MATCH,PROXY([[:space:]]|$)' "$PROFILE"; then
 	die "residual MATCH,PROXY must not remain"

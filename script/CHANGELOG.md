@@ -1,5 +1,10 @@
 # Журнал изменений установщика
 
+## 0.7.4 - 2026-10-31
+
+- Wizard self-update check: если нет `git` (до шага apt) — явный skip вместо ложного «up to date» и ERROR по отсутствующему remote VERSION.
+- `install_self_update_prepare`/`fetch_tree`: жёсткая проверка `git` и `script/VERSION` после clone; без `if ! (subshell)`, где bash глушит `set -e`.
+
 ## 0.7.3 - 2026-10-23
 
 - Arcane path-prefix: семантические Traefik JS/HTML rewrites (без minify-имён), защита `arcane.yml` от Go-template в комментариях.

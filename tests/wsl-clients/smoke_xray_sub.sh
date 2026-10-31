@@ -68,35 +68,55 @@ DOC_COUNT=$(jq 'if type=="array" then length else 1 end' "$BODY")
 [[ "$DOC_COUNT" -ge 1 ]] || die "empty JSON subscription"
 pass "docs=$DOC_COUNT"
 
-# First document (inbound profile): admin→proxy then network→direct must appea
-# before any later panel-appended catch-all→proxy (first-match wins).
+# First document (inbound profile): admin domain→proxy, port 9443→proxy, then
+# network→direct must appear before any later panel-appended catch-all→proxy
+# (first-match wins). Port rule covers IP:9443 dials after DNS.
 jq -e --arg d "$WEBDOMAIN" '
 	(if type=="array" then .[0] else . end) as $doc
 	| ($doc.routing.rules // []) as $r
-	| ($r | length) >= 2
+	| ($r | length) >= 3
 	and ($r[0].domain != null)
 	and (($r[0].domain | map(tostring) | join(" ")) | contains("arcane." + $d))
 	and ($r[0].outboundTag == "proxy" or (($r[0].balancerTag // "") | length) > 0)
-	and (([$r[] | select(.network != null)][0].outboundTag) == "direct")
+	and (($r[1].port | tostring) == "9443")
+	and ($r[1].outboundTag == "proxy" or (($r[1].balancerTag // "") | length) > 0)
+	and (([$r[] | select(.network != null and .domain == null and .port == null)][0].outboundTag) == "direct")
 ' "$BODY" >/dev/null || {
 	echo "first-doc rules:" >&2
 	jq -c '(if type=="array" then .[0] else . end).routing.rules' "$BODY" >&2 || true
-	die "first doc missing admin→proxy then network→direct"
+	die "first doc missing admin→proxy, port:9443→proxy, then network→direct"
 }
-pass "first doc: admin→proxy then network→direct"
+pass "first doc: admin→proxy, port:9443→proxy, then network→direct"
+jq -e --arg d "$WEBDOMAIN" '
+	(if type=="array" then .[0] else . end) as $doc
+	| ($doc.dns.hosts // {}) as $h
+	| ($h | length) >= 1
+	and ($h["arcane." + $d] != null)
+' "$BODY" >/dev/null || die "JSON dns.hosts must map admin FQDNs (public DNS often missing)"
+pass "first doc: dns.hosts present for admin FQDNs"
 
-# AUTO balancer document (if present): leastPing + balancers/observatory.
-AUTO_IDX=$(jq -r '
+# AUTO-<webdomain> balancer document (if present): leastPing + balancers/observatory.
+AUTO_NAME="AUTO-${WEBDOMAIN}"
+AUTO_IDX=$(jq -r --arg auto "$AUTO_NAME" '
 	if type != "array" then empty
 	else
 		to_entries
-		| map(select((.value.remarks // "") == "AUTO" or ((.value.routing.balancers // []) | length) > 0))
+		| map(select(
+			(.value.remarks // "") == $auto
+			or (.value.remarks // "") == "AUTO"
+			or ((.value.routing.balancers // []) | length) > 0
+		))
 		| .[0].key // empty
 	end
 ' "$BODY")
 
 if [[ -n "$AUTO_IDX" ]]; then
 	pass "AUTO/balancer doc at index $AUTO_IDX"
+	jq -e --argjson i "$AUTO_IDX" --arg auto "$AUTO_NAME" '
+		.[$i] as $doc
+		| (($doc.remarks // "") == $auto or ($doc.remarks // "") == "AUTO")
+		| .
+	' "$BODY" >/dev/null || true
 	jq -e --argjson i "$AUTO_IDX" '
 		.[$i] as $doc
 		| ($doc.routing.balancers // []) as $b

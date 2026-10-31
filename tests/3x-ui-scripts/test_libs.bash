@@ -653,7 +653,7 @@ test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs() {
 }
 
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
-	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls penetrate ep_sni ep_fp ep_alpn ep_insecure
+	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls penetrate trusted_xff ep_sni ep_fp ep_alpn ep_insecure
 	stream=$(build_xhttp_stream_json /xhttp screenhub.linkpc.net)
 	headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers')
 	server=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers.Server')
@@ -666,6 +666,7 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	tproxy=$(printf '%s' "$stream" | jq -r '.sockopt.tproxy')
 	force_tls=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
 	penetrate=$(printf '%s' "$stream" | jq -r '.sockopt.penetrate')
+	trusted_xff=$(printf '%s' "$stream" | jq -r '.sockopt.trustedXForwardedFor | join(",")')
 	ep_sni=$(printf '%s' "$stream" | jq -r '.externalProxy[0].sni')
 	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
 	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
@@ -681,6 +682,7 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	assert_eq tproxy "$tproxy" "old XHTTP sockopt tproxy was not restored"
 	assert_eq tls "$force_tls" "XHTTP externalProxy must publish TLS subscription links through Traefik"
 	assert_eq null "$penetrate" "XHTTP sockopt must not emit removed penetrate field"
+	assert_eq X-Xray-Trusted-Proxy "$trusted_xff" "XHTTP sockopt must trust Traefik XFF via marker header"
 	assert_eq screenhub.linkpc.net "$ep_sni" "XHTTP externalProxy must publish SNI for TLS subscriptions"
 	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "XHTTP externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
 	assert_eq h2,http/1.1 "$ep_alpn" "XHTTP externalProxy must publish modern TLS ALPN hints"
@@ -688,7 +690,7 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 }
 
 test_grpc_stream_uses_tls_backend_settings() {
-	local stream network security service_name alpn cert_file key_file scheme fp ep_sni ep_fp ep_alpn insecure
+	local stream network security service_name alpn cert_file key_file scheme fp ep_sni ep_fp ep_alpn insecure trusted_xff
 	stream=$(build_grpc_stream_json /grpc screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key)
 	network=$(printf '%s' "$stream" | jq -r '.network')
 	security=$(printf '%s' "$stream" | jq -r '.security')
@@ -702,6 +704,7 @@ test_grpc_stream_uses_tls_backend_settings() {
 	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
 	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
 	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
+	trusted_xff=$(printf '%s' "$stream" | jq -r '.sockopt.trustedXForwardedFor | join(",")')
 	assert_eq grpc "$network" "gRPC stream must use grpc network"
 	assert_eq tls "$security" "gRPC stream must use TLS backend security"
 	assert_eq grpc "$service_name" "gRPC serviceName must strip the leading slash"
@@ -714,11 +717,14 @@ test_grpc_stream_uses_tls_backend_settings() {
 	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "gRPC externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
 	assert_eq h2 "$ep_alpn" "gRPC externalProxy must publish h2 ALPN"
 	assert_eq 0 "$insecure" "gRPC stream must not contain removed allowInsecure anywhere"
+	assert_eq X-Xray-Trusted-Proxy "$trusted_xff" "gRPC sockopt must trust Traefik XFF via marker header"
 }
 
 test_hysteria2_stream_and_settings_use_required_auth() {
 	local stream settings components network security alpn masq_type masq_url auth stream_auth email protocol tg_id group comment
 	unset HYSTERIA2_MASQ_URL
+	WEBDOMAIN=screenhub.linkpc.net
+	export WEBDOMAIN
 	stream=$(build_hysteria2_stream_json screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key transport-auth)
 	settings=$(build_hysteria2_settings_json '' "$(build_desired_state)")
 	components=$(build_inbound_components_json hysteria2 "$(build_desired_state)")
@@ -738,7 +744,8 @@ test_hysteria2_stream_and_settings_use_required_auth() {
 	assert_eq tls "$security" "Hysteria2 stream must use TLS"
 	assert_eq h3 "$alpn" "Hysteria2 TLS ALPN must use h3"
 	assert_eq proxy "$masq_type" "Hysteria2 masquerade must proxy the public site"
-	assert_eq https://traefik:4443/ "$masq_url" "Hysteria2 masquerade URL mismatch"
+	assert_eq https://screenhub.linkpc.net:4443/ "$masq_url" "Hysteria2 masquerade URL mismatch"
+	unset WEBDOMAIN
 	[[ -n "$auth" ]] || fail "Hysteria2 client auth must be generated"
 	[[ -n "$stream_auth" ]] || fail "Hysteria2 transport auth must match the managed client auth"
 	assert_eq "$(printf '%s' "$components" | jq -r '.settings.clients[0].auth')" "$stream_auth" "Hysteria2 transport auth must mirror inbound client auth"
@@ -1383,6 +1390,9 @@ test_build_admin_sub_json_rules_admin_then_direct() {
 	assert_eq field "$(jq -r '.[0].type' <<<"$out")" "rule type field"
 	assert_eq proxy "$(jq -r '.[0].outboundTag' <<<"$out")" "admin to proxy"
 	assert_eq full:arcane.example.test "$(jq -r '.[0].domain[0]' <<<"$out")" "full: domain"
+	assert_eq proxy "$(jq -r '.[1].outboundTag' <<<"$out")" "port 9443 to proxy"
+	assert_eq 9443 "$(jq -r '.[1].port' <<<"$out")" "admin entrypoint port"
+	assert_eq tcp "$(jq -r '.[1].network' <<<"$out")" "port rule tcp"
 	assert_eq direct "$(jq -r '.[-1].outboundTag' <<<"$out")" "catch-all direct"
 	assert_eq 'tcp,udp' "$(jq -r '.[-1].network' <<<"$out")" "catch-all network"
 }
@@ -1423,11 +1433,11 @@ test_sub_balancer_api_wrappers_use_documented_routes() {
 		observed+=("POST:$1:$2:$3")
 	}
 	xui_list_sub_balancers
-	xui_add_sub_balancer --data-urlencode remark=AUTO
+	xui_add_sub_balancer --data-urlencode remark=AUTO-example.test
 	xui_update_sub_balancer 7 --data-urlencode strategy=leastPing
 	unset -f xui_api_get xui_api_post
 	assert_eq "GET:/panel/api/sub-balancers" "${observed[0]}" "sub balancer list route mismatch"
-	assert_eq "POST:/panel/api/sub-balancers:--data-urlencode:remark=AUTO" "${observed[1]}" "sub balancer create route mismatch"
+	assert_eq "POST:/panel/api/sub-balancers:--data-urlencode:remark=AUTO-example.test" "${observed[1]}" "sub balancer create route mismatch"
 	assert_eq "POST:/panel/api/sub-balancers/7:--data-urlencode:strategy=leastPing" "${observed[2]}" "sub balancer update route mismatch"
 }
 
@@ -1437,7 +1447,7 @@ test_ensure_auto_sub_balancer_plan_does_not_call_api() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
 	local changes=()
-	export MODE=plan
+	export MODE=plan WEBDOMAIN=example.test
 	CHANGE_COUNT=0
 	record_change() {
 		changes+=("$*")
@@ -1447,9 +1457,9 @@ test_ensure_auto_sub_balancer_plan_does_not_call_api() {
 	}
 	ensure_auto_sub_balancer 1 "" 2 || fail "plan mode must return success"
 	unset -f record_change xui_list_sub_balancers
-	unset MODE
-	grep -Fq 'PLAN: AUTO sub balancer ensured inboundIds=1,2' <<<"$(printf '%s\n' "${changes[@]}")" ||
-		fail "plan mode must log intended AUTO sub balancer ensure"
+	unset MODE WEBDOMAIN
+	grep -Fq 'PLAN: AUTO-example.test sub balancer ensured inboundIds=1,2' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must log intended AUTO-<domain> sub balancer ensure"
 }
 
 test_ensure_auto_sub_balancer_updates_existing_auto() {
@@ -1458,7 +1468,7 @@ test_ensure_auto_sub_balancer_updates_existing_auto() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
 	local updated_id update_args=()
-	export MODE=apply
+	export MODE=apply WEBDOMAIN=example.test
 	CHANGE_COUNT=0
 	record_change() {
 		return 0
@@ -1483,9 +1493,9 @@ test_ensure_auto_sub_balancer_updates_existing_auto() {
 	ensure_auto_sub_balancer 1 2 || fail "apply update must return success"
 	rm -f "${HTTP_BODY_FILE:-}"
 	unset -f record_change xui_list_sub_balancers http_success_json xui_add_sub_balancer xui_update_sub_balancer
-	unset MODE
+	unset MODE WEBDOMAIN
 	assert_eq 7 "$updated_id" "AUTO balancer id mismatch"
-	grep -Fq -- '--data-urlencode remark=AUTO' <<<"${update_args[*]}" || fail "update must include remark"
+	grep -Fq -- '--data-urlencode remark=AUTO-example.test' <<<"${update_args[*]}" || fail "update must rename remark to AUTO-<domain>"
 	grep -Fq -- '--data-urlencode strategy=leastPing' <<<"${update_args[*]}" || fail "update must include leastPing strategy"
 	grep -Fq -- '--data-urlencode inboundIds=1' <<<"${update_args[*]}" || fail "update must include inbound 1"
 	grep -Fq -- '--data-urlencode inboundIds=2' <<<"${update_args[*]}" || fail "update must include inbound 2"
@@ -1498,7 +1508,7 @@ test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
 	local logs=()
-	export MODE=apply
+	export MODE=apply WEBDOMAIN=example.test
 	# shellcheck disable=SC2034 # plan_or_apply mutates this runtime global when the API call reaches apply mode.
 	CHANGE_COUNT=0
 	log() {
@@ -1512,7 +1522,7 @@ test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success() {
 	}
 	ensure_auto_sub_balancer 1 || fail "API failure must not fail after-start flow"
 	unset -f log record_change xui_list_sub_balancers
-	unset MODE
+	unset MODE WEBDOMAIN
 	grep -Fq 'WARN:' <<<"$(printf '%s\n' "${logs[@]}")" ||
 		fail "API failure must log WARN"
 }
@@ -1711,12 +1721,18 @@ test_build_admin_sub_clash_rules_with_nodes_emits_auto() {
 	printf '%s\n' 'node-a' 'node-b' >"$nodes"
 	yaml=$(build_admin_sub_clash_rules "example.test" "198.51.100.10" "rules-proxy" "$nodes")
 	rm -f "$nodes"
-	grep -Fq 'name: AUTO' <<<"$yaml" || fail "missing AUTO group"
+	grep -Fq 'name: AUTO-example.test' <<<"$yaml" || fail "missing AUTO-<domain> group"
 	grep -Fq 'type: url-test' <<<"$yaml" || fail "AUTO must be url-test"
+	grep -Fq 'hidden: true' <<<"$yaml" || fail "AUTO must be hidden in mihomo UI"
 	grep -Fq 'https://www.gstatic.com/generate_204' <<<"$yaml" || fail "missing probe URL"
-	grep -Fq 'name: PROXY' <<<"$yaml" || fail "missing PROXY group"
-	grep -Fq 'AUTO' <<<"$yaml" || fail "PROXY must list AUTO"
+	grep -Fq 'name: PROXY-example.test' <<<"$yaml" || fail "missing PROXY-<domain> group"
+	grep -Fq 'AUTO-example.test' <<<"$yaml" || fail "PROXY must list AUTO-<domain>"
 	grep -Fq 'node-a' <<<"$yaml" || fail "PROXY must list discovered nodes"
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY-example.test' <<<"$yaml" ||
+		fail "with nodes admin rules must target PROXY-<domain>"
+	if grep -Eq 'DOMAIN,arcane\.example\.test,PROXY$' <<<"$yaml"; then
+		fail "with nodes must not target bare PROXY"
+	fi
 }
 
 test_build_admin_sub_clash_rules_without_nodes_omits_groups() {

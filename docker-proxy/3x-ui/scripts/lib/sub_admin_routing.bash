@@ -13,6 +13,20 @@ admin_sub_clash_default_mode() {
 	printf '%s\n' "rules-proxy"
 }
 
+# Clash url-test group / JSON Sub Balancer remark: AUTO-<webdomain>.
+admin_sub_auto_policy_name() {
+	local domain=${1:-${WEBDOMAIN:-}}
+	[[ -n "$domain" ]] || return 1
+	printf 'AUTO-%s' "$domain"
+}
+
+# Clash select group (+ rule target): PROXY-<webdomain> (multi-server safe).
+admin_sub_proxy_policy_name() {
+	local domain=${1:-${WEBDOMAIN:-}}
+	[[ -n "$domain" ]] || return 1
+	printf 'PROXY-%s' "$domain"
+}
+
 # Managed inbound remark slugs used to recognize subscription proxy nodes.
 _clash_managed_inbound_remark_slug_pattern() {
 	printf '%s' 'vless-tcp-reality|vless-xhttp|vless-grpc-tls|hysteria2|managed:'
@@ -160,6 +174,9 @@ discover_clash_proxy_node_names() {
 }
 
 # Xray-style JSON subscription rules: keep admin FQDNs on proxy, all residual traffic direct.
+# Port 9443→proxy mirrors server admin-traefik: browsers/SOCKS often dial PUBLIC_IPV4:9443
+# after DNS (system or client hosts), so domain rules alone miss and the residual DIRECT
+# black-holes loopback-only admin entrypoints.
 build_admin_sub_json_rules() {
 	local webdomain=$1
 	[[ -n "$webdomain" ]] || {
@@ -172,6 +189,12 @@ build_admin_sub_json_rules() {
 			{
 				type: "field",
 				domain: ($hosts | map("full:" + . + "." + $domain)),
+				outboundTag: "proxy"
+			},
+			{
+				type: "field",
+				port: "9443",
+				network: "tcp",
 				outboundTag: "proxy"
 			},
 			{
@@ -190,6 +213,9 @@ build_admin_sub_json_routing_rules() {
 }
 
 # Full client dns block for subJsonDns (overrides baked profile dns when set).
+# hosts→PUBLIC_IPV4 is required: admin labels are not always in public DNS (AdGuard/
+# Traefik only). Pair with port:9443→proxy in build_admin_sub_json_rules so IP dials
+# after this map still go through the tunnel (public :9443 is loopback-only).
 build_admin_sub_json_dns() {
 	local webdomain=$1 public_ipv4=${2:-}
 	[[ -n "$webdomain" && -n "$public_ipv4" ]] || {
@@ -218,7 +244,7 @@ build_admin_sub_json_dns() {
 
 build_admin_sub_clash_rules() {
 	local webdomain=$1 public_ipv4=${2:-} mode=${3:-$(admin_sub_clash_default_mode)} node_names_file=${4:-}
-	local host node
+	local host node auto_name proxy_name rule_proxy=PROXY
 	local -a nodes=()
 	local rules=$'rules:\n'
 
@@ -236,24 +262,33 @@ build_admin_sub_clash_rules() {
 	fi
 
 	if ((${#nodes[@]} > 0)); then
-		printf '%s\n' \
-			'proxy-groups:' \
-			'  - name: AUTO' \
-			'    type: url-test' \
-			'    url: https://www.gstatic.com/generate_204' \
-			'    interval: 300' \
-			'    proxies:'
-		for node in "${nodes[@]}"; do
-			printf '      - %s\n' "$node"
-		done
-		printf '%s\n' \
-			'  - name: PROXY' \
-			'    type: select' \
-			'    proxies:' \
-			'      - AUTO'
-		for node in "${nodes[@]}"; do
-			printf '      - %s\n' "$node"
-		done
+		auto_name=$(admin_sub_auto_policy_name "$webdomain") || auto_name=
+		proxy_name=$(admin_sub_proxy_policy_name "$webdomain") || proxy_name=
+		if [[ -z "$auto_name" || -z "$proxy_name" ]]; then
+			# Cannot name AUTO/PROXY without WEBDOMAIN; omit custom groups (still emit rules below).
+			:
+		else
+			rule_proxy=$proxy_name
+			printf '%s\n' \
+				'proxy-groups:' \
+				"  - name: ${auto_name}" \
+				'    type: url-test' \
+				'    hidden: true' \
+				'    url: https://www.gstatic.com/generate_204' \
+				'    interval: 300' \
+				'    proxies:'
+			for node in "${nodes[@]}"; do
+				printf '      - %s\n' "$node"
+			done
+			printf '%s\n' \
+				"  - name: ${proxy_name}" \
+				'    type: select' \
+				'    proxies:' \
+				"      - ${auto_name}"
+			for node in "${nodes[@]}"; do
+				printf '      - %s\n' "$node"
+			done
+		fi
 	fi
 
 	if [[ -n "$public_ipv4" ]]; then
@@ -267,7 +302,7 @@ build_admin_sub_clash_rules() {
 
 	printf '%s' "$rules"
 	while IFS= read -r host; do
-		printf '  - DOMAIN,%s.%s,PROXY\n' "$host" "$webdomain"
+		printf '  - DOMAIN,%s.%s,%s\n' "$host" "$webdomain" "$rule_proxy"
 	done < <(admin_sub_hostnames)
 	printf '  - MATCH,DIRECT\n'
 }

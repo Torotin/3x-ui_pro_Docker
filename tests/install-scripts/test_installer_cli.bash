@@ -1256,6 +1256,32 @@ test_wizard_offers_update_and_uses_same_dispatcher() {
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard env selection must use command dispatcher"
 }
 
+test_wizard_skips_self_update_check_when_git_missing() {
+	make_fixture
+	# Exercise the pre-apt skip path in isolation (full wizard needs many host tools).
+	bash -c '
+		set -Eeuo pipefail
+		SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/00_common.sh"
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/01_menu.sh"
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/09_finalize.sh"
+		INSTALL_MOCK=0
+		command() {
+			if [[ "${1:-}" == "-v" && "${2:-}" == "git" ]]; then
+				return 1
+			fi
+			builtin command "$@"
+		}
+		wizard_offer_self_update
+	' "$ROOT_DIR/script/install.sh" >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Update check: skipped (git not installed; run apt step first)" "$tmpdir/stdout" "wizard must skip update check before apt installs git"
+	assert_not_contains "Update check: installer is up to date" "$tmpdir/stdout" "missing git must not report a false up-to-date status"
+	assert_not_contains "version file not found" "$tmpdir/stderr" "missing git must not emit remote VERSION errors"
+}
+
 test_wizard_offers_update_only_when_newer_version_exists() {
 	make_fixture
 	export INSTALL_MOCK_REMOTE_VERSION=$INSTALLER_NEWER_VERSION
@@ -1838,6 +1864,7 @@ test_self_update_apply_tolerates_diff_changes
 test_self_update_equal_version_does_not_apply_without_force
 test_self_update_force_applies_equal_version
 test_wizard_offers_update_and_uses_same_dispatcher
+test_wizard_skips_self_update_check_when_git_missing
 test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_toggles_optional_feature_flags_and_renders_env

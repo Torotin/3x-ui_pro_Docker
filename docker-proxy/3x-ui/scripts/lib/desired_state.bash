@@ -381,10 +381,26 @@ vless_client_create_payload_json() {
     }'
 }
 
+# Header name Traefik must inject toward HTTP-based Xray backends (XHTTP/gRPC).
+# Xray trusts X-Forwarded-For only when at least one of these request headers is present.
+xray_trusted_xff_header() {
+	printf '%s' "${XRAY_TRUSTED_XFF_HEADER:-X-Xray-Trusted-Proxy}"
+}
+
+build_trusted_xff_headers_json() {
+	jq -nc --arg header "$(xray_trusted_xff_header)" '[$header]'
+}
+
 # Строит общие socket options для создаваемых Xray inbound.
+# Optional 4th arg: JSON array of trustedXForwardedFor header names (XHTTP/WS/HU/gRPC).
 build_sockopt_json() {
 	local accept_proxy=${1:-false} domain_strategy=${2:-AsIs} tproxy=${3:-off}
-	jq -nc --argjson acceptProxyProtocol "$accept_proxy" --arg domainStrategy "$domain_strategy" --arg tproxy "$tproxy" '{
+	local trusted_xff_json=${4:-'[]'}
+	jq -nc \
+		--argjson acceptProxyProtocol "$accept_proxy" \
+		--arg domainStrategy "$domain_strategy" \
+		--arg tproxy "$tproxy" \
+		--argjson trustedXForwardedFor "$trusted_xff_json" '{
       V6Only:false,
       acceptProxyProtocol:$acceptProxyProtocol,
       dialerProxy:"",
@@ -400,7 +416,7 @@ build_sockopt_json() {
       tcpWindowClamp:600,
       tcpcongestion:"bbr",
       tproxy:$tproxy
-    }'
+    } + (if ($trustedXForwardedFor | length) > 0 then {trustedXForwardedFor:$trustedXForwardedFor} else {} end)'
 }
 
 # Строит список внешнего proxy для маскирующего соединения, если задан домен.
@@ -479,29 +495,33 @@ sanitize_external_proxy_tls_json() {
 }
 
 sanitize_xhttp_stream_json() {
-	local stream=$1 path=$2 host=$3 sanitized
+	local stream=$1 path=$2 host=$3 sanitized trusted_xff
 	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2","http/1.1"]')
-	printf '%s' "$sanitized" | jq -c --arg path "$path" --arg host "$host" '
+	trusted_xff=$(build_trusted_xff_headers_json)
+	printf '%s' "$sanitized" | jq -c --arg path "$path" --arg host "$host" --argjson trustedXForwardedFor "$trusted_xff" '
       .network = "xhttp"
       | .security = "none"
       | .xhttpSettings.path = $path
       | .xhttpSettings.host = $host
+      | .sockopt = ((.sockopt // {}) + {trustedXForwardedFor:$trustedXForwardedFor})
     '
 }
 
 sanitize_grpc_stream_json() {
-	local stream=$1 path=$2 host=$3 cert_file=$4 key_file=$5 service_name fingerprint sanitized
+	local stream=$1 path=$2 host=$3 cert_file=$4 key_file=$5 service_name fingerprint sanitized trusted_xff
 	service_name=${path#/}
 	service_name=${service_name%/}
 	fingerprint=$(jq -r '.tlsSettings.settings.fingerprint // .externalProxy[0].fingerprint // empty' <<<"$stream")
 	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
 	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2"]')
+	trusted_xff=$(build_trusted_xff_headers_json)
 	printf '%s' "$sanitized" | jq -c \
 		--arg serviceName "$service_name" \
 		--arg host "$host" \
 		--arg certFile "$cert_file" \
 		--arg keyFile "$key_file" \
-		--arg fingerprint "$fingerprint" '
+		--arg fingerprint "$fingerprint" \
+		--argjson trustedXForwardedFor "$trusted_xff" '
       .network = "grpc"
       | .security = "tls"
       | .tlsSettings.serverName = $host
@@ -519,6 +539,7 @@ sanitize_grpc_stream_json() {
       | .grpcSettings.serviceName = $serviceName
       | .grpcSettings.authority = (.grpcSettings.authority // "")
       | .grpcSettings.multiMode = (.grpcSettings.multiMode // false)
+      | .sockopt = ((.sockopt // {}) + {trustedXForwardedFor:$trustedXForwardedFor})
     '
 }
 
@@ -601,20 +622,23 @@ build_vision_stream_json() {
 
 # Строит streamSettings для VLESS gRPC backend с TLS между Traefik и Xray.
 build_grpc_stream_json() {
-	local path=$1 host=$2 cert_file=$3 key_file=$4 service_name external_proxy tls_settings fingerprint
+	local path=$1 host=$2 cert_file=$3 key_file=$4 service_name external_proxy tls_settings fingerprint sockopt
 	service_name=${path#/}
 	service_name=${service_name%/}
 	fingerprint=$(select_tls_fingerprint)
 	external_proxy=$(build_external_proxy_json "$host" tls '["h2"]' "$fingerprint")
 	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h2"]' "$fingerprint")
+	sockopt=$(build_sockopt_json false AsIs off "$(build_trusted_xff_headers_json)")
 	jq -nc \
 		--arg serviceName "$service_name" \
 		--argjson externalProxy "$external_proxy" \
-		--argjson tlsSettings "$tls_settings" '{
+		--argjson tlsSettings "$tls_settings" \
+		--argjson sockopt "$sockopt" '{
           network:"grpc",
           security:"tls",
           externalProxy:$externalProxy,
           tlsSettings:$tlsSettings,
+          sockopt:$sockopt,
           grpcSettings:{
             serviceName:$serviceName,
             authority:"",
@@ -626,7 +650,7 @@ build_grpc_stream_json() {
 # Строит streamSettings для XHTTP backend, TLS которого завершается в Traefik.
 build_xhttp_stream_json() {
 	local path=$1 host=$2 sockopt external_proxy
-	sockopt=$(build_sockopt_json false UseIP tproxy)
+	sockopt=$(build_sockopt_json false UseIP tproxy "$(build_trusted_xff_headers_json)")
 	external_proxy=$(build_external_proxy_json "$host" tls '["h2","http/1.1"]')
 	jq -nc --arg path "$path" --arg host "$host" --argjson sockopt "$sockopt" --argjson externalProxy "$external_proxy" '{
       network:"xhttp",
@@ -656,9 +680,18 @@ build_hysteria2_stream_json() {
 	local host=$1 cert_file=$2 key_file=$3 auth=${4:-} tls_settings masq_url
 	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h3"]' "")
 	masq_url=${HYSTERIA2_MASQ_URL:-}
-	# Prefer Traefik websecure inside docker-net. Do not use https://${host}/ —
-	# with hostname=${WEBDOMAIN} that resolves to this container and :443 is closed.
-	[[ -n "$masq_url" ]] || masq_url="https://traefik:4443/"
+	# Traefik websecure listens on :4443 in docker-net (not public :443 — that is Vision).
+	# Prefer https://${WEBDOMAIN}:4443/ so JSON subscriptions do not leak the internal
+	# hostname "traefik" (3x-ui copies masquerade into client outbounds). Compose must
+	# map WEBDOMAIN → Traefik (172.18.0.6) via extra_hosts; do not use https://${host}/
+	# on :443 (closed / wrong service inside this container).
+	if [[ -z "$masq_url" ]]; then
+		if [[ -n "${WEBDOMAIN:-}" ]]; then
+			masq_url="https://${WEBDOMAIN}:4443/"
+		else
+			masq_url="https://172.18.0.6:4443/"
+		fi
+	fi
 	jq -nc \
 		--arg masqUrl "$masq_url" \
 		--arg auth "$auth" \

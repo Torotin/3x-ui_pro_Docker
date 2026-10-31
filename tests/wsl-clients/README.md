@@ -47,9 +47,9 @@ bash tests/wsl-clients/smoke_xray_sub.sh
 ### `smoke_mihomo_sub.sh`
 
 1. Fetch Clash YAML
-2. `name: AUTO`, `type: url-test`
+2. `name: AUTO-<WEBDOMAIN>` (`hidden: true`) + `name: PROXY-<WEBDOMAIN>` listing AUTO
 3. `MATCH,DIRECT` present; no residual `MATCH,PROXY`
-4. `DOMAIN,arcane.$WEBDOMAIN,PROXY`
+4. `DOMAIN,arcane.$WEBDOMAIN,PROXY-<WEBDOMAIN>`
 5. Optional: `mihomo -t -f …`
 6. Optional: short mixed-port run + curl via PROXY to `https://arcane.$WEBDOMAIN:9443/` expecting `401`
 
