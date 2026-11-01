@@ -36,6 +36,10 @@ This skill owns the **full public route index** for the stack. Per-service path 
 - `docker-proxy/compose.d/run-compose.sh maintenance [report|prune]`
 - `docker-proxy/compose.d/run-compose.sh down [ARGS...]`
 
+## Admin plane (private)
+
+Listed admin panels are **not** on public `websecure`. They use Traefik entrypoint `admin` (`PORT_LOCAL_ADMIN=9443`) with Hostnames `arcane|homepage|adguard|3x-ui|traefik|lampac-admin.${WEBDOMAIN}`, self-signed TLS, Basic Auth, AdGuard rewrites → `172.18.0.6`, and Xray outbound `admin-traefik`. See `docs/superpowers/specs/2026-10-25-xray-admin-access-design.md`. Isolation tests: `bash tests/xray-admin/run.sh`.
+
 ## Live Stack Contract
 
 Public HTTPS Host is `${WEBDOMAIN}` on entrypoint `websecure` unless noted. Derive exact `URI_*` values from compose `.env` / live labels; do not invent paths. Entrypoints live: `web` (`:80`) and `websecure` (`:4443` inside Traefik). No live L4 TCP/UDP entrypoints.

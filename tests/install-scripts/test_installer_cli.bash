@@ -1256,6 +1256,32 @@ test_wizard_offers_update_and_uses_same_dispatcher() {
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard env selection must use command dispatcher"
 }
 
+test_wizard_skips_self_update_check_when_git_missing() {
+	make_fixture
+	# Exercise the pre-apt skip path in isolation (full wizard needs many host tools).
+	bash -c '
+		set -Eeuo pipefail
+		SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/00_common.sh"
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/01_menu.sh"
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/09_finalize.sh"
+		INSTALL_MOCK=0
+		command() {
+			if [[ "${1:-}" == "-v" && "${2:-}" == "git" ]]; then
+				return 1
+			fi
+			builtin command "$@"
+		}
+		wizard_offer_self_update
+	' "$ROOT_DIR/script/install.sh" >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Update check: skipped (git not installed; run apt step first)" "$tmpdir/stdout" "wizard must skip update check before apt installs git"
+	assert_not_contains "Update check: installer is up to date" "$tmpdir/stdout" "missing git must not report a false up-to-date status"
+	assert_not_contains "version file not found" "$tmpdir/stderr" "missing git must not emit remote VERSION errors"
+}
+
 test_wizard_offers_update_only_when_newer_version_exists() {
 	make_fixture
 	export INSTALL_MOCK_REMOTE_VERSION=$INSTALLER_NEWER_VERSION
@@ -1681,13 +1707,22 @@ test_final_summary_prints_details() {
 	assert_contains "INSTALLATION SUMMARY" "$tmpdir/stdout" "final step must print summary"
 	assert_contains "Domain           : example.test" "$tmpdir/stdout" "final summary must include domain"
 	assert_contains "Target           : deployer@198.51.100.10:22022" "$tmpdir/stdout" "final summary must include SSH target"
-	assert_contains "Homepage         : https://example.test/" "$tmpdir/stdout" "final summary must include service URLs"
-	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include Mihomo UI URL"
+	assert_contains "Homepage         : https://homepage.example.test:9443/" "$tmpdir/stdout" "final summary must include admin Homepage URL"
+	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include public Mihomo UI URL"
 	assert_contains "Mihomo secret    :" "$tmpdir/stdout" "final summary must print Mihomo controller secret for copy-paste"
-	assert_contains "Traefik Dashboard: https://example.test/" "$tmpdir/stdout" "final summary must include dashboard URL"
+	assert_contains "Traefik Dashboard: https://traefik.example.test:9443/dashboard/#/" "$tmpdir/stdout" "final summary must include admin Traefik dashboard URL"
+	assert_contains "Subscriptions:" "$tmpdir/stdout" "final summary must include subscription URLs section"
+	assert_contains "Clash/Mihomo     : https://example.test/" "$tmpdir/stdout" "final summary must include Clash/Mihomo subscription URL"
+	assert_contains "Xray JSON        : https://example.test/" "$tmpdir/stdout" "final summary must include Xray JSON subscription URL"
+	assert_contains "Standard/base64  : https://example.test/" "$tmpdir/stdout" "final summary must include standard/base64 subscription URL"
+	assert_contains "Note             : Admin panels require Clash or JSON" "$tmpdir/stdout" "final summary must explain admin-compatible subscription formats"
+	assert_contains "Admin plane (personal Xray" "$tmpdir/stdout" "final summary must describe Xray admin plane"
 	assert_contains "Compose validate : $INSTALL_ROOT/compose.d/run-compose.sh validate" "$tmpdir/stdout" "final summary must include operational commands"
 	assert_contains "Summary saved: $INSTALL_STATE_DIR/install.summary" "$tmpdir/stdout" "final summary must print saved summary path"
 	assert_contains "INSTALLATION SUMMARY" "$INSTALL_STATE_DIR/install.summary" "final step must persist summary file"
+	assert_contains "Clash/Mihomo     : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Clash/Mihomo subscription URL"
+	assert_contains "Xray JSON        : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Xray JSON subscription URL"
+	assert_contains "Standard/base64  : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include standard/base64 subscription URL"
 	assert_contains "Mihomo secret    :" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Mihomo controller secret for copy-paste"
 	assert_contains "Password         : configured, not printed" "$INSTALL_STATE_DIR/install.summary" "final summary must not print web password"
 	assert_not_contains "Password         : $PASS_WEB" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak web password"
@@ -1699,15 +1734,24 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 	# shellcheck source=script/modules/09_finalize.sh
 	. "$ROOT_DIR/script/modules/09_finalize.sh"
 	SUMMARY_DOMAIN=example.test
-	local panel doh traefik mihomo
-	panel=$(install_summary_url "nC4sRgYpwUgiad")
+	SUMMARY_PORT_LOCAL_ADMIN=9443
+	local panel doh traefik mihomo homepage clash json standard
+	panel=$(install_summary_admin_url 3x-ui "nC4sRgYpwUgiad")
+	homepage=$(install_summary_admin_url homepage)
 	doh=$(install_summary_url "3pDA9wdT58rg0aMC" "" noslash)
-	traefik=$(install_summary_url "UoAJFIMva4GETi" "dashboard/#/")
+	traefik=$(install_summary_admin_url traefik "dashboard/#/")
 	mihomo=$(install_summary_url "mihomoPath" "ui/")
-	[[ "$panel" == "https://example.test/nC4sRgYpwUgiad/" ]] || fail "panel summary URL must end with trailing slash; got: $panel"
+	clash=$(install_summary_url "clashPath" "" noslash)
+	json=$(install_summary_url "/jsonPath/" "" noslash)
+	standard=$(install_summary_url "/subPath/" "" noslash)
+	[[ "$panel" == "https://3x-ui.example.test:9443/nC4sRgYpwUgiad/" ]] || fail "admin panel summary URL must end with trailing slash; got: $panel"
+	[[ "$homepage" == "https://homepage.example.test:9443/" ]] || fail "admin homepage URL must end with trailing slash; got: $homepage"
 	[[ "$doh" == "https://example.test/3pDA9wdT58rg0aMC" ]] || fail "DoH summary URL must stay exact Path without slash; got: $doh"
-	[[ "$traefik" == "https://example.test/UoAJFIMva4GETi/dashboard/#/" ]] || fail "Traefik summary URL must keep dashboard fragment; got: $traefik"
+	[[ "$traefik" == "https://traefik.example.test:9443/dashboard/#/" ]] || fail "Traefik admin summary URL must keep dashboard fragment; got: $traefik"
 	[[ "$mihomo" == "https://example.test/mihomoPath/ui/" ]] || fail "Mihomo UI summary URL must keep ui/ suffix; got: $mihomo"
+	[[ "$clash" == "https://example.test/clashPath" ]] || fail "Clash subscription summary URL must stay exact Path without slash; got: $clash"
+	[[ "$json" == "https://example.test/jsonPath" ]] || fail "JSON subscription summary URL must stay exact Path without slash; got: $json"
+	[[ "$standard" == "https://example.test/subPath" ]] || fail "standard subscription summary URL must stay exact Path without slash; got: $standard"
 
 	export ENABLE_MIHOMO=true
 	run_installer run env final
@@ -1715,15 +1759,23 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 		local key=$1
 		grep -E "^${key}=" "$INSTALL_STATE_DIR/install.env" | head -n1 | cut -d= -f2- | tr -d '"'
 	}
-	local panel_path dozzle_path doh_path
+	local panel_path doh_path clash_path json_path sub_path
 	panel_path=$(uri_from_env URI_PANEL_PATH)
-	dozzle_path=$(uri_from_env URI_DOZZLE)
 	doh_path=$(uri_from_env URI_ADGUARD_DOH)
-	[[ -n "$panel_path" && -n "$dozzle_path" && -n "$doh_path" ]] || fail "install.env must define panel/dozzle/doh URI paths"
-	assert_contains "3X-UI Panel      : https://example.test/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted panel URL must include trailing slash"
-	assert_contains "Dozzle Logs      : https://example.test/${dozzle_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted Dozzle URL must include trailing slash"
+	clash_path=$(uri_from_env URI_CLASH_PATH)
+	json_path=$(uri_from_env URI_JSON_PATH)
+	sub_path=$(uri_from_env URI_SUB_PATH)
+	[[ -n "$panel_path" && -n "$doh_path" && -n "$clash_path" && -n "$json_path" && -n "$sub_path" ]] || fail "install.env must define panel/doh/subscription URI paths"
+	assert_contains "3X-UI Panel      : https://3x-ui.example.test:9443/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted admin panel URL must include trailing slash"
+	assert_contains "Arcane           : https://arcane.example.test:9443/" "$INSTALL_STATE_DIR/install.summary" "persisted Arcane admin URL must include trailing slash"
 	assert_contains "AdGuard DoH      : https://example.test/${doh_path}" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must omit trailing slash"
 	assert_not_contains "AdGuard DoH      : https://example.test/${doh_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must not gain a trailing slash"
+	assert_contains "Clash/Mihomo     : https://example.test/${clash_path}" "$INSTALL_STATE_DIR/install.summary" "persisted Clash subscription URL must omit trailing slash"
+	assert_contains "Xray JSON        : https://example.test/${json_path}" "$INSTALL_STATE_DIR/install.summary" "persisted JSON subscription URL must omit trailing slash"
+	assert_contains "Standard/base64  : https://example.test/${sub_path}" "$INSTALL_STATE_DIR/install.summary" "persisted standard subscription URL must omit trailing slash"
+	assert_not_contains "Clash/Mihomo     : https://example.test/${clash_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted Clash subscription URL must not gain a trailing slash"
+	assert_not_contains "Xray JSON        : https://example.test/${json_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted JSON subscription URL must not gain a trailing slash"
+	assert_not_contains "Standard/base64  : https://example.test/${sub_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted standard subscription URL must not gain a trailing slash"
 }
 
 test_doctor_rejects_unsupported_os() {
@@ -1812,6 +1864,7 @@ test_self_update_apply_tolerates_diff_changes
 test_self_update_equal_version_does_not_apply_without_force
 test_self_update_force_applies_equal_version
 test_wizard_offers_update_and_uses_same_dispatcher
+test_wizard_skips_self_update_check_when_git_missing
 test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_toggles_optional_feature_flags_and_renders_env

@@ -65,6 +65,16 @@ entryPoints:
         - "fd00:dead:beef:12::/64"
         - "fd00:dead:beef:13::/64"
 
+  admin:
+    address: ":9443"
+    http:
+      tls: {}
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 0s
+
 # -------------------
 # Провайдеры (оптимизированные)
 # -------------------

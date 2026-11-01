@@ -11,8 +11,7 @@ background:
   brightness: 50
   opacity: 50
 cardBlur: xs
-# /favicon.ico 404s under path hosting; Homepage ships /homepage.ico.
-favicon: https://{{HOMEPAGE_VAR_WEBDOMAIN}}/homepage.ico
+favicon: https://homepage.{{HOMEPAGE_VAR_WEBDOMAIN}}/homepage.ico
 theme: dark
 color: slate
 headerStyle: boxed
@@ -28,7 +27,7 @@ groupsInitiallyCollapsed: false
 useEqualHeights: false
 showStats: false
 statusStyle: "dot"
-base: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_HOMEPAGE}}"
+base: "https://homepage.{{HOMEPAGE_VAR_WEBDOMAIN}}"
 language: en
 linksInNewTab: true
 target: _blank

@@ -21,11 +21,21 @@ panel_settings_json() {
           )
         ' <<<"$merged")
 	done < <(desired_panel_keys)
-	merged=$(jq -c 'if ((.smtpPort|tostring|tonumber?) // 0) < 1 then .smtpPort = 587 else . end' <<<"$merged")
+	# 3x-ui 3.7+ rejects smtpPort/ldapPort < 1 (zod min). Keep schema-valid placeholders when unused.
+	merged=$(jq -c '
+		if ((.smtpPort|tostring|tonumber?) // 0) < 1 then .smtpPort = 587 else . end
+		| if ((.ldapPort|tostring|tonumber?) // 0) < 1 then .ldapPort = 389 else . end
+	' <<<"$merged")
 	if [[ -z "${panelOutbound:-}" ]]; then
-		merged=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$merged")
+		# Prefer direct: RU/local subscription hosts are reachable without WARP,
+		# while panelOutbound=usque breaks outbound-sub refresh to those peers.
+		merged=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "direct" else . end' <<<"$merged")
 	fi
 	printf '%s' "$merged"
+}
+
+clear_sub_json_routing_rules_requested() {
+	[[ "${CLEAR_SUB_JSON_ROUTING_RULES:-false}" == "true" ]]
 }
 
 # Строит сравнимый JSON желаемых настроек панели из окружения и текущего состояния.
@@ -40,8 +50,15 @@ panel_desired_json() {
 		fi
 		desired=$(jq -c --arg key "$var" --arg value "$value" '.[$key] = $value' <<<"$desired")
 	done < <(desired_panel_keys)
+	# Keep desired comparable to normalized AllSetting (env may still carry ldapPort=0 placeholders).
+	desired=$(jq -c '
+		if ((.ldapPort|tostring|tonumber?) // 0) < 1 then .ldapPort = "389" else . end
+	' <<<"$desired")
 	if [[ -z "${panelOutbound:-}" ]]; then
-		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "usque" else . end' <<<"$desired")
+		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "direct" else . end' <<<"$desired")
+	fi
+	if clear_sub_json_routing_rules_requested; then
+		desired=$(jq -c '.subJsonRoutingRules = ""' <<<"$desired")
 	fi
 	printf '%s' "$desired"
 }
@@ -69,6 +86,9 @@ ensure_panel_settings() {
 		return 0
 	fi
 	body=$(panel_settings_json "$current")
+	if clear_sub_json_routing_rules_requested; then
+		body=$(jq -c '.subJsonRoutingRules = ""' <<<"$body")
+	fi
 
 	if plan_or_apply "panel settings updated"; then
 		xui_update_panel_settings "$body" || die "Failed to update panel settings."

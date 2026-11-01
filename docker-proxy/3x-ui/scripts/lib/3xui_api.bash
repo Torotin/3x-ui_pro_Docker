@@ -355,6 +355,23 @@ xui_list_inbounds() {
 	xui_api_get '/panel/api/inbounds/list'
 }
 
+# Возвращает список JSON Sub Balancers панели.
+xui_list_sub_balancers() {
+	xui_api_get '/panel/api/sub-balancers'
+}
+
+# Создает JSON Sub Balancer через form-urlencoded контракт панели.
+xui_add_sub_balancer() {
+	xui_api_post '/panel/api/sub-balancers' "$@"
+}
+
+# Обновляет JSON Sub Balancer полным form-urlencoded payload.
+xui_update_sub_balancer() {
+	local id=$1
+	shift
+	xui_api_post "/panel/api/sub-balancers/$id" "$@"
+}
+
 # Получает один inbound по его идентификатору.
 xui_get_inbound() {
 	local id=$1

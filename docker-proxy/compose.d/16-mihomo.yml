@@ -1,10 +1,26 @@
 services:
   mihomo:
     container_name: mihomo
-    image: metacubex/mihomo:latest
+    # Custom Prizrak-Core image (AutoDockerBuilder / Docker Hub): baked binary + in-container updater.
+    image: ${MIHOMO_IMAGE:-torotin/prizrak-core:latest}
     restart: unless-stopped
+    init: true
+    environment:
+      TZ: ${TZ:-UTC}
+      PRIZRAK_REPO: ${PRIZRAK_REPO:-legiz-ru/Prizrak-Core}
+      PRIZRAK_CORE_VARIANT: ${PRIZRAK_CORE_VARIANT:-v3}
+      PRIZRAK_UPDATE_INTERVAL: ${PRIZRAK_UPDATE_INTERVAL:-1h}
+      PRIZRAK_CONTROLLER_URL: ${PRIZRAK_CONTROLLER_URL:-http://127.0.0.1:9090}
+      PRIZRAK_SECRET: ${MIHOMO_SECRET:-}
     volumes:
+      # Bind mount hides geo baked under /root/.config/mihomo; missing geo is seeded on start.
       - ../mihomo:/root/.config/mihomo
+    healthcheck:
+      test: ["CMD", "/opt/prizrak/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - traefik-proxy
     security_opt:

@@ -46,6 +46,7 @@ install_prepare_summary_env() {
 		SUMMARY_SSH_AUTH="public key"
 	fi
 	SUMMARY_PORT_LOCAL_TRAEFIK=${PORT_LOCAL_TRAEFIK:-4443}
+	SUMMARY_PORT_LOCAL_ADMIN=${PORT_LOCAL_ADMIN:-9443}
 	SUMMARY_PORT_LOCAL_VLESS_PANEL=${PORT_LOCAL_VLESS_PANEL:-unspecified}
 	SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE=${PORT_LOCAL_VLESS_SUBSCRIBE:-unspecified}
 	SUMMARY_PORT_LOCAL_XHTTP=${PORT_LOCAL_XHTTP:-unspecified}
@@ -63,18 +64,22 @@ install_prepare_summary_env() {
 	SUMMARY_PORT_LOCAL_DOZZLE=${PORT_LOCAL_DOZZLE:-unspecified}
 	SUMMARY_PORT_LOCAL_CADDYWEB=${PORT_LOCAL_CADDYWEB:-unspecified}
 	SUMMARY_PORT_LOCAL_CROWDSEC_API=${PORT_LOCAL_CROWDSEC_API:-unspecified}
-	# UI PathPrefix services need a trailing slash so browsers land on the app
-	# without a 301 (BasicAuth often drops across that redirect).
-	# AdGuard DoH is an exact Path() endpoint — no trailing slash.
-	SUMMARY_URL_HOMEPAGE=$(install_summary_url "${URI_HOMEPAGE:-}")
-	SUMMARY_URL_3X_UI=$(install_summary_url "${URI_PANEL_PATH:-}")
-	SUMMARY_URL_ADGUARD=$(install_summary_url "${URI_ADGUARD_PANEL:-}")
-	SUMMARY_URL_ADGUARD_DOH=$(install_summary_url "${URI_ADGUARD_DOH:-}" "" noslash)
-	SUMMARY_URL_ARCANE=$(install_summary_url "${URI_ARCANE:-${URI_DOZZLE:-}}")
+	# Admin Hosts on Traefik entrypoint `admin` (self-signed). Reachable only via
+	# personal Xray → admin-traefik outbound — not on public websecure paths.
+	SUMMARY_URL_HOMEPAGE=$(install_summary_admin_url homepage)
+	SUMMARY_URL_3X_UI=$(install_summary_admin_url 3x-ui "${URI_PANEL_PATH:-}")
+	SUMMARY_URL_ADGUARD=$(install_summary_admin_url adguard)
+	SUMMARY_URL_ARCANE=$(install_summary_admin_url arcane)
 	SUMMARY_URL_DOZZLE=$SUMMARY_URL_ARCANE
-	SUMMARY_URL_TRAEFIK=$(install_summary_url "${URI_TRAEFIK_DASHBOARD:-}" "dashboard/#/")
+	SUMMARY_URL_TRAEFIK=$(install_summary_admin_url traefik "dashboard/#/")
+	SUMMARY_URL_LAMPAC_ADMIN=$(install_summary_admin_url lampac-admin)
+	# Still public on WEBDOMAIN (not admin plane).
+	SUMMARY_URL_ADGUARD_DOH=$(install_summary_url "${URI_ADGUARD_DOH:-}" "" noslash)
 	SUMMARY_URL_TELEMT_PANEL=$(install_summary_url "${URI_TELEMT_PANEL:-}")
 	SUMMARY_URL_MIHOMO_UI=$(install_summary_url "${URI_MIHOMO:-}" "ui/")
+	SUMMARY_URL_SUB_CLASH=$(install_summary_url "${URI_CLASH_PATH:-}" "" noslash)
+	SUMMARY_URL_SUB_JSON=$(install_summary_url "${URI_JSON_PATH:-}" "" noslash)
+	SUMMARY_URL_SUB_STD=$(install_summary_url "${URI_SUB_PATH:-}" "" noslash)
 	SUMMARY_MIHOMO_SECRET=${MIHOMO_SECRET:-not generated; run env first}
 	if ! install_telemt_enabled; then
 		SUMMARY_URL_TELEMT_PANEL=disabled
@@ -83,19 +88,24 @@ install_prepare_summary_env() {
 		SUMMARY_URL_MIHOMO_UI=disabled
 		SUMMARY_MIHOMO_SECRET=disabled
 	fi
+	if ! install_lampac_enabled; then
+		SUMMARY_URL_LAMPAC_ADMIN=disabled
+	fi
 	export SUMMARY_GENERATED_AT SUMMARY_DOMAIN SUMMARY_HOST_IP_MODE SUMMARY_PUBLIC_IPV4 SUMMARY_PUBLIC_IPV6
 	export SUMMARY_USER_SSH SUMMARY_USER_WEB SUMMARY_PORT_REMOTE_SSH SUMMARY_SSH_TARGET SUMMARY_SSH_EXTRA SUMMARY_SSH_AUTH
 	export SUMMARY_HOST_DNS
 	export SUMMARY_COMPOSE_DIR SUMMARY_COMPOSE_ENV SUMMARY_UPDATE_BRANCH
-	export SUMMARY_PORT_LOCAL_TRAEFIK SUMMARY_PORT_LOCAL_VLESS_PANEL SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE
+	export SUMMARY_PORT_LOCAL_TRAEFIK SUMMARY_PORT_LOCAL_ADMIN SUMMARY_PORT_LOCAL_VLESS_PANEL SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE
 	export SUMMARY_PORT_LOCAL_XHTTP SUMMARY_PORT_LOCAL_VISION SUMMARY_PORT_LOCAL_GRPC SUMMARY_PORT_LOCAL_HYSTERIA SUMMARY_PORT_LOCAL_TELEMT_PROXY
 	export SUMMARY_PORT_LOCAL_TELEMT_API SUMMARY_PORT_LOCAL_TELEMT_PANEL SUMMARY_PORT_LOCAL_DOZZLE SUMMARY_PORT_LOCAL_CADDYWEB
 	export SUMMARY_PORT_LOCAL_CROWDSEC_API
 	export SUMMARY_URL_HOMEPAGE SUMMARY_URL_3X_UI SUMMARY_URL_ADGUARD SUMMARY_URL_ADGUARD_DOH
-	export SUMMARY_URL_ARCANE SUMMARY_URL_DOZZLE SUMMARY_URL_TRAEFIK SUMMARY_URL_TELEMT_PANEL SUMMARY_URL_MIHOMO_UI
+	export SUMMARY_URL_ARCANE SUMMARY_URL_DOZZLE SUMMARY_URL_TRAEFIK SUMMARY_URL_LAMPAC_ADMIN SUMMARY_URL_TELEMT_PANEL SUMMARY_URL_MIHOMO_UI
+	export SUMMARY_URL_SUB_CLASH SUMMARY_URL_SUB_JSON SUMMARY_URL_SUB_STD
 	export SUMMARY_MIHOMO_SECRET
 }
 
+# Public WEBDOMAIN PathPrefix / Path URLs (DoH, Telemt, Mihomo, …).
 install_summary_url() {
 	local path=${1:-} suffix=${2:-} mode=${3:-}
 	local url
@@ -111,7 +121,34 @@ install_summary_url() {
 	else
 		url=$(printf 'https://%s' "${SUMMARY_DOMAIN:-example.invalid}")
 	fi
-	# Default: ensure a trailing slash before any #fragment so copy-paste opens the UI.
+	install_summary_ensure_slash "$url" "$mode"
+}
+
+# Private admin plane: https://<svc>.${WEBDOMAIN}:${PORT_LOCAL_ADMIN}/…
+install_summary_admin_url() {
+	local host=${1:-} path=${2:-} mode=${3:-}
+	local port=${SUMMARY_PORT_LOCAL_ADMIN:-9443}
+	local url
+	host=${host%.}
+	path=${path#/}
+	# Keep trailing slash when a #fragment is present (e.g. dashboard/#/).
+	if [[ "$path" != *#* ]]; then
+		path=${path%/}
+	fi
+	if [[ -z "$host" ]]; then
+		die "install_summary_admin_url: host is required"
+	fi
+	if [[ -n "$path" ]]; then
+		url=$(printf 'https://%s.%s:%s/%s' "$host" "${SUMMARY_DOMAIN:-example.invalid}" "$port" "$path")
+	else
+		url=$(printf 'https://%s.%s:%s' "$host" "${SUMMARY_DOMAIN:-example.invalid}" "$port")
+	fi
+	install_summary_ensure_slash "$url" "$mode"
+}
+
+install_summary_ensure_slash() {
+	local url=$1 mode=${2:-}
+	# Default: trailing slash before any #fragment so copy-paste opens the UI.
 	# Pass mode=noslash for exact-path machine endpoints (e.g. AdGuard DoH).
 	if [[ "$mode" != "noslash" ]]; then
 		if [[ "$url" == *#* ]]; then
@@ -183,7 +220,15 @@ install_self_update_fetch_tree() {
 		fi
 		return 0
 	fi
-	run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp"
+	if ! command -v git >/dev/null 2>&1; then
+		log ERROR "git is required for self-update (install via apt step first)"
+		return 1
+	fi
+	run_cmd self-update.fetch git clone --depth 1 --branch "$branch" "$INSTALL_REPO_URL" "$tmp" || return 1
+	[[ -f "$tmp/script/VERSION" ]] || {
+		log ERROR "version file not found after clone: $tmp/script/VERSION"
+		return 1
+	}
 }
 
 install_print_changelog_range() {
@@ -212,10 +257,22 @@ install_print_changelog_range() {
 install_self_update_prepare() {
 	local branch=$1 result_file=$2 tmp local_version remote_version compare
 	tmp=$(mktemp -d)
-	install_self_update_fetch_tree "$branch" "$tmp"
-	local_version=$(install_read_version_file "$(install_version_file)")
-	remote_version=$(install_read_version_file "$tmp/script/VERSION")
-	compare=$(install_compare_semver "$remote_version" "$local_version")
+	if ! install_self_update_fetch_tree "$branch" "$tmp"; then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if ! local_version=$(install_read_version_file "$(install_version_file)"); then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if ! remote_version=$(install_read_version_file "$tmp/script/VERSION"); then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if ! compare=$(install_compare_semver "$remote_version" "$local_version"); then
+		rm -rf "$tmp"
+		return 1
+	fi
 	{
 		printf 'tmp=%s\n' "$tmp"
 		printf 'local_version=%s\n' "$local_version"

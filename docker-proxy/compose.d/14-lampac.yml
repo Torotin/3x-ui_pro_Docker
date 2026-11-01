@@ -148,20 +148,18 @@ services:
       - traefik.http.routers.lampac-cub-plugins.priority=35
       - traefik.http.middlewares.lampac-cub-js.headers.customResponseHeaders.Content-Type=text/javascript
 
-      # Admin paths: BasicAuth + CrowdSec
-      - traefik.http.routers.lampac-sensitive.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog|database-editor)`)
-      - traefik.http.routers.lampac-sensitive.entrypoints=websecure
+      # Admin paths on private admin Host (no CrowdSec bouncer)
+      - traefik.http.routers.lampac-sensitive.rule=Host(`lampac-admin.${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog|database-editor)`)
+      - traefik.http.routers.lampac-sensitive.entrypoints=admin
       - traefik.http.routers.lampac-sensitive.tls=true
-      - traefik.http.routers.lampac-sensitive.tls.certresolver=le
       - traefik.http.routers.lampac-sensitive.service=lampac
       - traefik.http.routers.lampac-sensitive.middlewares=lampac-admin-chain
       - traefik.http.routers.lampac-sensitive.priority=90
 
       # Auth pages bypass BasicAuth (higher priority than sensitive)
-      - traefik.http.routers.lampac-auth-pages.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(adminpanel|weblog)/auth$$`)
-      - traefik.http.routers.lampac-auth-pages.entrypoints=websecure
+      - traefik.http.routers.lampac-auth-pages.rule=Host(`lampac-admin.${WEBDOMAIN}`) && PathRegexp(`^/(adminpanel|weblog)/auth$$`)
+      - traefik.http.routers.lampac-auth-pages.entrypoints=admin
       - traefik.http.routers.lampac-auth-pages.tls=true
-      - traefik.http.routers.lampac-auth-pages.tls.certresolver=le
       - traefik.http.routers.lampac-auth-pages.service=lampac
       - traefik.http.routers.lampac-auth-pages.middlewares=lampac-headers
       - traefik.http.routers.lampac-auth-pages.priority=95
@@ -190,4 +188,4 @@ services:
       - traefik.http.middlewares.lampac-admin-rate.ratelimit.average=50
       - traefik.http.middlewares.lampac-admin-rate.ratelimit.burst=100
       - traefik.http.middlewares.lampac-admin-noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow
-      - traefik.http.middlewares.lampac-admin-chain.chain.middlewares=bouncer@file,lampac-admin-auth,lampac-admin-rate,lampac-admin-noindex,lampac-headers
+      - traefik.http.middlewares.lampac-admin-chain.chain.middlewares=lampac-admin-auth,lampac-admin-rate,lampac-admin-noindex,lampac-headers

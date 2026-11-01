@@ -411,9 +411,12 @@ build_inbound_components_json() {
 		HYSTERIA2_STREAM_AUTH=
 	fi
 	if [[ "$kind" == "hysteria2" ]]; then
-		sniffing=$(jq -nc '{enabled:false,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}')
+		# routeOnly keeps the client destination port (e.g. admin :9443) while still
+		# allowing sniffed SNI/Host to drive routing. destOverride without routeOnly
+		# often rewrites TLS destinations to :443 and misses admin-traefik port rules.
+		sniffing=$(jq -nc '{enabled:false,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	else
-		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}')
+		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	fi
 	allocate=$(jq -nc '{}')
 	jq -nc \
@@ -484,6 +487,7 @@ ensure_inbound() {
 		xui_add_inbound "$(inbound_components_json "$desired_components")" || die "Failed to add $kind inbound."
 		http_success_json || die "$kind inbound add failed: $(http_body)"
 		RESTART_XRAY_REQUIRED=1
+		# shellcheck disable=SC2034 # Entrypoint reads this shared result after ensure_inbound returns.
 		ENSURE_INBOUND_ID=$(jq -r '.obj.id // empty' "$HTTP_BODY_FILE")
 	fi
 }
@@ -690,6 +694,7 @@ PY
 	}
 	if [[ "${changed:-0}" != "0" ]]; then
 		log INFO "Repaired VLESS client flow in $changed inbound settings row(s)."
+		# shellcheck disable=SC2034 # Entrypoint restart helpers read this shared runtime flag.
 		RESTART_XRAY_REQUIRED=1
 	fi
 }

@@ -1,26 +1,26 @@
 - Control Plane:
     - 3X-UI Web Panel:
         icon: https://github.com/MHSanaei/3x-ui/raw/main/media/3x-ui-dark.png
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_3X-UI_PATH}}/"
+        href: "https://3x-ui.{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_3X-UI_PATH}}/"
         description: Xray and subscription control panel
         server: dockerproxy
         container: 3x-ui
 
     - Traefik Dashboard:
         icon: sh-traefik.webp
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}/dashboard/#/"
+        href: "https://traefik.{{HOMEPAGE_VAR_WEBDOMAIN}}/dashboard/"
         description: Edge routing and middleware status
         server: dockerproxy
         container: traefik
         widget:
             type: traefik
-            url: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}:4443/{{HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD}}"
+            url: "https://traefik.{{HOMEPAGE_VAR_WEBDOMAIN}}:9443"
             username: "{{HOMEPAGE_VAR_USER_WEB}}"
             password: "{{HOMEPAGE_VAR_PASS_WEB}}"
 
     - AdGuard Home:
         icon: sh-adguard-home.webp
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_ADGUARD_PANEL}}/"
+        href: "https://adguard.{{HOMEPAGE_VAR_WEBDOMAIN}}/"
         description: DNS filtering and DoH endpoint
         server: dockerproxy
         container: adguard
@@ -33,7 +33,7 @@
 
     - Arcane:
         icon: mdi-docker
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_ARCANE}}/"
+        href: "https://arcane.{{HOMEPAGE_VAR_WEBDOMAIN}}/"
         description: Docker management UI
         server: dockerproxy
         container: arcane
@@ -41,7 +41,7 @@
 - Edge & Apps:
     - Homepage Dashboard:
         icon: mdi-view-dashboard
-        href: "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_HOMEPAGE}}/"
+        href: "https://homepage.{{HOMEPAGE_VAR_WEBDOMAIN}}/"
         description: This dashboard
         server: dockerproxy
         container: homepage

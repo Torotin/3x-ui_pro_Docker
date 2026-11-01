@@ -235,10 +235,21 @@ wizard_filter_compose_output() {
 }
 
 wizard_offer_self_update() {
-	local branch result_file tmp local_version remote_version available answer
+	local branch result_file tmp local_version remote_version available answer prepare_rc
+	# Fresh hosts often lack git until the apt step; skip instead of a false "up to date".
+	if [[ "$INSTALL_MOCK" != "1" ]] && ! command -v git >/dev/null 2>&1; then
+		printf 'Update check: skipped (git not installed; run apt step first)\n'
+		return 0
+	fi
 	branch=$(config_get update.branch "$INSTALL_DEFAULT_BRANCH")
 	result_file=$(mktemp)
-	if ! (install_self_update_prepare "$branch" "$result_file"); then
+	# Do not wrap prepare in `if ! ( ... )`: bash disables set -e in if-conditions, so
+	# failed git/clone + die-inside-$(...) could falsely report "up to date".
+	set +e
+	install_self_update_prepare "$branch" "$result_file"
+	prepare_rc=$?
+	set -e
+	if ((prepare_rc != 0)); then
 		rm -f "$result_file"
 		log WARN "self-update check failed"
 		return 0

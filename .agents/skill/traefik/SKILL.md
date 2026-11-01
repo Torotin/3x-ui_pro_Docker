@@ -35,7 +35,7 @@ Do not own per-app router label details. For app-specific routing, read the owni
 
 ## Live Stack Contract
 
-Public HTTPS Host is `${WEBDOMAIN}` on entrypoint `websecure` unless noted. Entrypoints live: `web` (`:80`) and `websecure` (`:4443` inside Traefik). No live L4 TCP/UDP entrypoints.
+Public HTTPS Host is `${WEBDOMAIN}` on entrypoint `websecure` unless noted. Entrypoints live: `web` (`:80`), `websecure` (`:4443`), and private `admin` (`:9443`, self-signed TLS, host publish `127.0.0.1` only). Admin UIs use Host `*.${WEBDOMAIN}` on `admin` (not public DNS); access via personal Xray + AdGuard rewrite to `172.18.0.6`. Break-glass: `curl -k https://127.0.0.1:9443 -H 'Host: …'`. No Tailscale. No live L4 TCP/UDP entrypoints.
 
 | Service skill | Path / rule (from compose) | Notes |
 |---|---|---|

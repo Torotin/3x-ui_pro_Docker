@@ -49,10 +49,33 @@ trap cleanup EXIT
 
 # Запускает полный цикл панели и Xray в выбранном режиме.
 main() {
-	local desired vision_id xhttp_id grpc_id="" hysteria2_id=""
+	local desired vision_id xhttp_id grpc_id="" hysteria2_id="" nodes_file remarks_file
 	TMP_ROOT=$(mktemp -d)
 	http_init "$TMP_ROOT"
 	load_runtime_env "$SCRIPT_DIR"
+	# shellcheck source=../lib/sub_admin_routing.bash
+	. "$LIB_DIR/sub_admin_routing.bash"
+	# shellcheck source=../lib/sub_balancer.bash
+	. "$LIB_DIR/sub_balancer.bash"
+	# Soft builders for MODE=check (no desired/panel). Final Clash+observatory
+	# passed into panel settings apply are rebuilt below once desired remarks exist.
+	subClashEnableRouting=true
+	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")
+	export subClashEnableRouting subClashRules
+	# JSON clients use subJsonRules; legacy subJsonRoutingRules must be cleared.
+	subJsonRules=$(build_admin_sub_json_rules "${WEBDOMAIN}")
+	subJsonDns=$(build_admin_sub_json_dns "${WEBDOMAIN}" "${PUBLIC_IPV4:-}")
+	CLEAR_SUB_JSON_ROUTING_RULES=true
+	if [[ -n "$subJsonRules" ]]; then
+		export subJsonRules
+	fi
+	if [[ -n "$subJsonDns" ]]; then
+		export subJsonDns
+	fi
+	export CLEAR_SUB_JSON_ROUTING_RULES
+	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
+		log WARN "PUBLIC_IPV4 empty: admin Clash/JSON hosts maps omitted"
+	fi
 	require_apply_mode
 	check_dependencies
 	log INFO "3x-ui managed runtime started MODE=$MODE"
@@ -66,6 +89,33 @@ main() {
 	resolve_panel_base || die "Could not resolve and login to 3x-ui panel."
 	detect_country_flag || true
 	desired=$(build_desired_state)
+	# AUTO/PROXY groups need node names; prefer desired inbound remarks (chicken-egg
+	# vs live inbounds that may not exist yet).
+	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
+	remarks_file=$(mktemp "$TMP_ROOT/clash-remarks.XXXXXX")
+	# Only remarks for kinds AfterStart will ensure (grpc/hysteria2 follow ENABLE_*).
+	# Vision/Reality Clash nodes are published as remark-WEBDOMAIN-email (externalProxy).
+	shared_email=$(jq -r '.clients.shared.email // empty' <<<"$desired")
+	{
+		vision_remark=$(jq -r '.inbounds.vision.remark // empty' <<<"$desired")
+		clash_subscription_proxy_name_for_kind vision "$vision_remark" "${WEBDOMAIN:-}" "$shared_email"
+		jq -r '.inbounds.xhttp.remark // empty' <<<"$desired"
+		if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
+			jq -r '.inbounds.grpc.remark // empty' <<<"$desired"
+		fi
+		if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
+			jq -r '.inbounds.hysteria2.remark // empty' <<<"$desired"
+		fi
+	} | grep -E . >"$remarks_file" || true
+	CLASH_PROXY_NODE_REMARKS_FILE=$remarks_file \
+		discover_clash_proxy_node_names >"$nodes_file" || true
+	if [[ ! -s "$nodes_file" ]]; then
+		log WARN "Clash node names undiscoverable: omitting custom proxy-groups"
+	fi
+	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")
+	export subClashEnableRouting=true subClashRules
+	subJsonObservatory=$(build_admin_sub_json_observatory)
+	export subJsonObservatory
 	# Managed outbounds (usque/tor/…) must exist before panelOutbound injection,
 	# otherwise 3x-ui logs: panel egress: target tag [ usque ] not found.
 	apply_managed_xray
@@ -100,6 +150,7 @@ main() {
 	# Vision/XHTTP/gRPC/Hysteria listeners exist, then wait for them.
 	restart_xray_if_needed
 	wait_managed_xray_ports || log WARN "One or more managed Xray inbounds are not listening after inbound sync."
+	ensure_auto_sub_balancer "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id"
 	update_builtin_geofiles_if_enabled
 	restart_panel_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"
