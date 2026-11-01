@@ -34,10 +34,11 @@ Admin plane (personal Xray → Traefik entrypoint admin):
   Arcane           : ${SUMMARY_URL_ARCANE}
   Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
   Lampac Admin     : ${SUMMARY_URL_LAMPAC_ADMIN}
+  Telemt Panel     : ${SUMMARY_URL_TELEMT_PANEL}
 
 Public HTTPS (no admin panels):
   AdGuard DoH      : ${SUMMARY_URL_ADGUARD_DOH}
-  Telemt Panel     : ${SUMMARY_URL_TELEMT_PANEL}
+  Telemt Subpage   : ${SUMMARY_URL_TELEMT_SUB}
   Mihomo UI        : ${SUMMARY_URL_MIHOMO_UI}
   Mihomo secret    : ${SUMMARY_MIHOMO_SECRET}
 

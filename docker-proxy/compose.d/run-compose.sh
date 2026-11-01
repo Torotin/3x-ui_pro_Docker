@@ -408,6 +408,21 @@ run_rebuild() {
 	fi
 }
 
+maybe_ensure_telemt_geoip() {
+	local touched=${1:-}
+	local script="$PROJECT_ROOT/telemt-panel/ensure-geoip.sh"
+	telemt_compose_enabled || return 0
+	if [[ -n "$touched" && "$touched" != *telemt* ]]; then
+		return 0
+	fi
+	[[ -x "$script" || -f "$script" ]] || {
+		log "WARN: Telemt GeoIP ensure script missing: $script"
+		return 0
+	}
+	log "Applying Telemt panel GeoIP sources (ensure-geoip.sh)"
+	bash "$script" || log "WARN: ensure-geoip.sh failed (panel may still need manual GeoIP URLs)"
+}
+
 run_restart() {
 	local follow_logs=0 services=() svc up_args=(-d --force-recreate)
 	while (($# > 0)); do
@@ -432,6 +447,7 @@ run_restart() {
 		log "Запуск сервиса: $svc"
 		run_compose up "${up_args[@]}" "$svc"
 	done
+	maybe_ensure_telemt_geoip " ${services[*]} "
 	if ((follow_logs == 1)); then
 		log "Показываем логи сервиса ${services[-1]} (Ctrl+C для выхода)"
 		exec docker logs -f "${services[-1]}"
@@ -540,10 +556,21 @@ main() {
 				pull_images
 			fi
 			run_up_with_retries "$@"
+			# Full-stack up (no service filter) or explicit telemt → apply GeoIP URLs.
+			if (($# == 0)); then
+				maybe_ensure_telemt_geoip telemt
+			else
+				maybe_ensure_telemt_geoip "$*"
+			fi
 			;;
 		rebuild)
 			shift
 			run_rebuild "$@"
+			if (($# == 0)); then
+				maybe_ensure_telemt_geoip telemt
+			else
+				maybe_ensure_telemt_geoip "$*"
+			fi
 			;;
 		restart)
 			shift

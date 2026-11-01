@@ -138,6 +138,9 @@ main() {
 		ensure_inbound hysteria2 "$desired"
 		hysteria2_id=$ENSURE_INBOUND_ID
 	fi
+	if [[ "${ENABLE_TELEMT:-false}" == "true" ]]; then
+		ensure_inbound mixed "$desired"
+	fi
 	ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"
 	if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
 		ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"

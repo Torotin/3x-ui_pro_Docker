@@ -30,6 +30,7 @@ hosts = [
     f"3x-ui.{webdomain}",
     f"traefik.{webdomain}",
     f"lampac-admin.{webdomain}",
+    f"telemt.{webdomain}",
 ]
 host_set = set(hosts)
 lines = path.read_text(encoding="utf-8").splitlines(True)

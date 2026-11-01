@@ -341,6 +341,14 @@ wait_managed_xray_ports() {
 			log INFO "Skipping Hysteria2 port wait; inbound on ${PORT_LOCAL_HYSTERIA}/udp is not present yet."
 		fi
 	fi
+	if [[ "${ENABLE_TELEMT:-false}" == "true" ]]; then
+		if managed_inbound_present "$inbounds" "${PORT_LOCAL_XRAY_MIXED:-10808}" "mixed"; then
+			waiting=1
+			wait_tcp_port 127.0.0.1 "${PORT_LOCAL_XRAY_MIXED:-10808}" "$timeout" "Mixed mixed-docker-net ${PORT_LOCAL_XRAY_MIXED:-10808}" || failed=1
+		else
+			log INFO "Skipping mixed port wait; inbound on ${PORT_LOCAL_XRAY_MIXED:-10808} is not present yet."
+		fi
+	fi
 	if ((waiting == 0)); then
 		log INFO "No managed inbounds to wait for yet."
 	fi

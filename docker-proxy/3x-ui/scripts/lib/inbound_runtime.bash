@@ -353,6 +353,8 @@ build_inbound_stream_json() {
 		build_grpc_stream_json "${URI_VLESS_GRPC:-/grpc}" "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	elif [[ "$kind" == "hysteria2" ]]; then
 		build_hysteria2_stream_json "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}" "${HYSTERIA2_STREAM_AUTH:-}"
+	elif [[ "$kind" == "mixed" ]]; then
+		jq -nc '{network:"tcp",security:"none"}'
 	else
 		die "Unsupported inbound kind: $kind"
 	fi
@@ -403,6 +405,9 @@ build_inbound_components_json() {
 	if [[ "$kind" == "hysteria2" ]]; then
 		settings=$(build_hysteria2_settings_json "$current" "$desired")
 		HYSTERIA2_STREAM_AUTH=$(jq -r '.clients[0].auth // ""' <<<"$settings")
+	elif [[ "$kind" == "mixed" ]]; then
+		# Docker-local Telemt egress: SOCKS+HTTP, no auth, all interfaces.
+		settings=$(jq -nc '{auth:"noauth",udp:true,accounts:[]}')
 	else
 		settings=$(build_vless_settings_json "$kind" "$current")
 	fi
@@ -415,20 +420,25 @@ build_inbound_components_json() {
 		# allowing sniffed SNI/Host to drive routing. destOverride without routeOnly
 		# often rewrites TLS destinations to :443 and misses admin-traefik port rules.
 		sniffing=$(jq -nc '{enabled:false,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
+	elif [[ "$kind" == "mixed" ]]; then
+		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	else
 		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	fi
 	allocate=$(jq -nc '{}')
+	local listen=""
+	[[ "$kind" == "mixed" ]] && listen="0.0.0.0"
 	jq -nc \
 		--argjson port "$port" \
 		--arg remark "$remark" \
 		--arg protocol "$protocol" \
+		--arg listen "$listen" \
 		--argjson settings "$settings" \
 		--argjson stream "$stream" \
 		--argjson sniffing "$sniffing" \
 		--argjson allocate "$allocate" '{
           up:0, down:0, total:0, remark:$remark, enable:true, expiryTime:0,
-          listen:"", port:$port, protocol:$protocol, settings:$settings,
+          listen:$listen, port:$port, protocol:$protocol, settings:$settings,
           streamSettings:$stream, sniffing:$sniffing, allocate:$allocate
         }'
 }

@@ -13,14 +13,14 @@ services:
       # Private admin Host plus local probes. Traefik LB healthcheck Host is set
       # explicitly below; without that, Traefik probes as <container-ip>:3000 and
       # Homepage returns 400 → Traefik marks the backend unhealthy (HTTP 503).
-      HOMEPAGE_ALLOWED_HOSTS: homepage.${WEBDOMAIN},localhost:3000,127.0.0.1:3000
+      HOMEPAGE_ALLOWED_HOSTS: homepage.${WEBDOMAIN},telemt.${WEBDOMAIN},localhost:3000,127.0.0.1:3000
       HOMEPAGE_VAR_WEBDOMAIN: ${WEBDOMAIN}
+      HOMEPAGE_VAR_PORT_LOCAL_ADMIN: ${PORT_LOCAL_ADMIN}
       HOMEPAGE_VAR_URI_3X-UI_PATH: ${URI_PANEL_PATH}
       HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD: ${URI_TRAEFIK_DASHBOARD}
       HOMEPAGE_VAR_URI_ARCANE: ${URI_ARCANE}
       HOMEPAGE_VAR_URI_DOZZLE: ${URI_ARCANE}
       HOMEPAGE_VAR_URI_ADGUARD_PANEL: ${URI_ADGUARD_PANEL}
-      HOMEPAGE_VAR_URI_TELEMT_PANEL: ${URI_TELEMT_PANEL}
       HOMEPAGE_VAR_URI_MIHOMO: ${URI_MIHOMO}
       HOMEPAGE_VAR_MIHOMO_SECRET: ${MIHOMO_SECRET}
       HOMEPAGE_VAR_URI_HOMEPAGE: ${URI_HOMEPAGE}
@@ -49,6 +49,7 @@ services:
       - "adguard.${WEBDOMAIN}:172.18.0.6"
       - "3x-ui.${WEBDOMAIN}:172.18.0.6"
       - "lampac-admin.${WEBDOMAIN}:172.18.0.6"
+      - "telemt.${WEBDOMAIN}:172.18.0.6"
     security_opt:
       - no-new-privileges=true
     healthcheck:

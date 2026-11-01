@@ -38,7 +38,7 @@ This skill owns the **full public route index** for the stack. Per-service path 
 
 ## Admin plane (private)
 
-Listed admin panels are **not** on public `websecure`. They use Traefik entrypoint `admin` (`PORT_LOCAL_ADMIN=9443`) with Hostnames `arcane|homepage|adguard|3x-ui|traefik|lampac-admin.${WEBDOMAIN}`, self-signed TLS, Basic Auth, AdGuard rewrites → `172.18.0.6`, and Xray outbound `admin-traefik`. See `docs/superpowers/specs/2026-10-25-xray-admin-access-design.md`. Isolation tests: `bash tests/xray-admin/run.sh`.
+Listed admin panels are **not** on public `websecure`. They use Traefik entrypoint `admin` (`PORT_LOCAL_ADMIN=9443`) with Hostnames `arcane|homepage|adguard|3x-ui|traefik|lampac-admin|telemt.${WEBDOMAIN}`, self-signed TLS, Basic Auth, AdGuard rewrites → `172.18.0.6`, and Xray outbound `admin-traefik`. See `docs/superpowers/specs/2026-10-25-xray-admin-access-design.md`. Telemt panel: `docs/superpowers/specs/2026-11-01-telemt-admin-subpage-design.md`. Isolation tests: `bash tests/xray-admin/run.sh`.
 
 ## Live Stack Contract
 
@@ -52,7 +52,7 @@ Public HTTPS Host is `${WEBDOMAIN}` on entrypoint `websecure` unless noted. Deri
 | `3x-ui` | `/${URI_PANEL_PATH}/health`, `/${URI_PANEL_PATH}*`, `/${URI_PANEL_PATH}/panel/api*`, `${URI_SUB_PATH}*`, `${URI_JSON_PATH}*`, `${URI_CLASH_PATH:-/clash/}*`, `${URI_VLESS_XHTTP}*`, `${URI_VLESS_GRPC}*` | Native subscriptions/JSON/Clash; caddy/subs and sub-json-processor are do-not-revive. |
 | `homepage` | `/${URI_HOMEPAGE}*`, root `/_next/*`, selected NextAuth/widget `/api/*`, `/favicon.ico`, favicon/icon/PWA paths | Not full `/api`; static/API carve-outs outrank Arcane where listed. |
 | `lampac` | Host catch-all; `/api/v1.0*`, `/api/v2.0*`, PathRegexp `^/(nws\|ws)`, `^/cub/[^/]+/plugin`, `^/(admin\|adminpanel\|stats\|weblog\|database-editor)`, `^/(adminpanel\|weblog)/auth$`; `!Host(${WEBDOMAIN})` fallback | Optional `ENABLE_LAMPAC`; catch-all priority is above Caddy fallback except unknown-host fallback. |
-| `telemt` | `/${URI_TELEMT_PANEL}*` | Optional `ENABLE_TELEMT`; panel route only. |
+| `telemt` | `/${URI_TELEMT_WEB}*`, `/${URI_TELEMT_SUB}*` (+ panel on admin Host `telemt.${WEBDOMAIN}`) | Optional `ENABLE_TELEMT`; WEB decoy + public subpage; panel not on public path. |
 | `mihomo` | `/${URI_MIHOMO}`, `/${URI_MIHOMO}/ui`, `/${URI_MIHOMO}/ui*`, manifest regexp under UI | Optional `ENABLE_MIHOMO`; dashboard/UI only. |
 | `caddy` | Host-only `caddy-fallback` priority `1` | Catch-all / error backend, intentionally unauthenticated and lower priority than Lampac. |
 | `proxy-backends` | no public Traefik UI | Internal `usque` / `tor-proxy` peers. |

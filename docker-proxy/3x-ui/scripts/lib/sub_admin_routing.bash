@@ -6,7 +6,7 @@ if ! declare -F die >/dev/null 2>&1; then
 fi
 
 admin_sub_hostnames() {
-	printf '%s\n' arcane homepage adguard 3x-ui traefik lampac-admin
+	printf '%s\n' arcane homepage adguard 3x-ui traefik lampac-admin telemt
 }
 
 admin_sub_clash_default_mode() {

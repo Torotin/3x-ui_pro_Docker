@@ -63,6 +63,33 @@ escape_toml_basic_string_value() {
 	printf '%s' "$value"
 }
 
+normalize_uri_segment() {
+	local segment=${1:-}
+	segment=${segment#/}
+	segment=${segment%/}
+	printf '%s' "$segment"
+}
+
+assert_uri_telemt_sub_unique() {
+	local sub peer normalized
+	sub=$(normalize_uri_segment "${URI_TELEMT_SUB:-}")
+	[[ -n "$sub" ]] || die "URI_TELEMT_SUB is required"
+	local peers=(
+		"${URI_TELEMT_WEB:-}"
+		"${URI_SUB_PATH:-}"
+		"${URI_JSON_PATH:-}"
+		"${URI_CLASH_PATH:-}"
+		"${URI_PANEL_PATH:-}"
+		"${URI_MIHOMO:-}"
+		"${URI_ADGUARD_DOH:-}"
+	)
+	for peer in "${peers[@]}"; do
+		normalized=$(normalize_uri_segment "$peer")
+		[[ -z "$normalized" ]] && continue
+		[[ "$sub" == "$normalized" ]] && die "URI_TELEMT_SUB must be unique (conflicts with ${normalized})"
+	done
+}
+
 detect_docker_socket_gid() {
 	if getent group docker >/dev/null 2>&1; then
 		getent group docker | awk -F: '{print $3}'
@@ -110,6 +137,8 @@ ensure_env_defaults() {
 	: "${URI_ADGUARD_DOH:=$(generate_random_string 12 16)}"
 	: "${URI_HOMEPAGE:=$(generate_random_string 12 16)}"
 	: "${URI_TELEMT_PANEL:=$(generate_random_string 12 16)}"
+	: "${URI_TELEMT_WEB:=$(generate_random_string 12 16)}"
+	: "${URI_TELEMT_SUB:=$(generate_random_string 12 16)}"
 	: "${URI_MIHOMO:=$(generate_random_string 12 16)}"
 	: "${PORT_LOCAL_CADDYWEB:=$(generate_random_port)}"
 	: "${PORT_LOCAL_SUB2SING:=$(generate_random_port)}"
@@ -125,6 +154,13 @@ ensure_env_defaults() {
 	: "${PORT_LOCAL_TELEMT_API:=9091}"
 	: "${PORT_LOCAL_TELEMT_METRICS:=9090}"
 	: "${PORT_LOCAL_TELEMT_PANEL:=8080}"
+	: "${PORT_LOCAL_TELEMT_SUB:=8081}"
+	: "${PORT_LOCAL_TELEMT_WEB:=18080}"
+	: "${PORT_LOCAL_XRAY_MIXED:=10808}"
+	: "${TELEMT_WEB_USER:=web}"
+	: "${TELEMT_WEB_SECRET_HEX:=$(generate_hex_secret 16)}"
+	: "${TELEMT_WEB_CARRIER:=https}"
+	: "${TELEMT_WEB_DECOY_UPSTREAM:=}"
 	: "${PORT_LOCAL_CROWDSEC_API:=$(generate_random_port)}"
 	: "${PORT_LOCAL_CROWDSEC_CADDY:=$(generate_random_port)}"
 	: "${PORT_LOCAL_CROWDSEC_APPSEC:=$(generate_random_port)}"
@@ -138,12 +174,21 @@ ensure_env_defaults() {
 	: "${MIHOMO_SECRET:=$(generate_hex_secret 32)}"
 	: "${LAMPAC_JACRED_APIKEY:=$(generate_hex_secret 16)}"
 	: "${TELEMT_API_AUTH_HEADER:=$(generate_random_string 48 64)}"
-	: "${TELEMT_PANEL_JWT_SECRET:=$(generate_random_string 48 64)}"
+	: "${TELEMT_SUBPAGE_SECRET:=$(generate_hex_secret 32)}"
 	: "${TELEMT_PANEL_PASSWORD_HASH:=}"
 	: "${TELEMT_BOOTSTRAP_USER:=bootstrap}"
 	: "${TELEMT_BOOTSTRAP_SECRET_HEX:=$(generate_hex_secret 16)}"
 	: "${TELEMT_STACK_IMAGE:=torotin/telemt-stack:latest}"
-	: "${DOCKER_SOCKET_GID:=$(detect_docker_socket_gid)}"
+	# Panel GeoIP (stored via API into panel-state; not TOML). Default: P3TERX GeoLite.mmdb direct HTTPS .mmdb.
+	: "${TELEMT_GEOIP_ENABLED:=true}"
+	: "${TELEMT_GEOIP_SCHEDULE:=weekly}"
+	: "${TELEMT_GEOIP_CITY_URL:=https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb}"
+	: "${TELEMT_GEOIP_ASN_URL:=https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-ASN.mmdb}"
+	: "${TELEMT_GEOIP_COUNTRY_URL:=https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-Country.mmdb}"
+	# 0 means "unset/misdetected" for compose group_add; re-probe the real socket GID.
+	if [[ -z "${DOCKER_SOCKET_GID:-}" || "${DOCKER_SOCKET_GID}" == "0" ]]; then
+		DOCKER_SOCKET_GID=$(detect_docker_socket_gid)
+	fi
 	: "${TELEMT_TUNING_PROFILE:=balanced}"
 	: "${TELEMT_MIDDLE_PROXY_NAT_PROBE:=true}"
 	: "${TELEMT_STUN_NAT_PROBE_CONCURRENCY:=16}"
@@ -220,14 +265,16 @@ ensure_env_defaults() {
 	export WEBDOMAIN HOST_IP_MODE PUBLIC_IPV4 PUBLIC_IPV6 TOR_IPV6_AVAILABLE USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
 	export URI_TRAEFIK_DASHBOARD URI_ARCANE URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
-	export URI_VLESS_XHTTP URI_VLESS_GRPC URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_MIHOMO
+	export URI_VLESS_XHTTP URI_VLESS_GRPC URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_TELEMT_WEB URI_TELEMT_SUB URI_MIHOMO
 	export ARCANE_ENCRYPTION_KEY
 	export PORT_LOCAL_CADDYWEB PORT_LOCAL_SUB2SING PORT_LOCAL_DOZZLE PORT_LOCAL_VLESS_SUBSCRIBE
 	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_GRPC PORT_LOCAL_HYSTERIA PORT_LOCAL_ADMIN PORT_LOCAL_TELEMT_PROXY
-	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_CROWDSEC_API
+	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_TELEMT_SUB PORT_LOCAL_TELEMT_WEB PORT_LOCAL_XRAY_MIXED PORT_LOCAL_CROWDSEC_API
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET LAMPAC_JACRED_APIKEY TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET LAMPAC_JACRED_APIKEY TELEMT_API_AUTH_HEADER TELEMT_SUBPAGE_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export TELEMT_GEOIP_ENABLED TELEMT_GEOIP_SCHEDULE TELEMT_GEOIP_CITY_URL TELEMT_GEOIP_ASN_URL TELEMT_GEOIP_COUNTRY_URL
+	export TELEMT_WEB_USER TELEMT_WEB_SECRET_HEX TELEMT_WEB_CARRIER TELEMT_WEB_DECOY_UPSTREAM
 	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
 	export TELEMT_ME_KEEPALIVE_ENABLED TELEMT_ME_KEEPALIVE_INTERVAL_SECS TELEMT_ME_KEEPALIVE_JITTER_SECS
 	export TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC TELEMT_ME_RECONNECT_BACKOFF_BASE_MS TELEMT_ME_RECONNECT_BACKOFF_CAP_MS TELEMT_ME_RECONNECT_FAST_RETRY_COUNT
@@ -242,6 +289,7 @@ ensure_env_defaults() {
 	export TELEMT_MASK_RELAY_TIMEOUT_MS TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS
 	export ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
 	export VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
+	assert_uri_telemt_sub_unique
 }
 
 generate_htpasswd_if_needed() {
@@ -344,6 +392,25 @@ render_telemt_configs() {
 	backup_file "$telemt_panel_config"
 	TELEMT_PANEL_PASSWORD_HASH_RAW=${TELEMT_PANEL_PASSWORD_HASH//\$\$/\$}
 	export TELEMT_PANEL_PASSWORD_HASH_RAW
+	if [[ -z "${TELEMT_WEB_DECOY_UPSTREAM:-}" ]]; then
+		if install_lampac_enabled; then
+			TELEMT_WEB_DECOY_UPSTREAM="http://172.18.0.14:9118"
+		else
+			TELEMT_WEB_DECOY_UPSTREAM="http://172.18.0.5:${PORT_LOCAL_CADDYWEB}"
+		fi
+	fi
+	export TELEMT_WEB_DECOY_UPSTREAM
+	: "${TELEMT_WEB_USER:=web}"
+	: "${TELEMT_WEB_SECRET_HEX:=$(generate_hex_secret 16)}"
+	: "${TELEMT_WEB_CARRIER:=https}"
+	: "${URI_TELEMT_WEB:=$(generate_random_string 12 16)}"
+	: "${PORT_LOCAL_TELEMT_WEB:=18080}"
+	: "${URI_TELEMT_SUB:=$(generate_random_string 12 16)}"
+	: "${PORT_LOCAL_TELEMT_SUB:=8081}"
+	: "${TELEMT_SUBPAGE_SECRET:=$(generate_hex_secret 32)}"
+	export TELEMT_WEB_USER TELEMT_WEB_SECRET_HEX TELEMT_WEB_CARRIER URI_TELEMT_WEB PORT_LOCAL_TELEMT_WEB
+	export URI_TELEMT_SUB PORT_LOCAL_TELEMT_SUB TELEMT_SUBPAGE_SECRET
+	assert_uri_telemt_sub_unique
 	render_env_template "$templates/telemt.config.toml.template" "$telemt_config"
 	render_env_template "$templates/telemt-panel.config.toml.template" "$telemt_panel_config"
 	chmod 0600 "$telemt_config" "$telemt_panel_config" 2>/dev/null || true

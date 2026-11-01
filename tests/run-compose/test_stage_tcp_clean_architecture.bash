@@ -124,6 +124,10 @@ assert_true(
     "ENABLE_TELEMT" in telemt_homepage_card.get("description", ""),
     "Homepage Telemt card must mark the service as optional via ENABLE_TELEMT",
 )
+assert_true(
+    telemt_homepage_card.get("href") == "https://telemt.{{HOMEPAGE_VAR_WEBDOMAIN}}:{{HOMEPAGE_VAR_PORT_LOCAL_ADMIN}}/",
+    "Homepage Telemt card must link to the admin Host plane",
+)
 mihomo_homepage_card = find_homepage_service("Optional Features", "Mihomo")
 assert_true(
     mihomo_homepage_card.get("href") == "https://{{HOMEPAGE_VAR_WEBDOMAIN}}/{{HOMEPAGE_VAR_URI_MIHOMO}}/ui/",
@@ -213,6 +217,19 @@ assert_true(xui_labels.get("traefik.http.routers.grpc3xui.service") == "grpc3xui
 
 telemt_compose = load_yaml("docker-proxy/compose.d/15-telemt.yml")
 assert_true("telemt-panel" not in telemt_compose["services"], "Telemt panel must run inside the single telemt container")
+traefik_from_telemt = telemt_compose["services"].get("traefik") or {}
+traefik_telemt_volumes = [str(volume) for volume in (traefik_from_telemt.get("volumes") or [])]
+assert_true(
+    "../telemt/traefik-telemt-web-transport.yml:/dynamic/telemt-web-transport.yml:ro" in traefik_telemt_volumes,
+    "Telemt compose must mount WEB ServersTransport into Traefik only while ENABLE_TELEMT includes 15-telemt.yml",
+)
+assert_true(
+    Path("docker-proxy/telemt/traefik-telemt-web-transport.yml").is_file(),
+    "Telemt WEB ServersTransport YAML must live under docker-proxy/telemt/",
+)
+stub = Path("docker-proxy/traefik/dynamic/telemt-web-transport.yml").read_text(encoding="utf-8")
+assert_true("telemt-web:" not in stub, "always-on dynamic stub must not define telemt-web ServersTransport")
+assert_true("http: {}" in stub.replace(" ", ""), "dynamic stub must be an empty http overlay target")
 telemt_service = telemt_compose["services"]["telemt"]
 telemt_ports = [str(port) for port in (telemt_service.get("ports") or [])]
 telemt_expose = [str(port) for port in (telemt_service.get("expose") or [])]
@@ -227,24 +244,62 @@ assert_true("${DOCKER_SOCKET_GID:-0}" in [str(group) for group in (telemt_servic
 assert_true(
     set(telemt_expose) == {
         "${PORT_LOCAL_TELEMT_PROXY:-9443}",
+        "${PORT_LOCAL_TELEMT_WEB:-18080}",
         "${PORT_LOCAL_TELEMT_API:-9091}",
         "${PORT_LOCAL_TELEMT_METRICS:-9090}",
         "${PORT_LOCAL_TELEMT_PANEL:-8080}",
+        "${PORT_LOCAL_TELEMT_SUB:-8081}",
     },
-    f"Telemt must expose only its four internal endpoints, got {telemt_expose}",
+    f"Telemt must expose its internal endpoints including panel and subpage, got {telemt_expose}",
 )
 telemt_volumes = [str(volume) for volume in (telemt_service.get("volumes") or [])]
 assert_true("../telemt-panel/config:/etc/telemt-panel:ro" in telemt_volumes, "Bundled panel must receive its rendered config")
 assert_true("../telemt-panel/data:/var/lib/telemt-panel:rw" in telemt_volumes, "Bundled panel must retain persistent data")
 assert_true("/var/run/docker.sock:/var/run/docker.sock:ro" in telemt_volumes, "Bundled panel Logs UI must receive read-only Docker socket access")
+assert_true("/usr/bin/docker:/usr/bin/docker:ro" in telemt_volumes, "Bundled panel Logs UI requires host docker CLI bind-mount (socket alone is not enough)")
 telemt_healthcheck = " ".join(str(part) for part in ((telemt_service.get("healthcheck") or {}).get("test") or []))
 assert_true("/usr/local/bin/telemt healthcheck /etc/telemt/config.toml --mode liveness" in telemt_healthcheck, "Telemt stack healthcheck must verify Telemt liveness")
-assert_true("curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/${URI_TELEMT_PANEL}/" in telemt_healthcheck, "Telemt stack healthcheck must verify bundled panel readiness")
+assert_true(
+    "curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/" in telemt_healthcheck,
+    "Telemt stack healthcheck must verify bundled panel readiness at admin root",
+)
+assert_true(
+    "${URI_TELEMT_PANEL}" not in telemt_healthcheck,
+    "Telemt stack healthcheck must not probe the retired public panel path",
+)
 telemt_labels = labels_for(telemt_service)
 telemt_panel_rule = telemt_labels.get("traefik.http.routers.telemt-panel.rule", "")
 telemt_panel_middlewares = telemt_labels.get("traefik.http.routers.telemt-panel.middlewares", "")
-assert_true("Host(`${WEBDOMAIN}`)" in telemt_panel_rule and "PathPrefix(`/${URI_TELEMT_PANEL}`)" in telemt_panel_rule, "Telemt panel must be routed by WEBDOMAIN path")
+assert_true(
+    telemt_panel_rule == "Host(`telemt.${WEBDOMAIN}`)",
+    "Telemt panel must use admin Host telemt.WEBDOMAIN without public path prefix",
+)
+assert_true(
+    telemt_labels.get("traefik.http.routers.telemt-panel.entrypoints", "") == "admin",
+    "Telemt panel router must use Traefik admin entrypoint",
+)
 assert_true("telemt-panel-chain" in telemt_panel_middlewares, "Telemt panel must use the protected admin middleware chain")
+assert_true(
+    "admin-security-headers@file" in telemt_panel_middlewares,
+    "Telemt panel admin router must include file-provider admin security headers",
+)
+telemt_sub_rule = telemt_labels.get("traefik.http.routers.telemt-sub.rule", "")
+assert_true(
+    "Host(`${WEBDOMAIN}`)" in telemt_sub_rule and "PathPrefix(`/${URI_TELEMT_SUB}`)" in telemt_sub_rule,
+    "Telemt subpage must be routed on public WEBDOMAIN with URI_TELEMT_SUB prefix",
+)
+assert_true(
+    telemt_labels.get("traefik.http.routers.telemt-sub.entrypoints", "") == "websecure",
+    "Telemt subpage router must use websecure entrypoint",
+)
+assert_true(
+    telemt_labels.get("traefik.http.services.telemt-sub-svc.loadbalancer.server.port") == "${PORT_LOCAL_TELEMT_SUB:-8081}",
+    "Telemt subpage service must target the subpage listen port",
+)
+assert_true(
+    "bouncer@file" in telemt_labels.get("traefik.http.middlewares.telemt-sub-chain.chain.middlewares", ""),
+    "Telemt subpage chain must include CrowdSec bouncer on the public plane",
+)
 
 telemt_template = (root / "script/template/telemt.config.toml.template").read_text(encoding="utf-8")
 assert_true('proxy_protocol = true' in telemt_template, "Telemt must accept PROXY protocol from Xray")
@@ -266,9 +321,14 @@ assert_true('mask_shape_hardening = ${TELEMT_MASK_SHAPE_HARDENING}' in telemt_te
 assert_true('[[upstreams]]' in telemt_template and 'type = "direct"' in telemt_template, "Telemt must explicitly define direct upstream")
 
 telemt_panel_template = (root / "script/template/telemt-panel.config.toml.template").read_text(encoding="utf-8")
-assert_true('container_name = "telemt"' in telemt_panel_template, "Bundled panel Logs UI must target the telemt Docker container")
-assert_true('binary_path = "/usr/local/bin/telemt"' in telemt_panel_template, "Bundled panel must use the image-provided Telemt binary")
-assert_true('binary_path = "/usr/local/bin/telemt-panel"' in telemt_panel_template, "Bundled panel must record the image-provided panel binary")
+assert_true('base_path = ""' in telemt_panel_template, "Bundled panel admin must use empty base_path for admin Host routing")
+assert_true("[subpage]" in telemt_panel_template, "Bundled panel template must enable telemt_panel 1.x subpage")
+assert_true(
+    'telemt_container = "telemt"' in telemt_panel_template,
+    "Bundled panel host section must target the telemt Docker container",
+)
+assert_true("[store]" in telemt_panel_template and "[privileges]" in telemt_panel_template, "Bundled panel template must use telemt_panel 1.x tables")
+assert_true("binary_path" not in telemt_panel_template, "Bundled panel template must not require retired 0.6 binary_path keys")
 
 install_env_template = (root / "script/template/install.env.template").read_text(encoding="utf-8")
 docker_env_template = (root / "script/template/docker.env.template").read_text(encoding="utf-8")
@@ -427,6 +487,11 @@ shared_header_cases = {
     "traefik.http.routers.adguard-panel.middlewares",
     "traefik.http.routers.homepage-router.middlewares",
 }
+admin_entrypoint_no_bouncer_cases = {
+    "traefik.http.routers.3xui-panel.middlewares",
+    "traefik.http.routers.homepage-router.middlewares",
+    "traefik.http.routers.telemt-panel.middlewares",
+}
 for file_name, service_name, key in admin_cases:
     service_labels = labels_for(load_yaml(f"docker-proxy/compose.d/{file_name}")["services"][service_name])
     middleware = service_labels.get(key, "")
@@ -446,7 +511,8 @@ for file_name, service_name, key in admin_cases:
         f"{key} must not reference bare/docker admin-security-headers",
     )
     assert_true("basic-auth" in chain or "auth" in chain, f"{key} must require BasicAuth")
-    assert_true("bouncer@file" in chain, f"{key} must include CrowdSec bouncer")
+    if key not in admin_entrypoint_no_bouncer_cases:
+        assert_true("bouncer@file" in chain, f"{key} must include CrowdSec bouncer")
     assert_true("rate" in chain or "ratelimit" in chain, f"{key} must include rate limiting")
     assert_true("security" in chain or "noindex" in chain or "headers" in chain, f"{key} must include security/noindex headers")
 
@@ -470,7 +536,6 @@ for file_name, service_name, key in [
     ("12-3x-ui.yml", "3x-ui", "traefik.http.routers.3xui-panel.rule"),
     ("13-homepage.yml", "homepage", "traefik.http.routers.homepage-router.rule"),
     ("14-lampac.yml", "lampac", "traefik.http.routers.lampac-sensitive.rule"),
-    ("15-telemt.yml", "telemt", "traefik.http.routers.telemt-panel.rule"),
     ("16-mihomo.yml", "mihomo", "traefik.http.routers.mihomo-ui.rule"),
 ]:
     service_labels = labels_for(load_yaml(f"docker-proxy/compose.d/{file_name}")["services"][service_name])
@@ -478,6 +543,16 @@ for file_name, service_name, key in [
     assert_true("Host(`${WEBDOMAIN}`)" in rule and "Path" in rule, f"{key} must use WEBDOMAIN path routing")
     for admin_domain in admin_domains:
         assert_true(admin_domain not in rule, f"{key} must not use separate admin subdomains")
+
+telemt_admin_rule = telemt_labels.get("traefik.http.routers.telemt-panel.rule", "")
+assert_true(
+    telemt_admin_rule == "Host(`telemt.${WEBDOMAIN}`)",
+    "Telemt admin panel must use telemt.WEBDOMAIN Host routing on the admin plane",
+)
+assert_true(
+    telemt_labels.get("traefik.http.routers.telemt-panel.entrypoints", "") == "admin",
+    "Telemt admin panel must not use public WEBDOMAIN path routing",
+)
 
 mihomo_labels = labels_for(load_yaml("docker-proxy/compose.d/16-mihomo.yml")["services"]["mihomo"])
 mihomo_template = (root / "script/template/mihomo.config.yaml.template").read_text(encoding="utf-8")

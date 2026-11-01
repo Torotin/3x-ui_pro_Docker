@@ -1,25 +1,43 @@
 listen = "0.0.0.0:${PORT_LOCAL_TELEMT_PANEL}"
-base_path = "/${URI_TELEMT_PANEL}"
+base_path = ""
+public_url = "https://telemt.${WEBDOMAIN}:${PORT_LOCAL_ADMIN}"
+trusted_proxies = ["172.18.0.6/32", "172.18.0.0/24", "fd00:dead:beef:12::6/128", "fd00:dead:beef:12::/64"]
 data_dir = "/var/lib/telemt-panel"
+
+[tls]
+mode = "http"
 
 [telemt]
 url = "http://127.0.0.1:${PORT_LOCAL_TELEMT_API}"
 auth_header = "${TELEMT_API_AUTH_HEADER}"
-binary_path = "/usr/local/bin/telemt"
-config_path = "/etc/telemt/config.toml"
-container_name = "telemt"
-
-[telemt.auto_update]
-enabled = false
-
-[panel]
-github_repo = "amirotin/telemt_panel"
-binary_path = "/usr/local/bin/telemt-panel"
-
-[panel.auto_update]
-enabled = false
 
 [auth]
 username = "${USER_WEB}"
 password_hash = "${TELEMT_PANEL_PASSWORD_HASH_RAW}"
-jwt_secret = "${TELEMT_PANEL_JWT_SECRET}"
+
+[store]
+driver = "sqlite"
+path = "/var/lib/telemt-panel/panel.db"
+
+[geography]
+build_timeout_secs = 10
+
+[subpage]
+enabled = true
+listen = "0.0.0.0:${PORT_LOCAL_TELEMT_SUB}"
+base_path = "/${URI_TELEMT_SUB}"
+public_url = "https://${WEBDOMAIN}"
+secret = "${TELEMT_SUBPAGE_SECRET}"
+
+[subpage.tls]
+mode = "http"
+
+[host]
+service_manager = "docker"
+log_source = "docker"
+# Bundled telemt-stack runs panel + telemt in one container.
+telemt_container = "telemt"
+panel_container = "telemt"
+
+[privileges]
+mode = "manual"

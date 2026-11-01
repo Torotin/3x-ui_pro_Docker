@@ -1,11 +1,19 @@
+# Telemt stack template (target binary: telemt 3.5.16+).
+# Invariants: use_middle_proxy=false; socks egress via 3x-ui mixed inbound; direct upstream disabled;
+# WEB vhost path + secret_mode=dd; censorship mask -> traefik:4443 (PPv1).
+# On live upgrades, merge [access.users] and panel-added [[web.vhosts.profiles]] from backup
+# (see .tmp/task3-merge-procedure.md). Fresh installs only get bootstrap + web placeholders below.
+
 [general]
 data_path = "/var/lib/telemt"
 log_level = "normal"
-use_middle_proxy = true
+# false: DC via [[upstreams]] (3x-ui socks). true: Telegram middle-proxy pool (may fail on DPI hosts).
+use_middle_proxy = false
 proxy_secret_path = "/var/lib/telemt/proxy-secret"
 proxy_config_v4_cache_path = "/var/lib/telemt/cache/proxy-config-v4.txt"
 proxy_config_v6_cache_path = "/var/lib/telemt/cache/proxy-config-v6.txt"
 quota_state_path = "/var/lib/telemt/telemt.limit.json"
+# Middle-endpoint (ME) tuning below is env-driven for profile parity; ignored when use_middle_proxy=false.
 middle_proxy_nat_probe = ${TELEMT_MIDDLE_PROXY_NAT_PROBE}
 stun_nat_probe_concurrency = ${TELEMT_STUN_NAT_PROBE_CONCURRENCY}
 middle_proxy_pool_size = ${TELEMT_MIDDLE_PROXY_POOL_SIZE}
@@ -41,6 +49,7 @@ tls = true
 show = "*"
 public_host = "${WEBDOMAIN}"
 public_port = 443
+# WEB links are emitted for profiles referenced from [[web.vhosts.profiles]]
 
 [timeouts]
 me_one_retry = ${TELEMT_ME_ONE_RETRY}
@@ -71,11 +80,51 @@ listen = "0.0.0.0:${PORT_LOCAL_TELEMT_API}"
 whitelist = ["127.0.0.1/32", "172.18.0.0/24", "172.19.0.0/24", "fd00:dead:beef:12::/64", "fd00:dead:beef:13::/64"]
 auth_header = "${TELEMT_API_AUTH_HEADER}"
 minimal_runtime_enabled = true
+# Panel «Журнал событий» / recent_events — requires runtime edge (default off upstream).
+runtime_edge_enabled = true
+runtime_edge_cache_ttl_ms = 1000
+runtime_edge_top_n = 10
+runtime_edge_events_capacity = 256
 
 [[server.listeners]]
 ip = "0.0.0.0"
 port = ${PORT_LOCAL_TELEMT_PROXY}
 proxy_protocol = true
+
+# Telemt WEB: Traefik terminates TLS on websecure and forwards plain HTTP here.
+[[server.listeners]]
+ip = "0.0.0.0"
+port = ${PORT_LOCAL_TELEMT_WEB}
+transport = "web"
+proxy_protocol = false
+reuse_allow = false
+web_client_ip_source = "x_forwarded_for"
+web_trusted_proxy_cidrs = ["172.18.0.6/32", "172.18.0.0/24", "fd00:dead:beef:12::6/128", "fd00:dead:beef:12::/64"]
+
+[web]
+enabled = true
+allow_wildcard_hosts = false
+carrier = "${TELEMT_WEB_CARRIER}"
+decoy_fasttrack_mode = "off"
+http_connection_capacity_action = "drop"
+
+[[web.vhosts]]
+host = "${WEBDOMAIN}"
+base_path = "${URI_TELEMT_WEB}"
+public_addr = "${PUBLIC_IPV4}:443"
+
+[web.vhosts.decoy]
+mode = "http_upstream"
+upstream = "${TELEMT_WEB_DECOY_UPSTREAM}"
+resolve = "never"
+
+# Panel may append extra [[web.vhosts.profiles]] on live hosts; preserve them on config refresh.
+[[web.vhosts.profiles]]
+user = "${TELEMT_WEB_USER}"
+secret_mode = "dd"
+max_sessions = 32
+max_streams = 512
+max_streams_per_session = 64
 
 [censorship]
 tls_domain = "${WEBDOMAIN}"
@@ -95,10 +144,21 @@ mask_relay_max_bytes = ${TELEMT_MASK_RELAY_MAX_BYTES}
 mask_relay_timeout_ms = ${TELEMT_MASK_RELAY_TIMEOUT_MS}
 mask_relay_idle_timeout_ms = ${TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS}
 
+# Installer seeds bootstrap + WEB user only; merge live [access.users] before overwrite on existing installs.
 [access.users]
 "${TELEMT_BOOTSTRAP_USER}" = "${TELEMT_BOOTSTRAP_SECRET_HEX}"
+"${TELEMT_WEB_USER}" = "${TELEMT_WEB_SECRET_HEX}"
 
+# Egress via 3x-ui mixed inbound → Xray default routing (not a hard-coded mihomo hop).
+[[upstreams]]
+type = "socks5"
+address = "3x-ui:${PORT_LOCAL_XRAY_MIXED}"
+weight = 100
+enabled = true
+
+# Keep disabled when the host cannot reach Telegram DC IPs directly (health checks
+# would mark the whole upstream set unhealthy and drop client sessions).
 [[upstreams]]
 type = "direct"
 weight = 1
-enabled = true
+enabled = false

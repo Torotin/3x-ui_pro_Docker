@@ -1074,7 +1074,7 @@ test_admin_traefik_route_prepended_for_webdomain_hosts() {
 	assert_eq 1 "$ob_count" "admin-traefik freedom outbound must redirect to 172.18.0.6:9443 with finalRules allow"
 	assert_eq admin-traefik "$first_tag" "admin-traefik rule must be first so WARP cannot steal admin Hosts"
 	assert_eq "admin-traefik:9443:tcp" "$port_rule" "companion port:9443 rule must follow domain rule"
-	assert_eq "full:3x-ui.screenhub.linkpc.net,full:adguard.screenhub.linkpc.net,full:arcane.screenhub.linkpc.net,full:homepage.screenhub.linkpc.net,full:lampac-admin.screenhub.linkpc.net,full:traefik.screenhub.linkpc.net" "$domains" "admin Host FQDNs mismatch"
+	assert_eq "full:3x-ui.screenhub.linkpc.net,full:adguard.screenhub.linkpc.net,full:arcane.screenhub.linkpc.net,full:homepage.screenhub.linkpc.net,full:lampac-admin.screenhub.linkpc.net,full:telemt.screenhub.linkpc.net,full:traefik.screenhub.linkpc.net" "$domains" "admin Host FQDNs mismatch"
 }
 
 test_managed_burst_observatory_preserves_custom_subjects() {
@@ -1407,7 +1407,8 @@ test_build_admin_sub_json_dns() {
 	assert_eq dns_out "$(jq -r '.tag' <<<"$out")" "dns tag must be dns_out"
 	assert_eq UseIP "$(jq -r '.queryStrategy' <<<"$out")" "dns queryStrategy must be UseIP"
 	assert_eq 198.51.100.10 "$(jq -r '.hosts["lampac-admin.example.test"]' <<<"$out")" "dns hosts must include all admin FQDNs"
-	assert_eq 7 "$(jq -r '.hosts | length' <<<"$out")" "dns hosts = apex + 6 admin labels"
+	assert_eq 198.51.100.10 "$(jq -r '.hosts["telemt.example.test"]' <<<"$out")" "dns hosts must include telemt admin FQDN"
+	assert_eq 8 "$(jq -r '.hosts | length' <<<"$out")" "dns hosts = apex + 7 admin labels"
 }
 
 test_build_admin_sub_json_observatory() {
@@ -1654,7 +1655,7 @@ test_admin_sub_hostnames_list() {
 	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
 	local out
 	out=$(admin_sub_hostnames | sort | tr '\n' ',')
-	assert_eq "3x-ui,adguard,arcane,homepage,lampac-admin,traefik," "$out" "admin host label set mismatch"
+	assert_eq "3x-ui,adguard,arcane,homepage,lampac-admin,telemt,traefik," "$out" "admin host label set mismatch"
 }
 
 test_build_admin_sub_clash_rules_proxy_mode() {

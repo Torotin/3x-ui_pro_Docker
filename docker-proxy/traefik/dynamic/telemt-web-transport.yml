@@ -1,0 +1,4 @@
+# Placeholder path for Traefik RO /dynamic bind-mount overlay.
+# Real ServersTransport is mounted over this file from 15-telemt.yml when ENABLE_TELEMT.
+# Without Telemt, this stub must NOT define telemt-web.
+http: {}

@@ -222,7 +222,8 @@ json_upsert_admin_traefik_route() {
         "full:adguard."+$w,
         "full:3x-ui."+$w,
         "full:traefik."+$w,
-        "full:lampac-admin."+$w
+        "full:lampac-admin."+$w,
+        "full:telemt."+$w
       ]
     }')
 	# Companion rule: clients that resolve admin FQDNs via hosts/A-record often dial

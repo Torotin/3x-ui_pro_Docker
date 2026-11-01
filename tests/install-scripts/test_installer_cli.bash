@@ -813,6 +813,19 @@ ENV
 	assert_contains 'stun_servers = ["stun1.l.google.com:19302", "stun2.l.google.com:19302"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render STUN servers as TOML array"
 	assert_contains 'http_ip_detect_urls = ["https://api.ipify.org", "https://ifconfig.me/ip"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render HTTP IP detect URLs as TOML array"
 	assert_not_contains "http_ip_detect_urls = '[" "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must not render HTTP IP detect URLs as TOML string"
+	assert_contains 'URI_TELEMT_SUB=' "$INSTALL_ROOT/compose.d/.env" "compose env must persist generated Telemt subpage path"
+	assert_contains 'PORT_LOCAL_TELEMT_SUB=8081' "$INSTALL_ROOT/compose.d/.env" "compose env must default Telemt subpage listen port to 8081"
+	assert_contains '[subpage]' "$INSTALL_ROOT/telemt-panel/config/config.toml" "Telemt panel config must enable 1.x subpage when Telemt is enabled"
+	assert_contains 'base_path = ""' "$INSTALL_ROOT/telemt-panel/config/config.toml" "Telemt panel admin must use empty base_path for admin Host routing"
+}
+
+test_final_summary_includes_telemt_admin_when_enabled() {
+	make_fixture
+	export ENABLE_TELEMT=true
+	run_installer run env final
+	assert_contains "Telemt Panel     : https://telemt.example.test:9443/" "$tmpdir/stdout" "final summary must include admin Telemt panel URL on telemt host"
+	assert_contains "Telemt Panel     : https://telemt.example.test:9443/" "$INSTALL_STATE_DIR/install.summary" "persisted summary must include admin Telemt panel URL on telemt host"
+	assert_contains "Telemt Subpage   : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "persisted summary must include public Telemt subpage base URL"
 }
 
 test_env_can_disable_telemt_rendering() {
@@ -1832,6 +1845,7 @@ test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels
 test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state
+test_final_summary_includes_telemt_admin_when_enabled
 test_env_can_disable_telemt_rendering
 test_env_regenerates_stale_htpasswd_when_password_changes
 test_env_regenerates_existing_hash_when_verify_is_unsupported

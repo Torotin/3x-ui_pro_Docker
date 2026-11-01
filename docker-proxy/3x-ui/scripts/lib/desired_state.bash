@@ -71,6 +71,7 @@ inbound_remark_slug() {
 	xhttp) printf '%s' vless-xhttp ;;
 	grpc) printf '%s' vless-grpc-tls ;;
 	hysteria2) printf '%s' hysteria2 ;;
+	mixed) printf '%s' mixed-docker-net ;;
 	*) return 1 ;;
 	esac
 }
@@ -94,6 +95,13 @@ managed_inbound_remarks_json() {
 	local kind=$1 desired=$2 desired_remark legacy_remark
 	desired_remark=$(jq -r ".inbounds.$kind.remark" <<<"$desired")
 	legacy_remark=$(legacy_managed_inbound_remark "$kind")
+	# mixed was briefly shipped as telemt-egress; keep recognizing it on upgrades.
+	if [[ "$kind" == "mixed" ]]; then
+		jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" \
+			--arg old1 'telemt-egress' --arg old2 'managed:telemt-egress' \
+			'[$desired, $legacy, $old1, $old2] | unique'
+		return 0
+	fi
 	jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" '[$desired, $legacy] | unique'
 }
 
@@ -103,7 +111,7 @@ build_desired_state() {
 	local shared_email=${CLIENT_EMAIL_SHARED:-"$prefix"}
 	local sub_id=${CLIENT_SUB_ID:-}
 	local tls_domain=${WEBDOMAIN:-localhost}
-	local vision_remark xhttp_remark grpc_remark hysteria2_remark
+	local vision_remark xhttp_remark grpc_remark hysteria2_remark mixed_remark
 	if [[ -z "$sub_id" ]]; then
 		# Стабильный subId производен от домена и общей метки клиента.
 		sub_id=$(printf '%s:%s' "${WEBDOMAIN:-localhost}" "$shared_email" | sha256sum | cut -c1-16)
@@ -112,6 +120,7 @@ build_desired_state() {
 	xhttp_remark=$(inbound_remark xhttp)
 	grpc_remark=$(inbound_remark grpc)
 	hysteria2_remark=$(inbound_remark hysteria2)
+	mixed_remark=$(inbound_remark mixed)
 
 	jq -nc \
 		--arg webListen "${webListen:-0.0.0.0}" \
@@ -124,6 +133,7 @@ build_desired_state() {
 		--arg grpcPort "${PORT_LOCAL_GRPC:-9444}" \
 		--arg grpcPath "${URI_VLESS_GRPC:-/grpc}" \
 		--arg hysteria2Port "${PORT_LOCAL_HYSTERIA:-443}" \
+		--arg mixedPort "${PORT_LOCAL_XRAY_MIXED:-10808}" \
 		--arg xrayTlsCert "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${tls_domain}-cert.pem}" \
 		--arg xrayTlsKey "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${tls_domain}-key.pem}" \
 		--arg domain "${WEBDOMAIN:-}" \
@@ -133,6 +143,7 @@ build_desired_state() {
 		--arg xhttpRemark "$xhttp_remark" \
 		--arg grpcRemark "$grpc_remark" \
 		--arg hysteria2Remark "$hysteria2_remark" \
+		--arg mixedRemark "$mixed_remark" \
 		'{
           panel: {
             webListen: $webListen,
@@ -144,7 +155,8 @@ build_desired_state() {
             vision: {managed: true, protocol: "vless", port: ($visionPort|tonumber), remark: $visionRemark},
             xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath},
             grpc: {managed: true, protocol: "vless", port: ($grpcPort|tonumber), remark: $grpcRemark, path: $grpcPath},
-            hysteria2: {managed: true, protocol: "hysteria", port: ($hysteria2Port|tonumber), remark: $hysteria2Remark}
+            hysteria2: {managed: true, protocol: "hysteria", port: ($hysteria2Port|tonumber), remark: $hysteria2Remark},
+            mixed: {managed: true, protocol: "mixed", port: ($mixedPort|tonumber), remark: $mixedRemark}
           },
           clients: {
             shared: {email: $sharedEmail, subId: $subId, flow: "xtls-rprx-vision", visionFlow: "xtls-rprx-vision", xhttpFlow: "", grpcFlow: ""}
