@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Apply Telemt panel GeoIP URL sources (P3TERX GeoLite.mmdb by default).
 # Settings live in panel-state (not TOML); this script uses PUT /api/settings/geoip.
+# Does not wait for MMDB download — panel fetches asynchronously after PUT.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -77,14 +78,10 @@ case "$code" in
 200|202) ;;
 *) exit 1 ;;
 esac
-for i in $(seq 1 36); do
-  out=$(curl -sS -b /tmp/ensure-geoip.cj "${PANEL_URL}/api/settings/geoip")
-  echo "$out" | grep -q "\"state\":\"ready\"" && echo "state=ready" && exit 0
-  echo "$out" | grep -q "\"state\":\"error\"" && echo "$out" && exit 2
-  sleep 5
-done
-echo "timeout waiting for geoip ready"
-exit 3
+# Snapshot only — do not block on download/ready; panel continues in parallel.
+curl -sS -b /tmp/ensure-geoip.cj "${PANEL_URL}/api/settings/geoip" 2>/dev/null | head -c 400 || true
+echo
+exit 0
 '
 
-log "GeoIP sources applied (P3TERX/GeoLite.mmdb URLs or overrides from env)"
+    log "GeoIP sources applied; MMDB download continues in panel (non-blocking)"

@@ -472,14 +472,24 @@ strip_removed_xray_stream_fields_json() {
 }
 
 # Нормализует сохраненный REALITY stream без регенерации ключей.
+# Reconcile fallback target/xver from env so ENABLE_TELEMT flips
+# (telemt:9443 vs traefik:4443) apply on existing Vision inbounds.
 sanitize_vision_stream_json() {
-	local stream=$1 fingerprint
+	local stream=$1 fingerprint target xver
 	fingerprint=$(jq -r '.realitySettings.settings.fingerprint // empty' <<<"$stream")
 	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
-	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c --arg fingerprint "$fingerprint" '
+	target="${REALITY_TARGET_HOST:-${VISION_FALLBACK_HOST:-telemt}}:${REALITY_TARGET_PORT:-${VISION_FALLBACK_PORT:-${PORT_LOCAL_TELEMT_PROXY:-9443}}}"
+	xver="${REALITY_TARGET_XVER:-${VISION_FALLBACK_XVER:-1}}"
+	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c \
+		--arg fingerprint "$fingerprint" \
+		--arg target "$target" \
+		--argjson xver "$xver" '
       if (.realitySettings // null) then
         .realitySettings.maxTimeDiff = (.realitySettings.maxTimeDiff // .realitySettings.maxTimediff // 0)
         | del(.realitySettings.maxTimediff)
+        | del(.realitySettings.dest)
+        | .realitySettings.target = $target
+        | .realitySettings.xver = $xver
         | .realitySettings.settings.fingerprint = $fingerprint
       else
         .

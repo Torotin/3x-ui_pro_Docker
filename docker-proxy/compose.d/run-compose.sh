@@ -411,6 +411,7 @@ run_rebuild() {
 maybe_ensure_telemt_geoip() {
 	local touched=${1:-}
 	local script="$PROJECT_ROOT/telemt-panel/ensure-geoip.sh"
+	local log_file="${ENV_FILE%/*}/.ensure-geoip.log"
 	telemt_compose_enabled || return 0
 	if [[ -n "$touched" && "$touched" != *telemt* ]]; then
 		return 0
@@ -419,8 +420,10 @@ maybe_ensure_telemt_geoip() {
 		log "WARN: Telemt GeoIP ensure script missing: $script"
 		return 0
 	}
-	log "Applying Telemt panel GeoIP sources (ensure-geoip.sh)"
-	bash "$script" || log "WARN: ensure-geoip.sh failed (panel may still need manual GeoIP URLs)"
+	# Non-blocking: compose up/restart must not wait on MMDB fetch.
+	log "Applying Telemt panel GeoIP sources in background (ensure-geoip.sh → $log_file)"
+	nohup bash "$script" >>"$log_file" 2>&1 </dev/null &
+	disown $! 2>/dev/null || true
 }
 
 run_restart() {

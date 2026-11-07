@@ -1,5 +1,5 @@
 # Traefik ServersTransport cannot be declared via Docker labels (file/CRD only).
-# Overlay the stub at traefik/dynamic/telemt-web-transport.yml (http: {}) with the real
+# Overlay the comment-only stub at traefik/dynamic/telemt-web-transport.yml with the real
 # transport while Telemt is enabled — required because /dynamic is a RO directory mount.
 services:
   traefik:

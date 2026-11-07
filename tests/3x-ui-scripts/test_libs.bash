@@ -69,9 +69,9 @@ test_dns_replace_preserves_unknown_fields() {
 
 test_remove_managed_xray_artifacts_only_removes_our_tags() {
 	local input cleaned managed_count direct_count custom_count custom_subjects
-	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"},{"tag":"warp-custom"},{"tag":"tor-custom"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"},{"balancerTag":"custom-balancer"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"},{"tag":"warp-custom-balancer"},{"tag":"tor-custom-balancer"}]},"burstObservatory":{"subjectSelector":["warp-custom","tor-custom","custom-out","usque"]}}}'
+	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"},{"tag":"mihomo"},{"tag":"warp-custom"},{"tag":"tor-custom"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"mihomo","network":"tcp,udp"},{"outboundTag":"blocked"},{"balancerTag":"custom-balancer"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"},{"tag":"warp-custom-balancer"},{"tag":"tor-custom-balancer"}]},"burstObservatory":{"subjectSelector":["warp-custom","tor-custom","custom-out","usque"]}}}'
 	cleaned=$(json_remove_managed_xray_artifacts "$input")
-	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-retired" or $t == "tor-proxy" or $t == "warp-balancer")] | length')
+	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-retired" or $t == "tor-proxy" or $t == "warp-balancer" or $t == "mihomo")] | length')
 	direct_count=$(printf '%s' "$cleaned" | jq '[.xraySetting.outbounds[]? | select(.tag=="direct")] | length')
 	custom_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-custom" or $t == "tor-custom" or $t == "custom-balancer" or $t == "custom" or $t == "warp-custom-balancer" or $t == "tor-custom-balancer")] | length')
 	custom_subjects=$(printf '%s' "$cleaned" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
@@ -1063,6 +1063,20 @@ test_existing_mihomo_outbound_and_rule_are_preserved() {
 	assert_eq blocked "$last_rule_tag" "existing terminal rule order must be preserved when Mihomo rule already exists"
 }
 
+test_stale_mihomo_artifacts_removed_when_disabled() {
+	local base updated mihomo_outbounds mihomo_rules last_rule_tag
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"mihomo","protocol":"socks","settings":{"servers":[{"address":"mihomo","port":7890,"users":[]}]}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]},{"type":"field","network":"tcp,udp","outboundTag":"mihomo"}]}}}'
+
+	updated=$(json_apply_managed_xray_state "$(json_remove_managed_xray_artifacts "$base")" '[]' false false false '[]' "screenhub.linkpc.net" '[]' '' false '[]')
+	mihomo_outbounds=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="mihomo")] | length')
+	mihomo_rules=$(printf '%s' "$updated" | jq '[.xraySetting.routing.rules[]? | select((.outboundTag // "")=="mihomo")] | length')
+	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
+
+	assert_eq 0 "$mihomo_outbounds" "stale Mihomo outbound must be removed when ENABLE_MIHOMO is false"
+	assert_eq 0 "$mihomo_rules" "stale Mihomo catch-all rule must be removed when ENABLE_MIHOMO is false"
+	assert_eq blocked "$last_rule_tag" "without Mihomo, terminal rule must stay the previous unmanaged rule"
+}
+
 test_admin_traefik_route_prepended_for_webdomain_hosts() {
 	local base updated ob_count first_tag domains
 	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
@@ -1266,7 +1280,8 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_auto_sub_balancer "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id"' \
 		'update_builtin_geofiles_if_enabled' \
 		'restart_panel_if_needed' \
-		'log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"'; do
+		'log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"' \
+		'log_shared_autogen_subscription_urls "$desired"'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
 		[[ -n "$line" && "$line" -gt "$previous" ]] ||
 			fail "after-start pipeline order changed near: $expression"
@@ -1293,14 +1308,18 @@ test_afterstart_exports_admin_clash_routing_only() {
 		fail "after-start entrypoint must source admin subscription routing builder"
 	grep -Fq 'subClashEnableRouting=true' "$script" ||
 		fail "after-start entrypoint must enable native Clash routing"
+	grep -Fq 'mihomo_client_routing_file' "$script" ||
+		fail "after-start entrypoint must prefer local mihomo client routing overlay"
+	grep -Fq 'build_mihomo_client_sub_clash_rules' "$script" ||
+		fail "after-start entrypoint must build Clash rules from mihomo overlay"
 	grep -Fq 'discover_clash_proxy_node_names' "$script" ||
-		fail "after-start entrypoint must discover Clash proxy node names"
+		fail "after-start entrypoint must discover Clash proxy node names as fallback"
 	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
 		fail "Clash node discovery must gate grpc remarks on ENABLE_VLESS_GRPC"
 	grep -Fq 'ENABLE_HYSTERIA2:-true' "$script" ||
 		fail "Clash node discovery must gate hysteria2 remarks on ENABLE_HYSTERIA2"
-	grep -Fq 'subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")' "$script" ||
-		fail "after-start entrypoint must compute Clash rules with discovered nodes"
+	grep -Fq 'build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file"' "$script" ||
+		fail "after-start entrypoint must fall back to admin Clash rules with discovered nodes"
 	if grep -Eq '(^|[[:space:]])(export[[:space:]].*subEnableRouting|subEnableRouting=|subRoutingRules=)' "$script"; then
 		fail "after-start entrypoint must not export Happ routing fields for this feature"
 	fi
@@ -1534,6 +1553,32 @@ test_afterstart_check_mode_bootstraps_without_apply() {
 		fail "MODE=check entrypoint startup failed"
 	grep -Fq 'Dependency and environment check passed.' <<<"$output" ||
 		fail "MODE=check must complete before panel or Xray mutations"
+	grep -Fq 'Shared client subscriptions' <<<"$output" ||
+		fail "MODE=check must always print shared/autogen subscription URLs"
+}
+
+test_subscription_url_for_sub_id_joins_base() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	assert_eq 'https://example.test/sub/abcd' "$(subscription_url_for_sub_id 'https://example.test/sub/' abcd)" "trailing slash base"
+	assert_eq 'https://example.test/sub/abcd' "$(subscription_url_for_sub_id 'https://example.test/sub' abcd)" "no trailing slash base"
+}
+
+test_log_shared_autogen_subscription_urls_prints_three() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/log.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local desired output
+	desired='{"clients":{"shared":{"email":"example.test-autogen","subId":"deadbeefcafebabe"}}}'
+	subURI='https://example.test/std/'
+	subJsonURI='https://example.test/json/'
+	subClashURI='https://example.test/clash/'
+	output=$(log_shared_autogen_subscription_urls "$desired" 2>&1)
+	grep -Fq 'email=example.test-autogen subId=deadbeefcafebabe' <<<"$output" || fail "missing email/subId line"
+	grep -Fq 'STD   https://example.test/std/deadbeefcafebabe' <<<"$output" || fail "missing STD URL"
+	grep -Fq 'JSON  https://example.test/json/deadbeefcafebabe' <<<"$output" || fail "missing JSON URL"
+	grep -Fq 'CLASH https://example.test/clash/deadbeefcafebabe' <<<"$output" || fail "missing CLASH URL"
 }
 
 test_xray_template_update_requests_core_restart() {
@@ -1772,6 +1817,38 @@ test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block() {
 	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "full+nodes must not emit ADMIN group" || true
 }
 
+test_mihomo_client_routing_file_resolves_repo_overlay() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local f
+	unset MIHOMO_CLIENT_ROUTING_FILE || true
+	f=$(mihomo_client_routing_file) || fail "expected repo client-routing/mihomo-client.yaml"
+	[[ -f "$f" ]] || fail "resolved path missing: $f"
+	grep -Fq 'client-routing/mihomo-client.yaml' <<<"$f" || fail "unexpected path $f"
+}
+
+test_build_mihomo_client_sub_clash_rules_injects_admin() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local f yaml
+	f=$(mihomo_client_routing_file) || fail "routing overlay missing"
+	yaml=$(build_mihomo_client_sub_clash_rules "$f" "example.test" "203.0.113.9")
+	grep -Fq "DOMAIN,example.test,PROXY" <<<"$yaml" || fail "missing apex DOMAIN→PROXY"
+	grep -Fq "DOMAIN,arcane.example.test,PROXY" <<<"$yaml" || fail "missing admin DOMAIN→PROXY"
+	grep -Fq "DOMAIN,3x-ui.example.test,PROXY" <<<"$yaml" || fail "missing 3x-ui DOMAIN→PROXY"
+	grep -Fq "'example.test': 203.0.113.9" <<<"$yaml" || fail "missing dns.hosts apex"
+	grep -Fq "'arcane.example.test': 203.0.113.9" <<<"$yaml" || fail "missing dns.hosts admin"
+	grep -Fq "DOMAIN,example.test,real-ip" <<<"$yaml" || fail "missing fake-ip-filter apex"
+	grep -Fq "DOMAIN-SUFFIX,example.test,real-ip" <<<"$yaml" || fail "missing fake-ip-filter suffix"
+	grep -Fq 'include-all: true' <<<"$yaml" || fail "PROXY/AUTO must use include-all"
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "missing MATCH,DIRECT"
+	grep -Fq 'proxy-providers:' <<<"$yaml" && fail "overlay must not ship proxy-providers" || true
+	grep -Eq '^tun:' <<<"$yaml" && fail "overlay must not ship tun" || true
+	grep -Fq '# >>> ADMIN_RULES' <<<"$yaml" || fail "markers must remain as anchors"
+	# injected rules sit between markers; empty marker pair must not remain empty of rules
+	grep -Fq 'tun:' <<<"$yaml" && fail "tun key must be absent" || true
+}
+
 test_discover_clash_proxy_node_names_from_remarks() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
@@ -1902,12 +1979,16 @@ test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
 test_afterstart_exports_admin_clash_routing_only
+test_mihomo_client_routing_file_resolves_repo_overlay
+test_build_mihomo_client_sub_clash_rules_injects_admin
 test_afterstart_exports_json_sub_rules_and_clears_legacy_routing
 test_afterstart_exports_json_sub_observatory
 test_desired_panel_keys_include_json_routing
 test_desired_panel_keys_include_sub_json_observatory
 test_ensure_panel_settings_force_clears_sub_json_routing_rules
 test_afterstart_check_mode_bootstraps_without_apply
+test_subscription_url_for_sub_id_joins_base
+test_log_shared_autogen_subscription_urls_prints_three
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
 test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled

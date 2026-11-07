@@ -49,6 +49,14 @@ ip_probe_fetch_public_ip() {
 	return 1
 }
 
+# Under `set -o pipefail`, `cmd | grep -q` can exit 141 (SIGPIPE) when grep
+# closes early after the first match — false negative for "has output" checks.
+ip_probe_cmd_has_output() {
+	local out
+	out="$("$@" 2>/dev/null || true)"
+	[[ -n "$out" ]]
+}
+
 ip_probe_has_ipv4() {
 	if [[ "${INSTALL_MOCK:-0}" == "1" ]]; then
 		[[ "${INSTALL_MOCK_IP_PROBE_IPV4:-1}" == "1" ]] || return 1
@@ -56,7 +64,7 @@ ip_probe_has_ipv4() {
 		export IP_PROBE_PUBLIC_IPV4
 		return 0
 	fi
-	if ! ip -4 route show default 2>/dev/null | grep -q .; then
+	if ! ip_probe_cmd_has_output ip -4 route show default; then
 		return 1
 	fi
 	IP_PROBE_PUBLIC_IPV4="$(ip_probe_fetch_public_ip 4)" || return 1
@@ -74,10 +82,10 @@ ip_probe_has_ipv6() {
 	if [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 1)" == "1" ]]; then
 		return 1
 	fi
-	if ! ip -6 -o addr show scope global 2>/dev/null | grep -q .; then
+	if ! ip_probe_cmd_has_output ip -6 -o addr show scope global; then
 		return 1
 	fi
-	if ! ip -6 route show default 2>/dev/null | grep -q .; then
+	if ! ip_probe_cmd_has_output ip -6 route show default; then
 		return 1
 	fi
 	IP_PROBE_PUBLIC_IPV6="$(ip_probe_fetch_public_ip 6)" || return 1

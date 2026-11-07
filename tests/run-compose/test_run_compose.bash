@@ -149,6 +149,20 @@ test_restart_logs_is_explicit() {
 	assert_contains "logs -f traefik" "$tmpdir/docker.log" "restart --logs must follow logs"
 }
 
+test_restart_telemt_geoip_hook_uses_env_file_dir() {
+	make_fixture
+	printf 'ENABLE_TELEMT=true\n' >"$tmpdir/compose.d/.env"
+	mkdir -p "$tmpdir/telemt-panel"
+	cat >"$tmpdir/telemt-panel/ensure-geoip.sh" <<'BASH'
+#!/usr/bin/env bash
+exit 0
+BASH
+	chmod +x "$tmpdir/telemt-panel/ensure-geoip.sh"
+	run_runner restart --logs telemt
+	assert_contains "logs -f telemt" "$tmpdir/docker.log" "restart --logs telemt must follow logs after GeoIP hook"
+	[[ -f "$tmpdir/compose.d/.ensure-geoip.log" ]] || fail "GeoIP hook must write beside ENV_FILE without unbound COMPOSE_ENV"
+}
+
 test_up_is_safe_by_default() {
 	make_fixture
 	run_runner up
@@ -368,6 +382,7 @@ test_compose_fragments_do_not_hardcode_project_root() {
 test_restart_uses_no_deps_by_default
 test_restart_can_include_dependencies
 test_restart_logs_is_explicit
+test_restart_telemt_geoip_hook_uses_env_file_dir
 test_up_is_safe_by_default
 test_compose_invocation_sanitizes_transformed_environment
 test_legacy_docker_compose_is_rejected

@@ -351,14 +351,14 @@ geodata_outbound_tag() {
 	printf 'direct'
 }
 
-# Удаляет созданные runtime артефакты WARP/TOR перед пересборкой состояния.
+# Удаляет созданные runtime артефакты WARP/TOR/Mihomo перед пересборкой состояния.
 json_remove_managed_xray_artifacts() {
 	local current=$1
 	current=$(json_remove_managed_subject_selectors "$current")
 	jq -c '
-      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | (["tor-proxy","torproxy","warp","usque","warp-retired"] | index($tag)) == null))) |
+      .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | (["tor-proxy","torproxy","warp","usque","warp-retired","mihomo"] | index($tag)) == null))) |
       .xraySetting.routing = (.xraySetting.routing // {}) |
-      .xraySetting.routing.rules = ((.xraySetting.routing.rules // []) | map(select((.outboundTag // "") != "tor-proxy" and (.balancerTag // "") != "tor-balancer" and (.balancerTag // "") != "warp-balancer"))) |
+      .xraySetting.routing.rules = ((.xraySetting.routing.rules // []) | map(select((.outboundTag // "") != "tor-proxy" and (.outboundTag // "") != "mihomo" and (.balancerTag // "") != "tor-balancer" and (.balancerTag // "") != "warp-balancer"))) |
       .xraySetting.routing.balancers = ((.xraySetting.routing.balancers // []) | map(select((.tag // "") != "tor-balancer" and (.tag // "") != "warp-balancer")))
     ' <<<"$current"
 }

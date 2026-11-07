@@ -306,3 +306,140 @@ build_admin_sub_clash_rules() {
 	done < <(admin_sub_hostnames)
 	printf '  - MATCH,DIRECT\n'
 }
+
+# Joins a subscription base URI with subId (tolerates missing/extra trailing slash).
+subscription_url_for_sub_id() {
+	local base=$1 sub_id=$2
+	[[ -n "$base" && -n "$sub_id" ]] || return 1
+	base=${base%/}
+	[[ -n "$base" ]] || return 1
+	printf '%s/%s\n' "$base" "$sub_id"
+}
+
+# Logs STD / JSON / Clash subscription URLs for the shared (autogen) client.
+# Always safe to call after build_desired_state; skips quietly if subId/bases missing.
+log_shared_autogen_subscription_urls() {
+	local desired=$1
+	local email sub_id std_base json_base clash_base std json clash
+
+	[[ -n "$desired" ]] || {
+		log WARN "shared subscription URLs omitted: empty desired state"
+		return 0
+	}
+	email=$(jq -r '.clients.shared.email // empty' <<<"$desired")
+	sub_id=$(jq -r '.clients.shared.subId // empty' <<<"$desired")
+	[[ -n "$sub_id" ]] || {
+		log WARN "shared subscription URLs omitted: empty subId"
+		return 0
+	}
+
+	std_base=${subURI:-https://${WEBDOMAIN:-}${URI_SUB_PATH:-}}
+	json_base=${subJsonURI:-https://${WEBDOMAIN:-}${URI_JSON_PATH:-}}
+	clash_base=${subClashURI:-https://${WEBDOMAIN:-}${URI_CLASH_PATH:-/clash/}}
+
+	std=$(subscription_url_for_sub_id "$std_base" "$sub_id" || true)
+	json=$(subscription_url_for_sub_id "$json_base" "$sub_id" || true)
+	clash=$(subscription_url_for_sub_id "$clash_base" "$sub_id" || true)
+
+	log INFO "Shared client subscriptions email=${email:-unknown} subId=$sub_id"
+	[[ -n "$std" ]] && log INFO "  STD   $std"
+	[[ -n "$json" ]] && log INFO "  JSON  $json"
+	[[ -n "$clash" ]] && log INFO "  CLASH $clash"
+	if [[ -z "$std" && -z "$json" && -z "$clash" ]]; then
+		log WARN "shared subscription URLs omitted: subscription base URIs empty"
+	fi
+}
+
+# Local Mihomo client routing overlay (synced into inline subClashRules; never a public URL).
+mihomo_client_routing_file() {
+	local f=${MIHOMO_CLIENT_ROUTING_FILE:-} cand
+	if [[ -n "$f" ]]; then
+		[[ -f "$f" ]] || return 1
+		printf '%s\n' "$f"
+		return 0
+	fi
+	# Preferred container mount (compose: ../3x-ui/client-routing → /mnt/sh/client-routing).
+	if [[ -f /mnt/sh/client-routing/mihomo-client.yaml ]]; then
+		printf '%s\n' /mnt/sh/client-routing/mihomo-client.yaml
+		return 0
+	fi
+	# Fallback when only scripts/lib is mounted (partial recreate / older compose).
+	if [[ -f /mnt/sh/lib/mihomo-client.yaml ]]; then
+		printf '%s\n' /mnt/sh/lib/mihomo-client.yaml
+		return 0
+	fi
+	cand="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../client-routing" 2>/dev/null && pwd)/mihomo-client.yaml"
+	[[ -f "$cand" ]] || return 1
+	printf '%s\n' "$cand"
+}
+
+# Replaces the block between "# >>> NAME" and "# <<< NAME" (exclusive) with $2.
+# Marker lines may be indented (YAML comments inside nested maps/lists).
+_mihomo_fill_marker_block() {
+	local name=$1 content=$2
+	awk -v name="$name" -v content="$content" '
+		BEGIN {
+			start = "# >>> " name
+			stop = "# <<< " name
+		}
+		function stripped(s,    t) {
+			t = s
+			sub(/^[[:space:]]+/, "", t)
+			return t
+		}
+		stripped($0) == start {
+			print
+			if (content != "") {
+				# $(…) strips one trailing newline; keep marker on its own line.
+				printf "%s", content
+				if (substr(content, length(content), 1) != "\n")
+					printf "\n"
+			}
+			skip = 1
+			next
+		}
+		skip && stripped($0) == stop {
+			skip = 0
+			print
+			next
+		}
+		skip { next }
+		{ print }
+	'
+}
+
+# Builds subClashRules from client-routing/mihomo-client.yaml + admin host/DNS/DOMAIN inject.
+# PROXY/AUTO already use include-all in the template (no node-name injection).
+build_mihomo_client_sub_clash_rules() {
+	local routing_file=$1 webdomain=$2 public_ipv4=${3:-}
+	local host fakeip_block="" dns_hosts_block="" rules_block="" yaml
+
+	[[ -n "$routing_file" && -f "$routing_file" ]] || die "build_mihomo_client_sub_clash_rules: missing routing file"
+	[[ -n "$webdomain" ]] || die "build_mihomo_client_sub_clash_rules: empty webdomain"
+
+	if [[ -n "$public_ipv4" ]]; then
+		fakeip_block=$(
+			printf '    - DOMAIN,%s,real-ip\n' "$webdomain"
+			printf '    - DOMAIN-SUFFIX,%s,real-ip\n' "$webdomain"
+		)
+		dns_hosts_block=$(
+			printf "    '%s': %s\n" "$webdomain" "$public_ipv4"
+			while IFS= read -r host; do
+				printf "    '%s.%s': %s\n" "$host" "$webdomain" "$public_ipv4"
+			done < <(admin_sub_hostnames)
+		)
+	fi
+
+	rules_block=$(
+		printf '  - DOMAIN,%s,PROXY\n' "$webdomain"
+		while IFS= read -r host; do
+			printf '  - DOMAIN,%s.%s,PROXY\n' "$host" "$webdomain"
+		done < <(admin_sub_hostnames)
+	)
+
+	yaml=$(cat -- "$routing_file")
+	yaml=$(_mihomo_fill_marker_block ADMIN_FAKEIP "$fakeip_block" <<<"$yaml")
+	yaml=$(_mihomo_fill_marker_block ADMIN_DNS_HOSTS "$dns_hosts_block" <<<"$yaml")
+	yaml=$(_mihomo_fill_marker_block ADMIN_RULES "$rules_block" <<<"$yaml")
+	printf '%s\n' "$yaml"
+}

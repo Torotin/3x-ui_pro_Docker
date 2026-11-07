@@ -60,7 +60,13 @@ main() {
 	# Soft builders for MODE=check (no desired/panel). Final Clash+observatory
 	# passed into panel settings apply are rebuilt below once desired remarks exist.
 	subClashEnableRouting=true
-	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")
+	_mihomo_routing=
+	_mihomo_routing=$(mihomo_client_routing_file) || _mihomo_routing=
+	if [[ -n "$_mihomo_routing" && -n "${WEBDOMAIN:-}" ]]; then
+		subClashRules=$(build_mihomo_client_sub_clash_rules "$_mihomo_routing" "${WEBDOMAIN}" "${PUBLIC_IPV4:-}")
+	else
+		subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)")
+	fi
 	export subClashEnableRouting subClashRules
 	# JSON clients use subJsonRules; legacy subJsonRoutingRules must be cleared.
 	subJsonRules=$(build_admin_sub_json_rules "${WEBDOMAIN}")
@@ -82,6 +88,8 @@ main() {
 
 	if [[ "$MODE" == "check" ]]; then
 		log INFO "Dependency and environment check passed."
+		# Same URL dump as apply: env + stable shared subId (no panel required).
+		log_shared_autogen_subscription_urls "$(build_desired_state)"
 		return 0
 	fi
 
@@ -107,12 +115,20 @@ main() {
 			jq -r '.inbounds.hysteria2.remark // empty' <<<"$desired"
 		fi
 	} | grep -E . >"$remarks_file" || true
-	CLASH_PROXY_NODE_REMARKS_FILE=$remarks_file \
-		discover_clash_proxy_node_names >"$nodes_file" || true
-	if [[ ! -s "$nodes_file" ]]; then
-		log WARN "Clash node names undiscoverable: omitting custom proxy-groups"
+	_mihomo_routing=
+	_mihomo_routing=$(mihomo_client_routing_file) || _mihomo_routing=
+	if [[ -n "$_mihomo_routing" && -n "${WEBDOMAIN:-}" ]]; then
+		# Mihomo overlay uses include-all PROXY/AUTO; node discovery not required.
+		log INFO "Clash routing: mihomo client overlay $_mihomo_routing"
+		subClashRules=$(build_mihomo_client_sub_clash_rules "$_mihomo_routing" "${WEBDOMAIN}" "${PUBLIC_IPV4:-}")
+	else
+		CLASH_PROXY_NODE_REMARKS_FILE=$remarks_file \
+			discover_clash_proxy_node_names >"$nodes_file" || true
+		if [[ ! -s "$nodes_file" ]]; then
+			log WARN "Clash node names undiscoverable: omitting custom proxy-groups"
+		fi
+		subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")
 	fi
-	subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")
 	export subClashEnableRouting=true subClashRules
 	subJsonObservatory=$(build_admin_sub_json_observatory)
 	export subJsonObservatory
@@ -157,6 +173,7 @@ main() {
 	update_builtin_geofiles_if_enabled
 	restart_panel_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"
+	log_shared_autogen_subscription_urls "$desired"
 }
 
 main "$@"

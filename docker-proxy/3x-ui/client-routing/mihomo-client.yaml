@@ -1,0 +1,977 @@
+# =============================================================================
+# GENERATED upstream — do not edit by hand in this repo.
+# Source of truth: G:/mihomo/shared (profile 3xui-sub-clash)
+# Rebuild: python shared/build.py --profile 3xui-sub-clash
+# Copy:    G:/mihomo/generated/3xui/routing-mihomo-client.yaml
+#       →  docker-proxy/3x-ui/client-routing/mihomo-client.yaml
+# =============================================================================
+mode: rule
+log-level: warning
+allow-lan: false
+ipv6: true
+unified-delay: true
+tcp-concurrent: true
+keep-alive-idle: 600
+keep-alive-interval: 30
+find-process-mode: off
+external-controller: 127.0.0.1:9090
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+# ============================================================================
+# === АНАЛИЗ ТРАФИКА (SNIFFER) ===
+# ============================================================================
+# «Подслушивание» трафика для определения доменных имён
+# Позволяет корректно маршрутизировать даже при подключении по IP
+# Критично для DOMAIN / RULE-SET правил
+sniffer:
+  enable: true # Включить сниффер
+  parse-pure-ip: true # Анализировать соединения к «чистому» IP
+  force-dns-mapping: true # Принудительный DNS-маппинг fake-ip → домен
+  sniff:
+    # Настройки для различных протоколов
+    HTTP:
+      ports: [80, 8080-8880] # Порты для HTTP-трафика
+      override-destination: true # Подменять получателя трафика на домен
+    TLS:
+      ports: [443, 8443] # Порты для HTTPS/TLS-трафика
+      override-destination: true # Подменять получателя на SNI (утечки DNS)
+    QUIC:
+      ports: [443, 8443] # Порты для QUIC-протокола (UDP/443)
+  skip-domain:
+    - 'Mijia Cloud'
+    - '+.lan'
+    - '+.local'
+    - '+.push.apple.com'
+    - '+.apple.com'
+    - '+.cub.red'
+    - '+.cub.best'
+    - '+.cub.black'
+    - '+.kurwa-bober.ninja'
+    - '+.durex.monster'
+    - '+.cubnotrip.top'
+
+# ============================================================================
+# === ОБЩИЕ ПАРАМЕТРЫ И ЯКОРЯ (ANCHORS) ===
+# ============================================================================
+# Якоря сокращают повторение одинаковых блоков в rule-/proxy-providers
+anchors:
+  domain:
+    # HTTP MRS: домены
+    &domain
+    type: http
+    format: mrs
+    behavior: domain
+    interval: 86400 # Обновление раз в сутки
+  ipcidr:
+    # HTTP MRS: IP-CIDR
+    &ipcidr
+    type: http
+    format: mrs
+    behavior: ipcidr
+    interval: 86400
+  classical:
+    # HTTP text: classical list
+    &classical
+    type: http
+    format: text
+    behavior: classical
+    interval: 86400
+  domain_yaml:
+    # HTTP YAML: домены (custom, не MRS)
+    &domain_yaml
+    type: http
+    format: yaml
+    behavior: domain
+    interval: 86400
+  ipcidr_yaml:
+    # HTTP YAML: IP-CIDR (custom)
+    &ipcidr_yaml
+    type: http
+    format: yaml
+    behavior: ipcidr
+    interval: 86400
+  classical_yaml:
+    # HTTP YAML: classical (torrent-clients)
+    &classical_yaml
+    type: http
+    format: yaml
+    behavior: classical
+    interval: 86400
+  inline:
+    # Встроенный classical payload
+    &inline
+    type: inline
+    behavior: classical
+
+
+  # Health-check для proxy-providers
+  # timeout — миллисекунды (как у url-test групп); interval — секунды
+  health-check: &health-check
+    enable: true # Включить проверку
+    url: https://www.gstatic.com/generate_204 # URL для проверки доступности прокси
+    interval: 1800 # Период проверки (сек)
+    lazy: true # true = не долбить ноды, пока провайдер не используется
+    timeout: 5000 # Таймаут (мс); 5 = 5 мс → все «мёртвые»
+    expected-status: 204 # Ожидаемый HTTP-статус ответа
+
+  # Базовый шаблон proxy-provider (подписка)
+  pp: &pp
+    type: http
+    vehicle: compatible
+    interval: 3600 # Обновление подписки (сек)
+    health-check:
+      <<: *health-check
+  # Списки вариантов для сервисных селекторов (порядок в UI)
+  via_proxy:
+    # Магазин / логин → сначала прокси
+    &via_proxy
+    - PROXY
+    - DIRECT
+  via_direct:
+    # Игры / загрузки → сначала DIRECT
+    &via_direct
+    - DIRECT
+    - PROXY
+  via_cdn:
+    # CDN → PASS (дальше по rules) или PROXY
+    &via_cdn
+    - PASS
+    - PROXY
+  via_pass:
+    # Google / GitHub / Apple / Docker → PASS по умолчанию
+    &via_pass
+    - PASS
+    - PROXY
+  # Иконки селекторов (Qure / Reddit)
+  icon_proxy: &icon_proxy https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Proxy.png
+  icon_steam: &icon_steam https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Steam.png
+  icon_download: &icon_download https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Download.png
+  icon_game: &icon_game https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Game.png
+  icon_reddit: &icon_reddit https://www.redditstatic.com/shreddit/assets/favicon/192x192.png
+  icon_cloudflare: &icon_cloudflare https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Cloudflare.png
+  icon_google: &icon_google https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Google_Search.png
+  icon_github: &icon_github https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/GitHub.png
+  icon_reject: &icon_reject https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Reject.png
+  icon_apple: &icon_apple https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Apple.png
+  icon_docker: &icon_docker https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Docker.png
+  icon_twitch: &icon_twitch https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Twitch.png
+
+# ============================================================================
+# === DNS НАСТРОЙКИ (shared skeleton) ===
+# ============================================================================
+# Common for all profiles. Build injects listen / enhanced-mode block /
+# resolvers / hosts into the markers below.
+dns:
+  enable: true
+  ipv6: true
+  prefer-h3: false
+  use-hosts: true
+  use-system-hosts: false
+  respect-rules: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-range6: 2001:2::1/64
+  fake-ip-filter-mode: rule  # explicit real-ip exceptions, then MATCH,fake-ip
+  fake-ip-filter:
+    - DOMAIN-SUFFIX,lan,real-ip
+    - DOMAIN-SUFFIX,local,real-ip
+    - DOMAIN-SUFFIX,localhost,real-ip
+    - DOMAIN-SUFFIX,home.arpa,real-ip
+    - DOMAIN-SUFFIX,msftconnecttest.com,real-ip
+    - DOMAIN-SUFFIX,msftncsi.com,real-ip
+    - DOMAIN,dns.msftncsi.com,real-ip
+    - DOMAIN,captive.apple.com,real-ip
+    - DOMAIN,connectivitycheck.gstatic.com,real-ip
+    - DOMAIN,connectivitycheck.android.com,real-ip
+    - DOMAIN,clients3.google.com,real-ip
+    - DOMAIN,clients4.google.com,real-ip
+    - DOMAIN,time.android.com,real-ip
+    - DOMAIN,time.windows.com,real-ip
+    - DOMAIN,time.apple.com,real-ip
+    - DOMAIN-SUFFIX,ntp.org,real-ip
+    - DOMAIN-WILDCARD,stun.*.*,real-ip
+    - DOMAIN-WILDCARD,*.stun.*.*,real-ip
+    - DOMAIN-WILDCARD,stun.*.*.*,real-ip
+    - DOMAIN-WILDCARD,*.stun.*.*.*,real-ip
+    - DOMAIN-SUFFIX,cub.red,real-ip
+    - DOMAIN-SUFFIX,cub.best,real-ip
+    - DOMAIN-SUFFIX,cub.black,real-ip
+    - DOMAIN-SUFFIX,kurwa-bober.ninja,real-ip
+    - DOMAIN-SUFFIX,durex.monster,real-ip
+    - DOMAIN-SUFFIX,cubnotrip.top,real-ip
+    # >>> ADMIN_FAKEIP
+    # <<< ADMIN_FAKEIP
+    - MATCH,fake-ip
+
+  # DoH/DoQ resolvers (FlClash / SSClash / server).
+  # Keenetic full profile uses 03-dns-resolvers-keenetic.yaml (ADH-first), not this file.
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+    - 9.9.9.9
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+    - https://dns.quad9.net:443/dns-query
+    - https://dns10.quad9.net/dns-query
+    - https://dns11.quad9.net/dns-query
+    - https://dns.alidns.com:443/dns-query
+  fallback:
+    - https://freedns.controld.com/unfiltered
+    - https://wikimedia-dns.org/dns-query
+    - https://doh.ffmuc.net/dns-query
+    - https://doh.opendns.com/dns-query
+    - https://srdns.online/dns-query
+    - quic://dns.quad9.net:853
+    - quic://dns.alidns.com
+  proxy-server-nameserver:
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+  direct-nameserver:
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+  fallback-filter:
+    geoip: false
+  nameserver-policy:
+    'rule-set:google-domains':
+      - https://dns.google/dns-query
+    'rule-set:telegram-domains':
+      - https://1.1.1.1/dns-query
+  hosts:
+    'domain:appcenter.ms': 127.0.0.1
+    'domain:firebase.io': 127.0.0.1
+    'domain:mixpanel.com': 127.0.0.1
+    'domain:scorecardresearch.com': 127.0.0.1
+    'domain:quantserve.com': 127.0.0.1
+    'domain:adj.st': 127.0.0.1
+    'domain:app.adjust.com': 127.0.0.1
+    'domain:app.link': 127.0.0.1
+    'domain:appsflyer.com': 127.0.0.1
+    'domain:adservice.google.com': 127.0.0.1
+    'domain:googleadservices.com': 127.0.0.1
+    'dns.alidns.com':
+      - 223.5.5.5
+      - 223.6.6.6
+    'one.one.one.one':
+      - 1.1.1.1
+      - 1.0.0.1
+    'dns.cloudflare.com':
+      - 104.16.132.229
+      - 104.16.133.229
+    'cloudflare-dns.com':
+      - 104.16.248.249
+      - 104.16.249.249
+    'dot.pub':
+      - 1.12.12.12
+      - 120.53.53.53
+    'dns.google':
+      - 8.8.8.8
+      - 8.8.4.4
+    'dns.quad9.net':
+      - 9.9.9.9
+      - 149.112.112.112
+    'common.dot.dns.yandex.net':
+      - 77.88.8.8
+      - 77.88.8.1
+    'doh.dns.sb':
+      - 185.222.222.222
+    'dns10.quad9.net':
+      - 9.9.9.10
+      - 149.112.112.10
+    'dns11.quad9.net':
+      - 9.9.9.11
+      - 149.112.112.11
+    'dns.opendns.com':
+      - 208.67.222.222
+      - 208.67.220.220
+    'doh.opendns.com':
+      - 146.112.41.2
+      - 146.112.41.5
+    'dns.adguard.com':
+      - 94.140.14.14
+      - 94.140.15.15
+    'dns-unfiltered.adguard.com':
+      - 94.140.14.140
+      - 94.140.14.141
+    'doh.cleanbrowsing.org':
+      - 185.228.168.168
+      - 185.228.168.10
+    'gstatic.com':
+      - 142.250.120.94
+      - 142.250.120.120
+    'freedns.controld.com':
+      - 76.76.2.11
+    'wikimedia-dns.org':
+      - 185.71.138.138
+    'doh.ffmuc.net':
+      - 5.1.66.255
+    'srdns.online':
+      - 78.37.235.26
+    # >>> ADMIN_DNS_HOSTS
+    # <<< ADMIN_DNS_HOSTS
+
+# ============================================================================
+# === ГРУППЫ ПРОКСИ (PROXY GROUPS / СЕЛЕКТОРЫ) — 3x-ui Clash sub ===
+# ============================================================================
+# Без секции proxy-providers — PROXY/AUTO берут ноды из Clash-подписки (include-all).
+proxy-groups:
+
+  # --- автовыбор (скрыт) ---
+  - name: AUTO # url-test по нодам этой подписки → «PROXY»
+    type: url-test # Выбор по минимальной задержке
+    hidden: true # Не показывать в панели селекторов
+    include-all: true # все proxies из Clash-подписки 3x-ui
+    url: https://www.gstatic.com/generate_204
+    interval: 300 # Интервал теста (сек)
+    tolerance: 50 # Не переключать при Δ < 50 мс
+    lazy: true
+    timeout: 5000
+
+  # --- главный исходящий ---
+  - name: PROXY # Основной селектор (аналог SELECTOR)
+    type: select # Ручной выбор
+    icon: *icon_proxy
+    include-all: true # все proxies из Clash-подписки 3x-ui
+    proxies:
+      - AUTO
+    default-selected: AUTO
+
+  # --- игры ---
+  - name: Steam # Магазин / логин / клиент / Cloud
+    type: select
+    icon: *icon_steam
+    proxies: *via_proxy # PROXY → DIRECT
+    default-selected: PROXY
+
+  - name: Steam Downloads # Контент / CDN загрузок
+    type: select
+    icon: *icon_download
+    proxies:
+      - DIRECT
+      - PROXY
+      - PASS # Продолжить матчинг правил
+    default-selected: DIRECT
+
+  - name: Blizzard # Battle.net / игры
+    type: select
+    icon: *icon_game
+    proxies: *via_direct # DIRECT → PROXY
+    default-selected: DIRECT
+
+  - name: Reddit
+    type: select
+    icon: *icon_reddit
+    proxies: *via_direct # DIRECT → PROXY
+    default-selected: DIRECT
+
+  - name: Twitch
+    type: select
+    icon: *icon_twitch
+    proxies: *via_proxy # PROXY → DIRECT
+    default-selected: PROXY
+
+  # --- инфраструктура ---
+  - name: Apple # iCloud / Apple services
+    type: select
+    icon: *icon_apple
+    proxies: *via_pass # PASS → PROXY
+    default-selected: PASS
+
+  - name: Docker # Docker Hub / registry
+    type: select
+    icon: *icon_docker
+    proxies: *via_pass # PASS → PROXY
+    default-selected: PASS
+
+  - name: CDN # Облачные / CDN IP
+    type: select
+    icon: *icon_cloudflare
+    proxies: *via_cdn # PASS → PROXY
+    default-selected: PASS
+
+  - name: Google # PASS = продолжить матчинг правил
+    type: select
+    icon: *icon_google
+    proxies: *via_pass # PASS → PROXY
+    default-selected: PASS
+
+  - name: GitHub
+    type: select
+    icon: *icon_github
+    proxies: *via_pass # PASS → PROXY
+    default-selected: PASS
+
+  - name: QUIC # UDP/443
+    type: select
+    icon: *icon_reject
+    proxies:
+      - PASS
+      - REJECT
+    default-selected: PASS # По умолчанию пропускать QUIC (дальше по rules)
+
+# ============================================================================
+# === ВНЕШНИЕ НАБОРЫ ПРАВИЛ (RULE PROVIDERS) ===
+# ============================================================================
+# Списки доменов/IP; path → ./rule-providers/…; ручные = inline payload
+rule-providers:
+  # --- блокировки / служебные ---
+  adlist: { path: ./rule-providers/adlist.mrs, <<: *domain, url: https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.mrs }
+  private-domains: { path: ./rule-providers/private-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/private.mrs }
+
+  # Re-filter / ECH (legiz)
+  refilter-ech: { path: ./rule-providers/refilter-ech.mrs, <<: *domain, url: https://github.com/legiz-ru/mihomo-rule-sets/raw/main/re-filter/re-filter-ech.mrs }
+  refilter-noech: { path: ./rule-providers/refilter-noech.mrs, <<: *domain, url: https://github.com/legiz-ru/mihomo-rule-sets/raw/main/re-filter/re-filter-noech.mrs }
+  refilter-ipsum: { path: ./rule-providers/refilter-ipsum.mrs, <<: *ipcidr, url: https://github.com/legiz-ru/mihomo-rule-sets/raw/main/re-filter/ip-rule.mrs }
+
+  # --- torrent (legiz) ---
+  torrent-clients: { path: ./rule-providers/torrent-clients.yaml, <<: *classical_yaml, url: https://github.com/legiz-ru/mihomo-rule-sets/raw/main/other/torrent-clients.yaml }
+  torrent-trackers: { path: ./rule-providers/torrent-trackers.mrs, <<: *domain, url: https://raw.githubusercontent.com/legiz-ru/mihomo-rule-sets/main/other/torrent-trackers.mrs }
+  torrent-websites: { path: ./rule-providers/torrent-websites.mrs, <<: *domain, url: https://raw.githubusercontent.com/legiz-ru/mihomo-rule-sets/main/other/torrent-websites.mrs }
+
+  # --- сервисы → PROXY / селекторы ---
+  category-ai: { path: ./rule-providers/category-ai.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.mrs }
+  youtube: { path: ./rule-providers/youtube.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs }
+  youtube-ips: { path: ./rule-providers/youtube-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/youtube@ipcidr.mrs }
+  twitch: { path: ./rule-providers/twitch.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/twitch.mrs }
+  twitter: { path: ./rule-providers/twitter.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/twitter.mrs }
+  tiktok: { path: ./rule-providers/tiktok.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/tiktok.mrs }
+  spotify: { path: ./rule-providers/spotify.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/spotify.mrs }
+  speedtest: { path: ./rule-providers/speedtest.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/speedtest.mrs }
+  whatsapp-domains: { path: ./rule-providers/whatsapp-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/whatsapp.mrs }
+  whatsapp-ips: { path: ./rule-providers/whatsapp-ips.yaml, <<: *ipcidr_yaml, url: https://raw.githubusercontent.com/OMchik33/custom-rules/refs/heads/main/mihomo/whatsapp-ips.yaml } # OMchik33, не MetaCubeX
+  telegram-domains: { path: ./rule-providers/telegram-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/telegram.mrs }
+  telegram-ips: { path: ./rule-providers/telegram-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/telegram@ipcidr.mrs }
+  meta: { path: ./rule-providers/meta.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/meta.mrs }
+  meta-ips: { path: ./rule-providers/meta-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/meta@ipcidr.mrs }
+  discord-domains: { path: ./rule-providers/discord-domains.list, <<: *classical, url: https://github.com/zxc-rv/assets/raw/main/rules/discord.list } # zxc-rv classical
+  discord-geosite: { path: ./rule-providers/discord-geosite.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/discord.mrs } # MetaCubeX MRS
+  discord-ips: { path: ./rule-providers/discord-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/discord@ipcidr.mrs }
+  discord-voiceips: { path: ./rule-providers/discord-voiceips.mrs, <<: *ipcidr, url: https://github.com/legiz-ru/mihomo-rule-sets/raw/main/other/discord-voice-ip-list.mrs } # legiz voice MRS
+  steam-domains: { path: ./rule-providers/steam-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/steam.mrs }
+  steam-ips: { path: ./rule-providers/steam-ips.yaml, <<: *ipcidr_yaml, url: https://raw.githubusercontent.com/OMchik33/custom-rules/refs/heads/main/mihomo/gaming-ips.yaml } # OMchik33 gaming-ips
+  blizzard-domains: { path: ./rule-providers/blizzard-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/blizzard.mrs }
+  blizzard-asn: { path: ./rule-providers/blizzard-asn.mrs, <<: *ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/asn/AS57976.mrs } # Blizzard AS57976
+  reddit: { path: ./rule-providers/reddit.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/reddit.mrs }
+  roblox-domains: { path: ./rule-providers/roblox-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/roblox.mrs }
+  roblox-asn: { path: ./rule-providers/roblox-asn.mrs, <<: *ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/asn/AS22697.mrs }
+  netflix-domains: { path: ./rule-providers/netflix-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/netflix.mrs }
+  netflix-ips: { path: ./rule-providers/netflix-ips.mrs, <<: *ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/netflix.mrs }
+  github-domains: { path: ./rule-providers/github-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/github.mrs }
+  google-domains: { path: ./rule-providers/google-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.mrs }
+  google-ips: { path: ./rule-providers/google-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/google@ipcidr.mrs }
+  microsoft: { path: ./rule-providers/microsoft.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/microsoft.mrs }
+
+  # --- curated geosite → PROXY (нет в тегах ZKEEN) ---
+  docker: { path: ./rule-providers/docker.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/docker.mrs }
+  onedrive: { path: ./rule-providers/onedrive.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/onedrive.mrs }
+  icloud: { path: ./rule-providers/icloud.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/icloud.mrs }
+  paypal: { path: ./rule-providers/paypal.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/paypal.mrs }
+  visa: { path: ./rule-providers/visa.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/visa.mrs }
+  mastercard: { path: ./rule-providers/mastercard.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/mastercard.mrs }
+  samsung: { path: ./rule-providers/samsung.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/samsung.mrs }
+  category-anticensorship: { path: ./rule-providers/category-anticensorship.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-anticensorship.mrs }
+  category-games: { path: ./rule-providers/category-games.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-games.mrs }
+  category-media-ru-blocked: { path: ./rule-providers/category-media-ru-blocked.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-media-ru-blocked.mrs }
+
+  # --- CDN: MRS (zkeenip-rulesets / MetaCubeX); без .dat ---
+  cloudflare-domains: { path: ./rule-providers/cloudflare-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cloudflare.mrs }
+  cloudflare-ips: { path: ./rule-providers/cloudflare-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/cloudflare@ipcidr.mrs }
+  cloudfront-ips: { path: ./rule-providers/cloudfront-ips.mrs, <<: *ipcidr, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cloudfront.mrs }
+  akamai-domains: { path: ./rule-providers/akamai-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/akamai.mrs }
+  akamai-ips: { path: ./rule-providers/akamai-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/akamai@ipcidr.mrs }
+  amazon-domains: { path: ./rule-providers/amazon-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/amazon.mrs }
+  amazon-ips: { path: ./rule-providers/amazon-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/amazon@ipcidr.mrs }
+  arelion-ips: { path: ./rule-providers/arelion-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/arelion@ipcidr.mrs }
+  azure-ips: { path: ./rule-providers/azure-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/azure@ipcidr.mrs }
+  bunnycdn-ips: { path: ./rule-providers/bunnycdn-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/bunnycdn@ipcidr.mrs }
+  cdn77-ips: { path: ./rule-providers/cdn77-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/cdn77@ipcidr.mrs }
+  colocrossing-ips: { path: ./rule-providers/colocrossing-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/colocrossing@ipcidr.mrs }
+  contabo-ips: { path: ./rule-providers/contabo-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/contabo@ipcidr.mrs }
+  digitalocean-domains: { path: ./rule-providers/digitalocean-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/digitalocean.mrs }
+  digitalocean-ips: { path: ./rule-providers/digitalocean-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/digitalocean@ipcidr.mrs }
+  fastly-domains: { path: ./rule-providers/fastly-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/fastly.mrs }
+  fastly-ips: { path: ./rule-providers/fastly-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/fastly@ipcidr.mrs }
+  frantech-ips: { path: ./rule-providers/frantech-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/frantech@ipcidr.mrs }
+  gcore-ips: { path: ./rule-providers/gcore-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/gcore@ipcidr.mrs }
+  hetzner-domains: { path: ./rule-providers/hetzner-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/hetzner.mrs }
+  hetzner-ips: { path: ./rule-providers/hetzner-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/hetzner@ipcidr.mrs }
+  leaseweb-ips: { path: ./rule-providers/leaseweb-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/leaseweb@ipcidr.mrs }
+  linode-ips: { path: ./rule-providers/linode-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/linode@ipcidr.mrs }
+  liquidweb-ips: { path: ./rule-providers/liquidweb-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/liquidweb@ipcidr.mrs }
+  mega-ips: { path: ./rule-providers/mega-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/mega@ipcidr.mrs }
+  melbicom-ips: { path: ./rule-providers/melbicom-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/melbicom@ipcidr.mrs }
+  oracle-domains: { path: ./rule-providers/oracle-domains.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/oracle.mrs }
+  oracle-ips: { path: ./rule-providers/oracle-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/oracle@ipcidr.mrs }
+  ovh-ips: { path: ./rule-providers/ovh-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/ovh@ipcidr.mrs }
+  scaleway-ips: { path: ./rule-providers/scaleway-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/scaleway@ipcidr.mrs }
+  vodafone-ips: { path: ./rule-providers/vodafone-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/vodafone@ipcidr.mrs }
+  vultr-ips: { path: ./rule-providers/vultr-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/vultr@ipcidr.mrs }
+  cogent-ips: { path: ./rule-providers/cogent-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/cogent@ipcidr.mrs }
+  datacamp-ips: { path: ./rule-providers/datacamp-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/datacamp@ipcidr.mrs }
+
+  # --- ZKEEN domains (Anton classical; без .dat) ---
+  zkeen-domains: { path: ./rule-providers/zkeen-domains.list, <<: *classical, url: https://github.com/Anton111111/rule-lists/releases/latest/download/domains.list }
+  zkeen-other: { path: ./rule-providers/zkeen-other.list, <<: *classical, url: https://github.com/Anton111111/rule-lists/releases/latest/download/other.list }
+  zkeen-politic: { path: ./rule-providers/zkeen-politic.list, <<: *classical, url: https://github.com/Anton111111/rule-lists/releases/latest/download/politic.list }
+  zkeen-youtube: { path: ./rule-providers/zkeen-youtube.list, <<: *classical, url: https://github.com/Anton111111/rule-lists/releases/latest/download/youtube.list }
+
+  # --- RU → DIRECT ---
+  ru-ips: { path: ./rule-providers/ru-ips.mrs, <<: *ipcidr, url: https://github.com/zxc-rv/zkeenip-rulesets/releases/latest/download/ru@ipcidr.mrs }
+  ru-category: { path: ./rule-providers/ru-category.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ru.mrs }
+  ru-bank: { path: ./rule-providers/ru-bank.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-bank-ru.mrs }
+  ru-betting: { path: ./rule-providers/ru-betting.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-betting-ru.mrs }
+  ru-ecommerce: { path: ./rule-providers/ru-ecommerce.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ecommerce-ru.mrs }
+  ru-entertainment: { path: ./rule-providers/ru-entertainment.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-entertainment-ru.mrs }
+  ru-gov: { path: ./rule-providers/ru-gov.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-gov-ru.mrs }
+  ru-media: { path: ./rule-providers/ru-media.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-media-ru.mrs }
+  ru-medicine: { path: ./rule-providers/ru-medicine.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-medicine-ru.mrs }
+  ru-retail: { path: ./rule-providers/ru-retail.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-retail-ru.mrs }
+  ru-travel: { path: ./rule-providers/ru-travel.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-travel-ru.mrs }
+  ru-genotek: { path: ./rule-providers/ru-genotek.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/genotek-ru.mrs }
+  ru-ideco: { path: ./rule-providers/ru-ideco.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/ideco-ru.mrs }
+  ru-myoffice: { path: ./rule-providers/ru-myoffice.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/myoffice-ru.mrs }
+  ru-tbank: { path: ./rule-providers/ru-tbank.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/tbank-ru.mrs }
+  ru-tld: { path: ./rule-providers/ru-tld.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/tld-ru.mrs }
+  ru-yandex: { path: ./rule-providers/ru-yandex.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/yandex.mrs }
+  ru-vk: { path: ./rule-providers/ru-vk.mrs, <<: *domain, url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/vk.mrs }
+
+# --- inline rule-sets (edit shared/base/07-rule-providers-inline.yaml) ---
+  steam-downloads:
+    # CDN загрузок Steam → Steam Downloads
+    <<: *inline
+    payload:
+      - DOMAIN-SUFFIX,steamcontent.com
+      - DOMAIN-SUFFIX,steamserver.net
+      - DOMAIN,steampipe.akamaized.net
+      - DOMAIN,steampipe-partner.akamaized.net
+      - DOMAIN,steampipe-kr.akamaized.net
+
+  netbios:
+    # NetBIOS UDP → REJECT
+    <<: *inline
+    payload:
+      - 'AND,((NETWORK,UDP),(DST-PORT,135/137/138/139))'
+
+  # Stargate misc-ai → PROXY (Docker исключён — селектор Docker / PASS)
+  misc-ai:
+    <<: *inline
+    payload:
+      - DOMAIN-SUFFIX,x.ai
+      - DOMAIN-SUFFIX,grok.x.ai
+      - DOMAIN-SUFFIX,api.x.ai
+      - DOMAIN-KEYWORD,grok
+      - DOMAIN-SUFFIX,huggingface.co
+      - DOMAIN-SUFFIX,hf.co
+      - DOMAIN-SUFFIX,hf.space
+      - DOMAIN-SUFFIX,huggingface.com
+      - DOMAIN-KEYWORD,huggingface
+      - DOMAIN-SUFFIX,midjourney.com
+      - DOMAIN-KEYWORD,midjourney
+      - DOMAIN-SUFFIX,stability.ai
+      - DOMAIN-SUFFIX,stablediffusionweb.com
+      - DOMAIN-SUFFIX,dreamstudio.ai
+      - DOMAIN-SUFFIX,runwayml.com
+      - DOMAIN-SUFFIX,runway.ml
+      - DOMAIN-SUFFIX,character.ai
+      - DOMAIN-SUFFIX,replicate.com
+      - DOMAIN-SUFFIX,cohere.ai
+      - DOMAIN-SUFFIX,cohere.com
+      - DOMAIN-SUFFIX,datalore.io
+      - DOMAIN-SUFFIX,intellij.com
+      - DOMAIN-SUFFIX,intellij.net
+      - DOMAIN-SUFFIX,intellij.org
+      - DOMAIN-SUFFIX,jb.gg
+      - DOMAIN-SUFFIX,jetbrains.cloud
+      - DOMAIN-SUFFIX,jetbrains.com
+      - DOMAIN-SUFFIX,jetbrains.net
+      - DOMAIN-SUFFIX,jetbrains.space
+      - DOMAIN-SUFFIX,jetbrains.team
+      - DOMAIN-SUFFIX,kotlinlang.org
+      - DOMAIN-SUFFIX,youtrack.cloud
+      - DOMAIN-SUFFIX,replit.com
+      - DOMAIN-SUFFIX,repl.it
+      - DOMAIN-SUFFIX,stackoverflow.com
+      - DOMAIN-SUFFIX,npmjs.com
+      - DOMAIN-SUFFIX,pypi.org
+
+  bittorrent-ports:
+    # Типовые BT-порты → DIRECT
+    <<: *inline
+    payload:
+      - DST-PORT,6881-6999
+
+  ru-tld-suffix:
+    # Домашний / СНГ трафик → DIRECT (ccTLD + кириллица)
+    <<: *inline
+    payload:
+      - DOMAIN-SUFFIX,ru
+      - DOMAIN-SUFFIX,su
+      - DOMAIN-SUFFIX,moscow
+      - DOMAIN-SUFFIX,tatar
+      - DOMAIN-SUFFIX,by
+      - DOMAIN-SUFFIX,ua
+      - DOMAIN-SUFFIX,kz
+      - DOMAIN-SUFFIX,uz
+      - DOMAIN-SUFFIX,kg
+      - DOMAIN-SUFFIX,tj
+      - DOMAIN-SUFFIX,tm
+      - DOMAIN-SUFFIX,am
+      - DOMAIN-SUFFIX,ge
+      - DOMAIN-SUFFIX,md
+      - DOMAIN-SUFFIX,az
+      - DOMAIN-SUFFIX,рф
+      - DOMAIN-SUFFIX,рус
+      - DOMAIN-SUFFIX,онлайн
+      - DOMAIN-SUFFIX,орг
+      - DOMAIN-SUFFIX,сайт
+      - DOMAIN-SUFFIX,москва
+      - DOMAIN-SUFFIX,дети
+      - DOMAIN-SUFFIX,бел
+      - DOMAIN-SUFFIX,срб
+      - DOMAIN-SUFFIX,укр
+      - DOMAIN-SUFFIX,бг
+      - DOMAIN-SUFFIX,мон
+      - DOMAIN-SUFFIX,мкд
+      - DOMAIN-SUFFIX,қаз
+      - DOMAIN-SUFFIX,ком
+      - DOMAIN-SUFFIX,xn--p1ai
+      - DOMAIN-SUFFIX,xn--p1acf
+      - DOMAIN-SUFFIX,xn--80asehdb
+      - DOMAIN-SUFFIX,xn--c1avg
+      - DOMAIN-SUFFIX,xn--80aswg
+      - DOMAIN-SUFFIX,xn--80adxhks
+      - DOMAIN-SUFFIX,xn--d1acj3b
+      - DOMAIN-SUFFIX,xn--90ais
+      - DOMAIN-SUFFIX,xn--90a3ac
+      - DOMAIN-SUFFIX,xn--j1amh
+      - DOMAIN-SUFFIX,xn--90ae
+      - DOMAIN-SUFFIX,xn--l1acc
+      - DOMAIN-SUFFIX,xn--d1alf
+      - DOMAIN-SUFFIX,xn--80ao21a
+      - DOMAIN-SUFFIX,xn--j1aef
+
+  # Яндекс 360 для бизнеса — обобщённый список IP + ключевые суффиксы
+  # Источник: https://yandex.ru/support/yandex-360/business/admin/ru/network-settings.html
+  # (#general-list; подсети-дубликаты внутри /18|/19 опущены)
+  yandex-360-domains:
+    <<: *inline
+    payload:
+      - DOMAIN-SUFFIX,yandex.ru
+      - DOMAIN-SUFFIX,yandex.net
+      - DOMAIN-SUFFIX,yandex.com
+      - DOMAIN-SUFFIX,yandex.kz
+      - DOMAIN-SUFFIX,yandex.uz
+      - DOMAIN-SUFFIX,yandex.com.tr
+      - DOMAIN-SUFFIX,yandexcloud.net
+      - DOMAIN-SUFFIX,yandexadexchange.net
+      - DOMAIN-SUFFIX,yastatic.net
+      - DOMAIN-SUFFIX,yandex.st
+      - DOMAIN-SUFFIX,ya.ru
+      - DOMAIN-SUFFIX,webvisor.com
+      - DOMAIN-SUFFIX,webvisor.org
+
+  yandex-360-ips:
+    <<: *inline
+    payload:
+      - IP-CIDR,5.45.192.0/18
+      - IP-CIDR,5.255.192.0/18
+      - IP-CIDR,37.9.64.0/18
+      - IP-CIDR,37.140.128.0/18
+      - IP-CIDR,77.88.0.0/18
+      - IP-CIDR,84.252.160.0/19
+      - IP-CIDR,87.250.224.0/19
+      - IP-CIDR,90.156.176.0/22
+      - IP-CIDR,93.158.128.0/18
+      - IP-CIDR,95.108.128.0/17
+      - IP-CIDR,141.8.128.0/18
+      - IP-CIDR,178.154.128.0/18
+      - IP-CIDR,185.32.187.0/24
+      - IP-CIDR,185.206.164.0/22
+      - IP-CIDR,213.180.192.0/19
+      # IPv6 (используется при ipv6: true / dual fake-ip)
+      - IP-CIDR6,2a02:6b8::/29
+
+  direct-manual:
+    # Ручные исключения → DIRECT
+    <<: *inline
+    payload:
+      - DOMAIN-SUFFIX,easebar.com
+      - DOMAIN-SUFFIX,habrastorage.org
+
+  proxy-manual:
+    # Ручные домены / keyword → PROXY
+    <<: *inline
+    payload:
+      # Lampa Cub CDN / WebSocket — Stage B: PROXY (keep real-ip + sniffer skip)
+      - DOMAIN-SUFFIX,cub.red
+      - DOMAIN-SUFFIX,cub.best
+      - DOMAIN-SUFFIX,cub.black
+      - DOMAIN-SUFFIX,kurwa-bober.ninja
+      - DOMAIN-SUFFIX,durex.monster
+      - DOMAIN-SUFFIX,cubnotrip.top
+      - DOMAIN-SUFFIX,wbplay.com # Warner Bros Games / WBPlay (страховка по SNI)
+      - DOMAIN-SUFFIX,ntc.party
+      - DOMAIN-SUFFIX,debian.org
+      - DOMAIN-SUFFIX,proxmox.com
+      - DOMAIN-SUFFIX,lava.ru
+      - DOMAIN-SUFFIX,gazeta.pl
+      - DOMAIN-SUFFIX,web.archive.org
+      - DOMAIN-SUFFIX,deepl.com
+      - DOMAIN-SUFFIX,asus.com
+      - DOMAIN-SUFFIX,linguee.com
+      - DOMAIN-SUFFIX,vivaldi.net
+      - DOMAIN-SUFFIX,mtalk.google.com
+      - DOMAIN-SUFFIX,4pda
+      - DOMAIN-SUFFIX,4pda.to
+      - DOMAIN-SUFFIX,habr.com
+      - DOMAIN-SUFFIX,browserleaks.com
+      - DOMAIN-SUFFIX,copilot.microsoft.com
+      - DOMAIN-SUFFIX,amnezia.org
+      - DOMAIN-SUFFIX,linux.die.net
+      - DOMAIN-SUFFIX,v.31337.lol
+      - DOMAIN-SUFFIX,openwrt.org
+      - DOMAIN-SUFFIX,2ip.io
+      - DOMAIN-SUFFIX,hp.com
+      - DOMAIN-SUFFIX,nperf.com
+      - DOMAIN-SUFFIX,ipleak.net
+      - DOMAIN-SUFFIX,github.io
+      - DOMAIN-SUFFIX,gh-proxy.com # XKeen-UI update mirrors
+      - DOMAIN-SUFFIX,ghfast.top
+      - DOMAIN-SUFFIX,ghproxylist.com
+      - DOMAIN-SUFFIX,gitwarp.com
+      - DOMAIN-SUFFIX,webbrowsertools.com
+      - DOMAIN-SUFFIX,themoviedatabase.org
+      - DOMAIN-SUFFIX,tmdb.org
+      - DOMAIN-SUFFIX,nginx.org
+      - DOMAIN-SUFFIX,flibusta.site
+      - DOMAIN-SUFFIX,nicegram.app
+      - DOMAIN-SUFFIX,telesco.pe
+      - DOMAIN-SUFFIX,tg.dev
+      - DOMAIN-SUFFIX,registry.npmjs.org
+      - DOMAIN-SUFFIX,nodejs.org
+      - DOMAIN-SUFFIX,openai.com
+      - DOMAIN-SUFFIX,chatgpt.com
+      - DOMAIN-SUFFIX,oaistatic.com
+      - DOMAIN-KEYWORD,doramalive
+      - DOMAIN-KEYWORD,softboxdorama
+      - DOMAIN-KEYWORD,rutracker
+      - DOMAIN-KEYWORD,kinozal
+      - DOMAIN-KEYWORD,rutor
+      - DOMAIN-KEYWORD,nnmclub
+      - DOMAIN-KEYWORD,piratbit
+      - DOMAIN-KEYWORD,piratebay
+      - DOMAIN-KEYWORD,apibay
+      - DOMAIN-KEYWORD,jacred
+      - DOMAIN-KEYWORD,kpfr
+      - DOMAIN-KEYWORD,anidub
+      - DOMAIN-SUFFIX,t-ru.org
+      - DOMAIN-KEYWORD,torrent
+      - DOMAIN-SUFFIX,hosted-by-vdsina.com
+      - DOMAIN-SUFFIX,linkpc.net
+      - DOMAIN-SUFFIX,themoviedb.org
+      - DOMAIN-KEYWORD,himera-search
+
+  blizzard-extra:
+    # Blizzard: вне geosite/blizzard — CN/NetEase + CDN gaps (дубли MRS убраны)
+    <<: *inline
+    payload:
+      # CN / Battle.net CN
+      - DOMAIN-SUFFIX,battlenet.com
+      - DOMAIN-SUFFIX,battlenet.com.cn
+      - DOMAIN-SUFFIX,blizzard.cn
+      - DOMAIN-SUFFIX,blizzardgames.cn
+      - DOMAIN-SUFFIX,blzstatic.cn
+      - DOMAIN-SUFFIX,wowchina.com
+      # NetEase (legacy + modern CN CDN)
+      - DOMAIN-SUFFIX,bnet.163.com
+      - DOMAIN-SUFFIX,blz.nosdn.127.net
+      - DOMAIN-SUFFIX,di.res.netease.com
+      - DOMAIN-SUFFIX,diablo3.nosdn.127.net
+      - DOMAIN-SUFFIX,hearthstone.nosdn.127.net
+      - DOMAIN-SUFFIX,heroes.nos.netease.com
+      - DOMAIN-SUFFIX,overwatch.nosdn.127.net
+      - DOMAIN-SUFFIX,sc2.nosdn.127.net
+      - DOMAIN-SUFFIX,wow.nosdn.127.net
+      - DOMAIN-SUFFIX,necdn.leihuo.netease.com # blzdist-phx / d3 / d4 …
+      # CDN gaps (не в geosite/blizzard)
+      - DOMAIN-SUFFIX,blzddist2-a.akamaihd.net
+      - DOMAIN-SUFFIX,blizzard.gcdn.cloudn.co.kr # KR CloudN
+
+  blizzard-ips:
+    # Blizzard: известные IP
+    <<: *inline
+    payload:
+      - IP-CIDR,103.4.114.233/32
+      - IP-CIDR,103.4.115.248/32
+      - IP-CIDR,137.221.105.2/32
+      - IP-CIDR,137.221.105.136/32
+      - IP-CIDR,137.221.105.232/32
+      - IP-CIDR,182.162.116.1/32
+      - IP-CIDR,182.162.132.1/32
+      - IP-CIDR,182.162.135.1/32
+      - IP-CIDR,185.60.112.157/32
+      - IP-CIDR,185.60.112.158/32
+      - IP-CIDR,185.60.114.159/32
+      - IP-CIDR,202.9.67.59/32
+      - IP-CIDR,202.9.67.254/32
+      - IP-CIDR,203.66.81.98/32
+      - IP-CIDR,203.69.111.4/32
+      - IP-CIDR,210.71.148.11/32
+      - IP-CIDR,210.242.235.6/32
+      - IP-CIDR,211.115.104.1/32
+      - IP-CIDR,211.234.110.1/32
+      - IP-CIDR,222.231.22.1/32
+      - IP-CIDR,24.105.30.129/32
+      - IP-CIDR,24.105.62.129/32
+      - IP-CIDR,34.49.42.157/32
+      - IP-CIDR,34.125.192.191/32
+      - IP-CIDR,52.214.137.126/32
+      - IP-CIDR,54.94.196.47/32
+      - IP-CIDR,54.194.176.187/32
+      - IP-CIDR,54.207.104.145/32
+      - IP-CIDR,54.207.107.12/32
+
+# ============================================================================
+# === ПРАВИЛА МАРШРУТИЗАЦИИ (RULES) ===
+# ============================================================================
+# Сверху вниз; первое совпадение побеждает — не переставляйте блоки без нужды
+rules:
+
+  # >>> ADMIN_RULES
+  # <<< ADMIN_RULES
+
+  # --- 1. Ads / QUIC / NetBIOS ---
+  - RULE-SET,adlist,REJECT # Реклама / трекеры → всегда блок
+  # QUIC вне RU и вне Яндекс 360 → селектор QUIC
+  - AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((RULE-SET,ru-ips),(RULE-SET,yandex-360-ips)))))),QUIC
+  - RULE-SET,netbios,REJECT # NetBIOS UDP
+
+  # --- 2. LAN / private (Stargate-style reserved + local suffixes) ---
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve # Частная сеть 10.x (часто VPN/корп. LAN)
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve # CGNAT оператора (100.64–100.127)
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve # localhost (этот же хост)
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve # Автоадресация без DHCP (APIPA)
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve # Частная сеть 172.16–172.31
+  - IP-CIDR,192.0.0.0/24,DIRECT,no-resolve # Reserved, RFC3330
+  - IP-CIDR,192.0.2.0/24,DIRECT,no-resolve # TEST-NET-1
+  - IP-CIDR,192.88.99.0/24,DIRECT,no-resolve # 6to4 anycast
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve # Домашняя LAN (192.168.x)
+  # не добавлять 198.18.0.0/15 — пересекается с fake-ip-range
+  - IP-CIDR,198.51.100.0/24,DIRECT,no-resolve # TEST-NET-2
+  - IP-CIDR,203.0.113.0/24,DIRECT,no-resolve # TEST-NET-3
+  - IP-CIDR,224.0.0.0/4,DIRECT,no-resolve # Multicast (не через прокси)
+  - DOMAIN-SUFFIX,lan,DIRECT # Домены *.lan
+  - DOMAIN-SUFFIX,local,DIRECT # Домены *.local (mDNS)
+  - DOMAIN-SUFFIX,localdomain,DIRECT # Локальный суффикс
+  - DOMAIN-SUFFIX,internal,DIRECT # Локальный суффикс
+  - DOMAIN-SUFFIX,home.arpa,DIRECT # Домашние имена RFC8375
+  - RULE-SET,private-domains,DIRECT # geosite private
+
+  # --- 2b. Yandex 360 → DIRECT (до PROXY/CDN; офиц. network-settings) ---
+  - OR,((RULE-SET,yandex-360-domains),(RULE-SET,yandex-360-ips,no-resolve)),DIRECT
+
+  # --- 2c. Ручные DIRECT до CDN/CF (иначе CF IP перебивает DOMAIN-SUFFIX) ---
+  # Cub WSS :8443 (cub.red/best на Cloudflare anycast) иначе уходит в PROXY → NS_ERROR_NET_RESET
+  - RULE-SET,direct-manual,DIRECT
+
+  # --- 3. torrent + onion ---
+  - RULE-SET,bittorrent-ports,DIRECT # Типовые BT-порты
+  - RULE-SET,torrent-clients,DIRECT # PROCESS-NAME; при find-process-mode: off почти no-op
+  - RULE-SET,torrent-trackers,DIRECT # announce / tracker hosts
+  - RULE-SET,torrent-websites,PROXY # сайты трекеров
+  - DOMAIN-SUFFIX,onion,PROXY # Tor onion
+
+  # --- 4. Сервисы (выше RU / ZKEEN / refilter) ---
+  - OR,((DOMAIN-SUFFIX,gql.twitch.tv),(DOMAIN-SUFFIX,usher.ttvnw.net)),Twitch # Twitch HLS / usher
+  - RULE-SET,category-ai,PROXY # AI-сервисы (!cn) → PROXY
+  - RULE-SET,misc-ai,PROXY # Stargate misc-ai: Grok/HF/JetBrains/… (без Docker — селектор Docker)
+  - RULE-SET,steam-downloads,Steam Downloads # CDN загрузок Steam → Steam Downloads
+  - OR,((RULE-SET,steam-domains),(DOMAIN-WILDCARD,steamcloud*),(RULE-SET,steam-ips,no-resolve)),Steam # Магазин / клиент / Cloud
+  - OR,((RULE-SET,blizzard-domains),(RULE-SET,blizzard-extra),(RULE-SET,blizzard-asn,no-resolve),(RULE-SET,blizzard-ips,no-resolve)),Blizzard # Battle.net / игры + AS57976
+  - RULE-SET,reddit,Reddit # Reddit → селектор Reddit
+  - RULE-SET,spotify,PROXY # Spotify → PROXY
+  - OR,((RULE-SET,youtube),(RULE-SET,youtube-ips,no-resolve),(RULE-SET,zkeen-youtube)),PROXY # YouTube домены + MRS IP + Anton
+  - RULE-SET,twitch,Twitch # Twitch → селектор Twitch
+  - RULE-SET,twitter,PROXY # Twitter / X → PROXY
+  - RULE-SET,tiktok,PROXY # TikTok → PROXY
+  - OR,((RULE-SET,discord-domains),(RULE-SET,discord-geosite),(RULE-SET,discord-ips,no-resolve),(RULE-SET,discord-voiceips,no-resolve)),PROXY # Discord домены + IP + voice MRS
+  - AND,((RULE-SET,discord-ips),(NETWORK,UDP),(DST-PORT,19200-19400,50000-50100)),PROXY # Discord voice UDP (порты)
+  - OR,((RULE-SET,whatsapp-domains),(RULE-SET,whatsapp-ips,no-resolve)),PROXY # WhatsApp домены + IP
+  - RULE-SET,speedtest,PROXY # Speedtest / Ookla → PROXY
+  - OR,((RULE-SET,meta),(RULE-SET,meta-ips,no-resolve)),PROXY # Facebook / Instagram / Meta + IP
+  - OR,((RULE-SET,telegram-domains),(RULE-SET,telegram-ips,no-resolve)),PROXY # Telegram домены + IP
+  - OR,((RULE-SET,roblox-domains),(RULE-SET,roblox-asn)),PROXY # Roblox домены + ASN
+  - OR,((RULE-SET,netflix-domains),(RULE-SET,netflix-ips,no-resolve)),PROXY # Netflix домены + IP
+  - RULE-SET,microsoft,PROXY # Microsoft / Office / Xbox / Login
+
+  # --- 5. Google / GitHub / CDN / Apple / Docker ---
+  - RULE-SET,github-domains,GitHub # GitHub → селектор (default PASS)
+  - OR,((RULE-SET,google-domains),(RULE-SET,google-ips,no-resolve)),Google # Google домены / IP → Google
+  - RULE-SET,icloud,Apple # iCloud → селектор Apple
+  - RULE-SET,docker,Docker # Docker Hub → селектор Docker
+  # DPI режет CF / AWS на DIRECT → всегда PROXY (не селектор CDN)
+  - OR,((RULE-SET,cloudflare-domains),(RULE-SET,cloudflare-ips,no-resolve)),PROXY
+  - OR,((RULE-SET,amazon-domains),(RULE-SET,amazon-ips,no-resolve)),PROXY
+  - RULE-SET,cloudfront-ips,PROXY # AWS CloudFront (MetaCubeX MRS)
+  # Прочие CDN / cloud IP → селектор CDN (default PASS)
+  - OR,((RULE-SET,akamai-domains),(RULE-SET,akamai-ips,no-resolve)),CDN
+  - RULE-SET,arelion-ips,CDN
+  - RULE-SET,azure-ips,CDN
+  - RULE-SET,bunnycdn-ips,CDN
+  - RULE-SET,cdn77-ips,CDN
+  - RULE-SET,colocrossing-ips,CDN
+  - RULE-SET,contabo-ips,CDN
+  - OR,((RULE-SET,digitalocean-domains),(RULE-SET,digitalocean-ips,no-resolve)),CDN
+  - OR,((RULE-SET,fastly-domains),(RULE-SET,fastly-ips,no-resolve)),CDN
+  - RULE-SET,frantech-ips,CDN
+  - RULE-SET,gcore-ips,CDN
+  - OR,((RULE-SET,hetzner-domains),(RULE-SET,hetzner-ips,no-resolve)),CDN
+  - RULE-SET,leaseweb-ips,CDN
+  - RULE-SET,linode-ips,CDN
+  - RULE-SET,liquidweb-ips,CDN
+  - RULE-SET,mega-ips,CDN
+  - RULE-SET,melbicom-ips,CDN
+  - OR,((RULE-SET,oracle-domains),(RULE-SET,oracle-ips,no-resolve)),CDN
+  - RULE-SET,ovh-ips,CDN
+  - RULE-SET,scaleway-ips,CDN
+  - RULE-SET,vodafone-ips,CDN
+  - RULE-SET,vultr-ips,CDN
+  - RULE-SET,cogent-ips,CDN
+  - RULE-SET,datacamp-ips,CDN
+
+  # --- 6. curated geosite → PROXY ---
+  - RULE-SET,onedrive,PROXY # OneDrive
+  - RULE-SET,paypal,PROXY # PayPal
+  - RULE-SET,visa,PROXY # Visa
+  - RULE-SET,mastercard,PROXY # Mastercard
+  - RULE-SET,samsung,PROXY # Samsung
+  - RULE-SET,category-anticensorship,PROXY # Антицензура / обход
+  - RULE-SET,category-games,PROXY # Игры (общая категория)
+  - RULE-SET,category-media-ru-blocked,PROXY # Медиа, заблокированные в РФ
+
+  # --- 7. ручные → PROXY (до RU, иначе *.ru в proxy-manual недостижимы) ---
+  - RULE-SET,proxy-manual,PROXY # Ручной список доменов / keyword
+
+  # --- 8. RU → DIRECT (после сервисов / CDN / proxy-manual; Yandex 360 — в §2b; direct-manual — в §2c) ---
+  - OR,((RULE-SET,ru-tld-suffix),(RULE-SET,ru-tld)),DIRECT # RU/СНГ TLD / tld-ru MRS
+  - OR,((RULE-SET,ru-category),(RULE-SET,ru-bank),(RULE-SET,ru-betting),(RULE-SET,ru-ecommerce),(RULE-SET,ru-entertainment),(RULE-SET,ru-gov),(RULE-SET,ru-media),(RULE-SET,ru-medicine),(RULE-SET,ru-retail),(RULE-SET,ru-travel),(RULE-SET,ru-genotek),(RULE-SET,ru-ideco),(RULE-SET,ru-myoffice),(RULE-SET,ru-tbank),(RULE-SET,ru-yandex),(RULE-SET,ru-vk)),DIRECT # Категории и сервисы РФ
+
+  # --- 9. ECH / Re-filter (всегда PROXY: DPI режет ECH-handshake на DIRECT) ---
+  - DOMAIN,cloudflare-ech.com,PROXY # ECH bootstrap
+  - RULE-SET,refilter-ech,PROXY # Sites с ECH
+  - RULE-SET,refilter-noech,PROXY # Re-filter без ECH
+  - RULE-SET,refilter-ipsum,PROXY # IP Re-filter
+
+  # --- 10. ZKEEN domains (Anton classical) → PROXY ---
+  - RULE-SET,zkeen-domains,PROXY # Anton: domains.list
+  - RULE-SET,zkeen-other,PROXY # Anton: other.list
+  - RULE-SET,zkeen-politic,PROXY # Anton: politic.list
+
+  # --- 11. по умолчанию ---
+  - MATCH,DIRECT
+
+# ==============================================================================
+# КОНЕЦ КОНФИГУРАЦИИ
+# ==============================================================================

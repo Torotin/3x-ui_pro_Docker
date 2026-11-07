@@ -41,9 +41,9 @@ services:
         ipv6_address: fd00:dead:beef:13::11
     healthcheck:
       test: ["CMD", "/usr/local/bin/tor-proxy-healthcheck"]
-      interval: 1m
+      interval: 30s
       timeout: 20s
-      retries: 3
+      retries: 10
       start_period: 3m
     # Требуется только для доступа с самого host.
     # Для других контейнеров используйте tor-proxy:53/1080/8080.

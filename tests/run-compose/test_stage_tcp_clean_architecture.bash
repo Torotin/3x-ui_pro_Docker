@@ -229,7 +229,7 @@ assert_true(
 )
 stub = Path("docker-proxy/traefik/dynamic/telemt-web-transport.yml").read_text(encoding="utf-8")
 assert_true("telemt-web:" not in stub, "always-on dynamic stub must not define telemt-web ServersTransport")
-assert_true("http: {}" in stub.replace(" ", ""), "dynamic stub must be an empty http overlay target")
+assert_true("http:" not in stub, "always-on dynamic stub must stay comment-only (Traefik 3.7+ rejects empty http: {})")
 telemt_service = telemt_compose["services"]["telemt"]
 telemt_ports = [str(port) for port in (telemt_service.get("ports") or [])]
 telemt_expose = [str(port) for port in (telemt_service.get("expose") or [])]

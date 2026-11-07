@@ -73,7 +73,9 @@ normalize_uri_segment() {
 assert_uri_telemt_sub_unique() {
 	local sub peer normalized
 	sub=$(normalize_uri_segment "${URI_TELEMT_SUB:-}")
-	[[ -n "$sub" ]] || die "URI_TELEMT_SUB is required"
+	if [[ -z "$sub" ]]; then
+		die "URI_TELEMT_SUB is required"
+	fi
 	local peers=(
 		"${URI_TELEMT_WEB:-}"
 		"${URI_SUB_PATH:-}"
@@ -85,9 +87,14 @@ assert_uri_telemt_sub_unique() {
 	)
 	for peer in "${peers[@]}"; do
 		normalized=$(normalize_uri_segment "$peer")
-		[[ -z "$normalized" ]] && continue
-		[[ "$sub" == "$normalized" ]] && die "URI_TELEMT_SUB must be unique (conflicts with ${normalized})"
+		if [[ -z "$normalized" ]]; then
+			continue
+		fi
+		if [[ "$sub" == "$normalized" ]]; then
+			die "URI_TELEMT_SUB must be unique (conflicts with ${normalized})"
+		fi
 	done
+	return 0
 }
 
 detect_docker_socket_gid() {

@@ -36,6 +36,8 @@ services:
       - ../3x-ui/scripts/lib:/mnt/sh/lib:rw
       - ../3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
       - ../3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
+      # Mihomo client Clash routing overlay → inline subClashRules (not a public URL).
+      - ../3x-ui/client-routing:/mnt/sh/client-routing:ro
       - ../3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
       # Do not bind-mount config.json as a file: 3x-ui atomically renames
       # bin/.config-*.tmp -> bin/config.json, which fails with EBUSY on a
