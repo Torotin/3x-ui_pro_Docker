@@ -109,7 +109,7 @@ make_fixture() {
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 STRICT_DNS_CHECK STRICT_ACME_CHECK
+	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG UDP443_BACKEND PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA STRICT_DNS_CHECK STRICT_ACME_CHECK
 	unset DNSCRYPT_VERSION
 	unset TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_ME_KEEPALIVE_ENABLED TELEMT_HARDSWAP
 	unset TELEMT_PROXY_SECRET_ROTATE_RUNTIME TELEMT_STUN_USE TELEMT_STUN_TCP_FALLBACK
@@ -636,6 +636,105 @@ test_env_rejects_invalid_global_boolean_values() {
 		fail "env must reject invalid global boolean values"
 	fi
 	assert_contains "ENABLE_HYSTERIA2 must be boolean" "$tmpdir/stderr" "invalid boolean must name the variable and allowed values"
+}
+
+run_udp443_env_resolution() {
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	install_normalize_udp443_port_env
+	install_normalize_global_bool_env
+	install_normalize_udp443_backend
+}
+
+assert_udp443_backend_resolution() {
+	local expected_backend=$1 expected_hy2=$2 expected_awg=$3 message=$4
+	[[ "$UDP443_BACKEND" == "$expected_backend" ]] || fail "$message: expected UDP443_BACKEND=$expected_backend got $UDP443_BACKEND"
+	[[ "$ENABLE_HYSTERIA2" == "$expected_hy2" ]] || fail "$message: expected ENABLE_HYSTERIA2=$expected_hy2 got $ENABLE_HYSTERIA2"
+	[[ "$ENABLE_AMNEZIAWG" == "$expected_awg" ]] || fail "$message: expected ENABLE_AMNEZIAWG=$expected_awg got $ENABLE_AMNEZIAWG"
+}
+
+test_udp443_backend_defaults_amneziawg_when_unset() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution amneziawg false true "unset UDP443_BACKEND and ENABLE_HYSTERIA2"
+}
+
+test_udp443_backend_legacy_hysteria2_when_hy2_true() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
+	export ENABLE_HYSTERIA2=true
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution hysteria2 true false "legacy ENABLE_HYSTERIA2=true"
+}
+
+test_udp443_backend_legacy_amneziawg_when_hy2_false() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
+	export ENABLE_HYSTERIA2=false
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution amneziawg false true "legacy ENABLE_HYSTERIA2=false"
+}
+
+test_udp443_backend_explicit_off() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=off
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution off false false "explicit UDP443_BACKEND=off"
+}
+
+test_udp443_backend_explicit_hysteria2() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=hysteria2
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution hysteria2 true false "explicit UDP443_BACKEND=hysteria2"
+}
+
+test_udp443_port_reads_legacy_hysteria_port() {
+	make_fixture
+	unset PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA
+	export PORT_LOCAL_HYSTERIA=443
+	run_udp443_env_resolution
+	[[ "$PORT_LOCAL_UDP443" == "443" ]] || fail "expected PORT_LOCAL_UDP443=443 from legacy, got $PORT_LOCAL_UDP443"
+	[[ "$PORT_LOCAL_HYSTERIA" == "443" ]] || fail "PORT_LOCAL_HYSTERIA shim must match UDP443 port, got $PORT_LOCAL_HYSTERIA"
+}
+
+test_udp443_port_prefers_udp443_over_legacy() {
+	make_fixture
+	export PORT_LOCAL_UDP443=5443 PORT_LOCAL_HYSTERIA=443
+	run_udp443_env_resolution
+	[[ "$PORT_LOCAL_UDP443" == "5443" ]] || fail "PORT_LOCAL_UDP443 must stay explicit, got $PORT_LOCAL_UDP443"
+	[[ "$PORT_LOCAL_HYSTERIA" == "5443" ]] || fail "PORT_LOCAL_HYSTERIA shim must follow UDP443 port, got $PORT_LOCAL_HYSTERIA"
+}
+
+test_udp443_backend_rejects_invalid_value() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=nope
+	if (
+		# shellcheck source=/dev/null
+		source "$ROOT_DIR/script/modules/00_common.sh"
+		# shellcheck source=/dev/null
+		source "$ROOT_DIR/script/modules/02_env.sh"
+		install_normalize_udp443_port_env
+		install_normalize_global_bool_env
+		install_normalize_udp443_backend
+	); then
+		fail "env must reject invalid UDP443_BACKEND"
+	fi
+}
+
+test_env_rejects_invalid_udp443_backend_on_run() {
+	make_fixture
+	export UDP443_BACKEND=nope
+	if run_installer run env; then
+		fail "installer env must reject invalid UDP443_BACKEND"
+	fi
+	assert_contains "UDP443_BACKEND must be amneziawg|hysteria2|off" "$tmpdir/stderr" "invalid UDP443_BACKEND must name allowed values"
 }
 
 test_state_loader_preserves_literal_dollars() {
@@ -1833,6 +1932,15 @@ test_env_applies_lampac_jacred_secrets_when_enabled
 test_env_skips_lampac_jacred_secrets_when_disabled
 test_env_normalizes_global_boolean_values
 test_env_rejects_invalid_global_boolean_values
+test_udp443_backend_defaults_amneziawg_when_unset
+test_udp443_backend_legacy_hysteria2_when_hy2_true
+test_udp443_backend_legacy_amneziawg_when_hy2_false
+test_udp443_backend_explicit_off
+test_udp443_backend_explicit_hysteria2
+test_udp443_port_reads_legacy_hysteria_port
+test_udp443_port_prefers_udp443_over_legacy
+test_udp443_backend_rejects_invalid_value
+test_env_rejects_invalid_udp443_backend_on_run
 test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
 test_env_defaults_optional_services_disabled

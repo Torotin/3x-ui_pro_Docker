@@ -161,6 +161,9 @@ install_normalize_global_bool_env() {
 		TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE \
 		TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR
 	do
+		if [[ "$name" == ENABLE_HYSTERIA2 && -z "${ENABLE_HYSTERIA2+x}" ]]; then
+			continue
+		fi
 		install_normalize_bool_var "$name"
 	done
 }
