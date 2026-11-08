@@ -1,7 +1,7 @@
 # Design: UDP443 backend (AmneziaWG ↔ Hysteria2) + managed scripts
 
 Date: 2026-11-08  
-Status: draft for user review  
+Status: approved; implementation plan written (`docs/superpowers/plans/2026-11-08-udp443-backend-awg.md`)  
 Branch target (implementation): new feature branch from `dev` (not the spike evidence-only branch)  
 Live verification host: **`vps-vdsok-streambase`**
 
