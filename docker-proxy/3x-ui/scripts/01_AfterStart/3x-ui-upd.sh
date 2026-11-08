@@ -168,7 +168,6 @@ main() {
 		delete_managed_inbound_kind hysteria2 "$desired"
 		ensure_inbound amneziawg "$desired"
 		amneziawg_id=$ENSURE_INBOUND_ID
-		ensure_amneziawg_client "$amneziawg_id" "$desired"
 		;;
 	hysteria2)
 		delete_managed_inbound_kind amneziawg "$desired"
@@ -186,7 +185,8 @@ main() {
 	if [[ "${ENABLE_TELEMT:-false}" == "true" ]]; then
 		ensure_inbound mixed "$desired"
 	fi
-	ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"
+	# Shared client must receive every script-managed inbound (VLESS + active UDP443).
+	ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"
 	if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
 		ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"
 	fi

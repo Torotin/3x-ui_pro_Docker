@@ -568,8 +568,10 @@ update_inbound_components() {
 }
 
 # Создает либо синхронизирует одного общего клиента для всех управляемых inbound.
+# UDP443: передать активный hysteria2_id или amneziawg_id (второй пустой) — shared subId должен
+# включать все скриптовые inbound'ы (VLESS + активный UDP443 backend).
 ensure_shared_client() {
-	local vision_id=$1 xhttp_id=$2 grpc_id=$3 hysteria2_id=$4 desired=$5
+	local vision_id=$1 xhttp_id=$2 grpc_id=$3 hysteria2_id=$4 amneziawg_id=$5 desired=$6
 	local clients email sub_id flow vision_flow xhttp_flow current client_id client_password client_auth client target_ids missing_ids attach_payload changed=0 created=0
 	ENSURE_SHARED_CLIENT_ID=
 	ENSURE_SHARED_CLIENT_PASSWORD=
@@ -579,8 +581,13 @@ ensure_shared_client() {
 	flow=$(jq -r '.clients.shared.flow' <<<"$desired")
 	vision_flow=$(jq -r '.clients.shared.visionFlow' <<<"$desired")
 	xhttp_flow=$(jq -r '.clients.shared.xhttpFlow' <<<"$desired")
-	target_ids=$(jq -nc --arg vision "$vision_id" --arg xhttp "$xhttp_id" --arg grpc "$grpc_id" --arg hysteria2 "$hysteria2_id" '
-      [$vision, $xhttp, $grpc, $hysteria2] | map(select(length > 0) | tonumber)
+	target_ids=$(jq -nc \
+		--arg vision "$vision_id" \
+		--arg xhttp "$xhttp_id" \
+		--arg grpc "$grpc_id" \
+		--arg hysteria2 "$hysteria2_id" \
+		--arg amneziawg "$amneziawg_id" '
+      [$vision, $xhttp, $grpc, $hysteria2, $amneziawg] | map(select(length > 0) | tonumber)
     ')
 	clients=$(clients_json)
 	current=$(jq -c --arg email "$email" '.[]? | select(.email == $email)' <<<"$clients" | head -n1)

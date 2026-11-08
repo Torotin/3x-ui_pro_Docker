@@ -974,13 +974,17 @@ test_shared_client_create_still_syncs_vless_inbounds_without_grpc() {
 	ensure_vless_stream() {
 		return 0
 	}
-	ensure_shared_client 1 2 "" 4 "$desired"
+	ensure_shared_client 1 2 "" 4 "" "$desired"
 	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
 	assert_eq "1,2,4" "$add_inbounds" "shared client create must target Vision, XHTTP and Hysteria2 when gRPC is disabled"
 	assert_eq "1:xtls-rprx-vision:Vision" "${synced[0]}" "Vision inbound client must be explicitly synchronized after shared client create"
 	assert_eq "2::XHTTP" "${synced[1]}" "XHTTP inbound client must be explicitly synchronized after shared client create"
 	assert_eq 2 "${#synced[@]}" "only VLESS inbounds are synchronized inside ensure_shared_client"
 	[[ -n "$ENSURE_SHARED_CLIENT_ID" ]] || fail "shared client id must be available after create"
+	synced=()
+	ensure_shared_client 1 2 "" "" 13 "$desired"
+	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
+	assert_eq "1,2,13" "$add_inbounds" "shared client create must attach AmneziaWG inbound id when UDP443 backend is amneziawg"
 	unset -f clients_json xui_add_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
 	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
 	# shellcheck source=/dev/null
@@ -1024,7 +1028,7 @@ test_existing_shared_client_with_invalid_uuid_is_repaired() {
 	ensure_vless_stream() {
 		return 0
 	}
-	ensure_shared_client 1 2 "" 4 "$desired"
+	ensure_shared_client 1 2 "" 4 "" "$desired"
 	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.id')" "invalid first-class UUID must be replaced with a valid UUID"
 	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.uuid')" "update payload must carry matching uuid"
 	assert_eq 2 "${#synced[@]}" "repaired UUID must be synced to VLESS inbounds"
@@ -1367,7 +1371,7 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_inbound xhttp "$desired"' \
 		'ensure_inbound grpc "$desired"' \
 		'ensure_inbound hysteria2 "$desired"' \
-		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"' \
+		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' \
 		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
 		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
 		'repair_shared_client_after_inbound_sync "$desired" "$vision_id" "$xhttp_id" "$grpc_id"' \
@@ -1843,17 +1847,18 @@ test_ensure_amneziawg_client_plan_records_add() {
 }
 
 test_afterstart_entrypoint_selects_udp443_backend() {
-	local script block
+	local script block script_main
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
 	block=$(sed -n '/case "$udp_backend" in/,/^[\t ]*esac/p' "$script")
 	grep -Fq 'delete_managed_inbound_kind hysteria2' <<<"$block" ||
 		fail "AfterStart must delete hysteria2 when amneziawg backend is active"
 	grep -Fq 'ensure_inbound amneziawg' <<<"$block" ||
 		fail "AfterStart must ensure amneziawg inbound for amneziawg backend"
-	grep -Fq 'ensure_amneziawg_client' <<<"$block" ||
-		fail "AfterStart must ensure dedicated AmneziaWG client"
 	grep -Fq 'delete_managed_inbound_kind amneziawg' <<<"$block" ||
 		fail "AfterStart must delete inactive UDP443 backend inbounds"
+	script_main=$(sed -n '/^main()/,/^}/p' "$script")
+	grep -Fq 'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' <<<"$script_main" ||
+		fail "shared client must attach active amneziawg inbound for subscription parity"
 }
 
 test_clash_managed_inbound_remark_slug_includes_amneziawg() {
