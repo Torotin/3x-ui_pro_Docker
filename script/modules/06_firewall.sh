@@ -21,7 +21,7 @@ install_firewall_command() {
 	require_opt_in --apply "$@"
 	require_apply_confirmation "$@"
 
-	run_cmd firewall.plan printf 'allow tcp/80 tcp/443 udp/443 and configured PORT_REMOTE_* values\n'
+	run_cmd firewall.plan printf 'allow tcp/80 tcp/443 udp/443 (UDP 443 backend) and configured PORT_REMOTE_* values\n'
 
 	run_cmd firewall.apply ufw --force reset
 	run_cmd firewall.apply ufw default deny incoming
