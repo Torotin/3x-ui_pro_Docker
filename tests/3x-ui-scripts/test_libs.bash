@@ -101,18 +101,111 @@ test_desired_clients_are_deterministic() {
 }
 
 test_desired_inbound_remarks_use_country_flag() {
-	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark
+	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark amneziawg_remark
 	export EMOJI_FLAG="🇩🇪"
 	desired=$(build_desired_state)
 	vision_remark=$(printf '%s' "$desired" | jq -r '.inbounds.vision.remark')
 	xhttp_remark=$(printf '%s' "$desired" | jq -r '.inbounds.xhttp.remark')
 	grpc_remark=$(printf '%s' "$desired" | jq -r '.inbounds.grpc.remark')
 	hysteria2_remark=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.remark')
+	amneziawg_remark=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.remark')
 	assert_eq "🇩🇪 vless-tcp-reality" "$vision_remark" "vision inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-xhttp" "$xhttp_remark" "xhttp inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-grpc-tls" "$grpc_remark" "gRPC inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 hysteria2" "$hysteria2_remark" "Hysteria2 inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 amneziawg" "$amneziawg_remark" "AmneziaWG inbound remark must use the detected country flag"
 	unset EMOJI_FLAG
+}
+
+test_desired_state_includes_amneziawg_udp443_port() {
+	local desired awg_protocol awg_port hy2_port
+	export PORT_LOCAL_UDP443=5443
+	unset PORT_LOCAL_HYSTERIA
+	desired=$(build_desired_state)
+	awg_protocol=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.protocol')
+	awg_port=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.port')
+	hy2_port=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.port')
+	assert_eq amneziawg "$awg_protocol" "amneziawg desired inbound must use amneziawg protocol"
+	assert_eq 5443 "$awg_port" "amneziawg desired inbound port must read PORT_LOCAL_UDP443"
+	assert_eq 5443 "$hy2_port" "hysteria2 desired inbound port must share PORT_LOCAL_UDP443"
+	unset PORT_LOCAL_UDP443
+}
+
+test_build_amneziawg_inbound_components_use_minimal_shape() {
+	local desired components protocol stream_settings sniffing settings_mtu settings_subnet settings_dns1
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	components=$(build_inbound_components_json amneziawg "$desired")
+	protocol=$(printf '%s' "$components" | jq -r '.protocol')
+	stream_settings=$(printf '%s' "$components" | jq -c '.streamSettings')
+	sniffing=$(printf '%s' "$components" | jq -c '.sniffing')
+	settings_mtu=$(printf '%s' "$components" | jq -r '.settings.mtu')
+	settings_subnet=$(printf '%s' "$components" | jq -r '.settings.subnet')
+	settings_dns1=$(printf '%s' "$components" | jq -r '.settings.dns1')
+	assert_eq amneziawg "$protocol" "amneziawg components must use amneziawg protocol"
+	assert_eq '{}' "$stream_settings" "amneziawg create must use empty streamSettings"
+	assert_eq '{}' "$sniffing" "amneziawg create must use empty sniffing"
+	assert_eq 1420 "$settings_mtu" "amneziawg settings must include mtu"
+	assert_eq "10.8.1.0/24" "$settings_subnet" "amneziawg settings must include subnet"
+	assert_eq "8.8.8.8" "$settings_dns1" "amneziawg settings must include dns1"
+	unset EMOJI_FLAG
+}
+
+test_managed_inbound_remarks_amneziawg_include_legacy_spike() {
+	local desired remarks has_desired has_legacy has_spike
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	remarks=$(managed_inbound_remarks_json amneziawg "$desired")
+	has_desired=$(printf '%s' "$remarks" | jq -r 'index("🇩🇪 amneziawg") != null')
+	has_legacy=$(printf '%s' "$remarks" | jq -r 'index("managed:amneziawg") != null')
+	has_spike=$(printf '%s' "$remarks" | jq -r 'index("awg-spike-443") != null')
+	assert_eq true "$has_desired" "amneziawg managed remarks must include flag remark"
+	assert_eq true "$has_legacy" "amneziawg managed remarks must include managed:amneziawg"
+	assert_eq true "$has_spike" "amneziawg managed remarks must include awg-spike-443 alias"
+	unset EMOJI_FLAG
+}
+
+test_delete_managed_inbound_kind_plan_records_delete() {
+	local desired changes=() deleted_id=""
+	export MODE=plan EMOJI_FLAG="🇩🇪"
+	CHANGE_COUNT=0
+	desired=$(build_desired_state)
+	record_change() {
+		changes+=("$*")
+	}
+	inbounds_json() {
+		printf '%s\n' '[{"id":42,"remark":"🇩🇪 amneziawg","port":443,"protocol":"amneziawg","enable":true}]'
+	}
+	xui_del_inbound() {
+		deleted_id=$1
+		fail "plan mode must not call inbound delete API"
+	}
+	delete_managed_inbound_kind amneziawg "$desired"
+	unset -f record_change inbounds_json xui_del_inbound
+	unset MODE EMOJI_FLAG
+	grep -Fq 'PLAN: delete managed amneziawg inbound id=42' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must record managed amneziawg inbound delete"
+	assert_eq "" "$deleted_id" "plan mode must not delete inbound"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_runtime_env_normalizes_udp443_backend() {
+	local tmp old_pwd
+	tmp=$(mktemp -d)
+	old_pwd=$PWD
+	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
+	printf 'UDP443_BACKEND=off\n' >"$tmp/.env"
+	printf 'UDP443_BACKEND="${UDP443_BACKEND:-amneziawg}"\n' >"$tmp/3x-ui/3x-ui.env"
+	cd "$tmp"
+	load_runtime_env "$tmp/runtime"
+	cd "$old_pwd"
+	assert_eq off "$UDP443_BACKEND" "runtime env must load UDP443_BACKEND"
+	assert_eq false "$ENABLE_AMNEZIAWG" "UDP443_BACKEND=off must disable AWG"
+	assert_eq false "$ENABLE_HYSTERIA2" "UDP443_BACKEND=off must disable HY2"
+	rm -rf "$tmp"
 }
 
 test_runtime_env_preserves_explicit_optional_inbound_flags() {
@@ -130,7 +223,7 @@ test_runtime_env_preserves_explicit_optional_inbound_flags() {
 	assert_eq false "$ENABLE_VLESS_GRPC" "explicit gRPC flag must override env files"
 	assert_eq true "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag must override env files"
 	rm -rf "$tmp"
-	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 UDP443_BACKEND ENABLE_AMNEZIAWG
 }
 
 test_runtime_env_normalizes_explicit_optional_inbound_flags() {
@@ -140,6 +233,7 @@ test_runtime_env_normalizes_explicit_optional_inbound_flags() {
 	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
 	printf 'ENABLE_VLESS_GRPC=false\nENABLE_HYSTERIA2=true\n' >"$tmp/.env"
 	printf 'ENABLE_VLESS_GRPC="${ENABLE_VLESS_GRPC:-false}"\nENABLE_HYSTERIA2="${ENABLE_HYSTERIA2:-true}"\n' >"$tmp/3x-ui/3x-ui.env"
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
 	export ENABLE_VLESS_GRPC=YES
 	export ENABLE_HYSTERIA2=0
 	cd "$tmp"
@@ -148,7 +242,7 @@ test_runtime_env_normalizes_explicit_optional_inbound_flags() {
 	assert_eq true "$ENABLE_VLESS_GRPC" "explicit gRPC flag aliases must normalize to true"
 	assert_eq false "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag aliases must normalize to false"
 	rm -rf "$tmp"
-	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 UDP443_BACKEND ENABLE_AMNEZIAWG
 }
 
 test_managed_inbound_remarks_include_legacy_names() {
@@ -1924,6 +2018,11 @@ test_desired_clients_are_deterministic
 test_runtime_env_preserves_explicit_optional_inbound_flags
 test_runtime_env_normalizes_explicit_optional_inbound_flags
 test_desired_inbound_remarks_use_country_flag
+test_desired_state_includes_amneziawg_udp443_port
+test_build_amneziawg_inbound_components_use_minimal_shape
+test_managed_inbound_remarks_amneziawg_include_legacy_spike
+test_delete_managed_inbound_kind_plan_records_delete
+test_runtime_env_normalizes_udp443_backend
 test_managed_inbound_remarks_include_legacy_names
 test_country_flag_sources_include_iso_code_fallbacks
 test_country_code_to_flag_converts_iso_alpha2

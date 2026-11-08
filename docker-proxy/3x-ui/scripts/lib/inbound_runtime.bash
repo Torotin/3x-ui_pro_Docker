@@ -353,11 +353,24 @@ build_inbound_stream_json() {
 		build_grpc_stream_json "${URI_VLESS_GRPC:-/grpc}" "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	elif [[ "$kind" == "hysteria2" ]]; then
 		build_hysteria2_stream_json "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}" "${HYSTERIA2_STREAM_AUTH:-}"
+	elif [[ "$kind" == "amneziawg" ]]; then
+		jq -nc '{}'
 	elif [[ "$kind" == "mixed" ]]; then
 		jq -nc '{network:"tcp",security:"none"}'
 	else
 		die "Unsupported inbound kind: $kind"
 	fi
+}
+
+# Формирует минимальные settings AmneziaWG; панель дополняет obfuscation при create.
+build_amneziawg_settings_json() {
+	local desired=$1
+	jq -nc --argjson d "$desired" '{
+      mtu: ($d.inbounds.amneziawg.mtu // 1420),
+      subnet: ($d.inbounds.amneziawg.subnet // "10.8.1.0/24"),
+      dns1: ($d.inbounds.amneziawg.dns1 // "8.8.8.8"),
+      dns2: ($d.inbounds.amneziawg.dns2 // "8.8.4.4")
+    }'
 }
 
 # Формирует settings для Hysteria2, сохраняя существующий auth клиента.
@@ -405,6 +418,8 @@ build_inbound_components_json() {
 	if [[ "$kind" == "hysteria2" ]]; then
 		settings=$(build_hysteria2_settings_json "$current" "$desired")
 		HYSTERIA2_STREAM_AUTH=$(jq -r '.clients[0].auth // ""' <<<"$settings")
+	elif [[ "$kind" == "amneziawg" ]]; then
+		settings=$(build_amneziawg_settings_json "$desired")
 	elif [[ "$kind" == "mixed" ]]; then
 		# Docker-local Telemt egress: SOCKS+HTTP, no auth, all interfaces.
 		settings=$(jq -nc '{auth:"noauth",udp:true,accounts:[]}')
@@ -415,7 +430,9 @@ build_inbound_components_json() {
 	if [[ "$kind" == "hysteria2" ]]; then
 		HYSTERIA2_STREAM_AUTH=
 	fi
-	if [[ "$kind" == "hysteria2" ]]; then
+	if [[ "$kind" == "amneziawg" ]]; then
+		sniffing=$(jq -nc '{}')
+	elif [[ "$kind" == "hysteria2" ]]; then
 		# routeOnly keeps the client destination port (e.g. admin :9443) while still
 		# allowing sniffed SNI/Host to drive routing. destOverride without routeOnly
 		# often rewrites TLS destinations to :443 and misses admin-traefik port rules.
@@ -500,6 +517,38 @@ ensure_inbound() {
 		# shellcheck disable=SC2034 # Entrypoint reads this shared result after ensure_inbound returns.
 		ENSURE_INBOUND_ID=$(jq -r '.obj.id // empty' "$HTTP_BODY_FILE")
 	fi
+}
+
+# Удаляет управляемый inbound неактивного UDP443-бэкенда, если он найден по порту или remark.
+delete_managed_inbound_kind() {
+	local kind=$1 desired=$2 inbounds id expected_remarks remark protocol port inbound
+	inbounds=$(inbounds_json)
+	expected_remarks=$(managed_inbound_remarks_json "$kind" "$desired")
+	port=$(jq -r ".inbounds.$kind.port" <<<"$desired")
+	protocol=$(jq -r ".inbounds.$kind.protocol" <<<"$desired")
+	id=$(find_inbound_by_port "$inbounds" "$port" "$protocol")
+	if [[ -z "$id" ]]; then
+		id=$(jq -r --argjson remarks "$expected_remarks" '
+          .[] | select(.remark as $r | $remarks | index($r)) | .id' <<<"$inbounds" | head -n1)
+	fi
+	[[ -n "$id" ]] || return 0
+	inbound=$(jq -c --arg id "$id" '.[] | select((.id|tostring)==$id)' <<<"$inbounds")
+	remark=$(jq -r '.remark // empty' <<<"$inbound")
+	jq -ne --arg r "$remark" --argjson remarks "$expected_remarks" '
+      ($remarks | index($r)) != null
+    ' >/dev/null \
+		|| {
+			log WARN "skip delete id=$id remark=$remark (not managed $kind)"
+			return 0
+		}
+	if [[ "$MODE" == "plan" ]]; then
+		record_change "PLAN: delete managed $kind inbound id=$id"
+		return 0
+	fi
+	record_change "APPLY: delete managed $kind inbound id=$id"
+	xui_del_inbound "$id" || die "Failed to delete $kind inbound id=$id"
+	http_success_json || die "delete $kind failed: $(http_body)"
+	RESTART_XRAY_REQUIRED=1
 }
 
 # Читает полный inbound по ID.
