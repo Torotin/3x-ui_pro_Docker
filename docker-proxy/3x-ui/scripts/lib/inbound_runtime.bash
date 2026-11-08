@@ -844,6 +844,47 @@ ensure_grpc_client() {
 	fi
 }
 
+# Возвращает email управляемого клиента AmneziaWG (отдельно от shared VLESS).
+amneziawg_client_email() {
+	local desired=$1 shared_email
+	shared_email=$(jq -r '.clients.shared.email' <<<"$desired")
+	printf '%s' "${CLIENT_EMAIL_AMNEZIAWG:-${shared_email}-amneziawg}"
+}
+
+# Формирует клиентский объект AmneziaWG для POST /panel/api/clients/add.
+amneziawg_client_api_json() {
+	local email=$1 sub_id=$2
+	jq -nc --arg email "$email" --arg sid "$sub_id" '{
+      email:$email, limitIp:0, totalGB:0, expiryTime:0, enable:true, tgId:0,
+      subId:$sid, group:"", comment:"", reset:0
+    }'
+}
+
+# Создаёт клиента AmneziaWG через clients/add, если на inbound ещё нет клиентов.
+ensure_amneziawg_client() {
+	local amneziawg_id=$1 desired=$2 inbound settings clients email sub_id target_ids payload
+	[[ -n "$amneziawg_id" ]] || return 0
+	email=$(amneziawg_client_email "$desired")
+	sub_id=$(jq -r '.clients.shared.subId' <<<"$desired")
+	inbound=$(inbound_by_id_json "$amneziawg_id")
+	settings=$(json_field_object "$inbound" settings)
+	clients=$(jq -c '(.clients // .server.clients // [])' <<<"$settings")
+	if [[ "$(jq 'length' <<<"$clients")" -gt 0 ]]; then
+		log INFO "AmneziaWG inbound already has client configuration; preserving existing clients."
+		return 0
+	fi
+	target_ids=$(jq -nc --arg id "$amneziawg_id" '[($id|tonumber)]')
+	payload=$(vless_client_create_payload_json "$target_ids" "$(amneziawg_client_api_json "$email" "$sub_id")")
+	if [[ "$MODE" == "plan" ]]; then
+		record_change "PLAN: AmneziaWG client created email=$email inbound=$amneziawg_id"
+		return 0
+	fi
+	record_change "APPLY: AmneziaWG client created email=$email inbound=$amneziawg_id"
+	xui_add_client "$payload" || die "Failed to add AmneziaWG client."
+	http_success_json || die "AmneziaWG client add failed: $(api_error_summary)"
+	RESTART_XRAY_REQUIRED=1
+}
+
 # Синхронизирует Hysteria2 client auth внутри inbound settings.
 ensure_hysteria2_client() {
 	local hysteria2_id=$1 desired=$2 inbound desired_settings current_settings desired_stream current_components desired_components

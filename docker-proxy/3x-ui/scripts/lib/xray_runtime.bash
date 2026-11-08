@@ -332,15 +332,36 @@ wait_managed_xray_ports() {
 	else
 		log INFO "Skipping XHTTP port wait; inbound on ${PORT_LOCAL_XHTTP} is not present yet."
 	fi
-	if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
-		if managed_inbound_present "$inbounds" "$PORT_LOCAL_HYSTERIA" "hysteria" ||
-			managed_inbound_present "$inbounds" "$PORT_LOCAL_HYSTERIA" "hysteria2"; then
-			waiting=1
-			wait_udp_port_listener "$PORT_LOCAL_HYSTERIA" "$timeout" "Hysteria2 inbound ${PORT_LOCAL_HYSTERIA}/udp" || failed=1
+	local udp_backend=${UDP443_BACKEND:-} udp_port=${PORT_LOCAL_UDP443:-${PORT_LOCAL_HYSTERIA:-443}}
+	if [[ -z "$udp_backend" ]]; then
+		if [[ "${ENABLE_AMNEZIAWG:-false}" == "true" ]]; then
+			udp_backend=amneziawg
+		elif [[ "${ENABLE_HYSTERIA2:-false}" == "true" ]]; then
+			udp_backend=hysteria2
 		else
-			log INFO "Skipping Hysteria2 port wait; inbound on ${PORT_LOCAL_HYSTERIA}/udp is not present yet."
+			udp_backend=off
 		fi
 	fi
+	case "$udp_backend" in
+	amneziawg)
+		if managed_inbound_present "$inbounds" "$udp_port" "amneziawg"; then
+			waiting=1
+			wait_udp_port_listener "$udp_port" "$timeout" "AmneziaWG inbound ${udp_port}/udp" || failed=1
+		else
+			log INFO "Skipping AmneziaWG port wait; inbound on ${udp_port}/udp is not present yet."
+		fi
+		;;
+	hysteria2)
+		if managed_inbound_present "$inbounds" "$udp_port" "hysteria" ||
+			managed_inbound_present "$inbounds" "$udp_port" "hysteria2"; then
+			waiting=1
+			wait_udp_port_listener "$udp_port" "$timeout" "Hysteria2 inbound ${udp_port}/udp" || failed=1
+		else
+			log INFO "Skipping Hysteria2 port wait; inbound on ${udp_port}/udp is not present yet."
+		fi
+		;;
+	off) ;;
+	esac
 	if [[ "${ENABLE_TELEMT:-false}" == "true" ]]; then
 		if managed_inbound_present "$inbounds" "${PORT_LOCAL_XRAY_MIXED:-10808}" "mixed"; then
 			waiting=1
