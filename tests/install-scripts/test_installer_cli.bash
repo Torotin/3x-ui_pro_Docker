@@ -1079,6 +1079,10 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "docker.daemon.json.validate printf python3\\ -m\\ json.tool\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker install must log daemon.json validation in mock mode"
 	assert_contains "docker.service.enable systemctl enable docker" "$INSTALL_COMMAND_LOG" "docker install must enable Docker service"
 	assert_not_contains "docker.service.enable systemctl enable --now docker" "$INSTALL_COMMAND_LOG" "docker install must not start service before daemon restart"
+	assert_contains "docker.socket.stop systemctl stop docker.socket" "$INSTALL_COMMAND_LOG" "docker wipe must stop docker.socket before dockerd so overlay mounts can be removed"
+	assert_contains "docker.service.stop systemctl stop docker" "$INSTALL_COMMAND_LOG" "docker wipe must stop docker.service after socket"
+	assert_contains "docker.containerd.stop systemctl stop containerd" "$INSTALL_COMMAND_LOG" "docker wipe must stop containerd after docker"
+	assert_contains "docker.data.unmount install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker wipe must unmount overlay trees before rm -rf"
 	assert_contains "docker.service.reset_failed systemctl reset-failed docker docker.socket" "$INSTALL_COMMAND_LOG" "docker install must clear failed service/socket state before restart"
 	assert_contains "docker.socket.start systemctl start docker.socket" "$INSTALL_COMMAND_LOG" "docker install must start socket before dockerd fd activation restart"
 	assert_contains "docker.service.restart systemctl restart docker" "$INSTALL_COMMAND_LOG" "docker install must restart Docker after daemon config"
@@ -1181,6 +1185,8 @@ test_docker_install_handles_missing_docker_binary() {
 	assert_contains "apt-get remove -y docker-compose" "$INSTALL_COMMAND_LOG" "docker install must not leave Compose v1 package installed"
 	assert_contains "docker.install.packages" "$INSTALL_COMMAND_LOG" "fresh install must install Docker packages"
 	assert_contains "docker-compose-plugin" "$INSTALL_COMMAND_LOG" "docker install must install Compose v2 plugin"
+	assert_contains "docker.socket.stop systemctl stop docker.socket" "$INSTALL_COMMAND_LOG" "fresh install purge path must still stop docker.socket when present"
+	assert_contains "docker.data.unmount install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "fresh install purge path must unmount before rm -rf"
 	assert_contains "docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker data purge must use rm -rf --"
 }
 

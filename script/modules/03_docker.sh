@@ -96,11 +96,19 @@ install_docker_remove_legacy_compose() {
 }
 
 install_docker_stop_services() {
+	# Stop docker.socket first so socket activation cannot revive dockerd while we
+	# tear down /var/lib/docker. Leaving the socket active produces:
+	#   Stopping 'docker.service', but its triggering units are still active: docker.socket
+	# and leaves overlay2/*/merged mounts busy for rm -rf.
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd docker.service.stop systemctl stop docker containerd
+		run_cmd docker.socket.stop systemctl stop docker.socket
+		run_cmd docker.service.stop systemctl stop docker
+		run_cmd docker.containerd.stop systemctl stop containerd
 		return 0
 	fi
-	run_cmd docker.service.stop systemctl stop docker containerd || true
+	run_cmd docker.socket.stop systemctl stop docker.socket || true
+	run_cmd docker.service.stop systemctl stop docker || true
+	run_cmd docker.containerd.stop systemctl stop containerd || true
 }
 
 install_docker_configure_daemon() {
@@ -266,8 +274,47 @@ install_docker_validate() {
 	grep -Eqi 'Native Overlay Diff[^[:alnum:]]+true' <<<"$driver_status $driver_status_text" || die "Docker validation failed: Native Overlay Diff must be true"
 }
 
+# Lazily unmount leftover overlay/container mounts under a Docker data tree.
+# overlay2/*/merged stay busy if dockerd/containerd did not fully tear down.
+install_docker_unmount_data_tree() {
+	local root=$1 mp
+	[[ -e "$root" ]] || return 0
+	if command -v findmnt >/dev/null 2>&1; then
+		while IFS= read -r mp; do
+			[[ -n "$mp" ]] || continue
+			umount -l -- "$mp" 2>/dev/null || true
+		done < <(findmnt -Rno TARGET -- "$root" 2>/dev/null | sort -r)
+	fi
+	umount -R -l -- "$root" 2>/dev/null || umount -l -- "$root" 2>/dev/null || true
+	while IFS= read -r mp; do
+		[[ -n "$mp" ]] || continue
+		umount -l -- "$mp" 2>/dev/null || true
+	done < <(awk -v root="$root" '$2 == root || index($2, root "/") == 1 { print $2 }' /proc/mounts 2>/dev/null | sort -r)
+}
+
 install_docker_purge_data_dirs() {
-	run_cmd docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd
+	# Always log + unmount before rm. Function calls stay in this shell (not a
+	# child bash) so install_docker_unmount_data_tree is visible.
+	runner_log docker.data.unmount install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd
+	if [[ "$INSTALL_MOCK" != "1" ]]; then
+		install_docker_unmount_data_tree /var/lib/docker
+		install_docker_unmount_data_tree /var/lib/containerd
+	fi
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd
+		return 0
+	fi
+	if ! run_cmd docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd; then
+		log WARN "Docker data purge hit busy mounts; retrying unmount + remove"
+		runner_log docker.data.unmount.retry install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd
+		install_docker_unmount_data_tree /var/lib/docker
+		install_docker_unmount_data_tree /var/lib/containerd
+		run_cmd docker.data.remove.retry rm -rf -- /var/lib/docker /var/lib/containerd ||
+			die "Failed to remove /var/lib/docker or /var/lib/containerd (mounts still busy). Stop docker.socket/docker/containerd, umount -R -l /var/lib/docker, then retry."
+	fi
+	if [[ -e /var/lib/docker || -e /var/lib/containerd ]]; then
+		die "Docker data dirs still present after purge; inspect mounts under /var/lib/docker and /var/lib/containerd"
+	fi
 }
 
 install_docker_remove_engine() {

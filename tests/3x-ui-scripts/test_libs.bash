@@ -145,9 +145,17 @@ test_build_amneziawg_inbound_components_use_minimal_shape() {
 	assert_eq amneziawg "$protocol" "amneziawg components must use amneziawg protocol"
 	assert_eq '{}' "$stream_settings" "amneziawg create must use empty streamSettings"
 	assert_eq '{}' "$sniffing" "amneziawg create must use empty sniffing"
-	assert_eq 1420 "$settings_mtu" "amneziawg settings must include mtu"
+	assert_eq 1280 "$settings_mtu" "amneziawg settings must include mtu 1280"
+	assert_eq true "$(printf '%s' "$components" | jq -r '.settings.server.randomTrailers')" "amneziawg must enable randomTrailers"
+	assert_eq 16 "$(printf '%s' "$components" | jq -r '.settings.server.s1')" "amneziawg S1 must be 16"
+	assert_eq 1280 "$(printf '%s' "$components" | jq -r '.settings.server.mtu')" "amneziawg server.mtu must match"
 	assert_eq "10.8.1.0/24" "$settings_subnet" "amneziawg settings must include subnet"
+	assert_eq "10.8.1.0" "$(printf '%s' "$components" | jq -r '.settings.subnetIp')" "amneziawg settings must include subnetIp"
+	assert_eq 24 "$(printf '%s' "$components" | jq -r '.settings.subnetCidr')" "amneziawg settings must include subnetCidr"
+	assert_eq "10.8.1.0" "$(printf '%s' "$components" | jq -r '.settings.server.subnetIp')" "amneziawg server.subnetIp required by panel 3.11"
+	assert_eq 24 "$(printf '%s' "$components" | jq -r '.settings.server.subnetCidr')" "amneziawg server.subnetCidr required by panel 3.11"
 	assert_eq "8.8.8.8" "$settings_dns1" "amneziawg settings must include dns1"
+	assert_eq "8.8.8.8" "$(printf '%s' "$components" | jq -r '.settings.server.primaryDns')" "amneziawg server.primaryDns must match dns1"
 	unset EMOJI_FLAG
 }
 
@@ -1827,7 +1835,7 @@ test_ensure_amneziawg_client_plan_records_add() {
 		changes+=("$*")
 	}
 	inbound_by_id_json() {
-		printf '%s' '{"settings":{"mtu":1420,"subnet":"10.8.1.0/24","dns1":"8.8.8.8","dns2":"8.8.4.4"}}'
+		printf '%s' '{"settings":{"mtu":1280,"subnet":"10.8.1.0/24","dns1":"8.8.8.8","dns2":"8.8.4.4"}}'
 	}
 	xui_add_client() {
 		captured_payload=$1

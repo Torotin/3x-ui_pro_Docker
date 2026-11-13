@@ -168,6 +168,7 @@ main() {
 		delete_managed_inbound_kind hysteria2 "$desired"
 		ensure_inbound amneziawg "$desired"
 		amneziawg_id=$ENSURE_INBOUND_ID
+		sync_amneziawg_profile "$amneziawg_id" "$desired"
 		;;
 	hysteria2)
 		delete_managed_inbound_kind amneziawg "$desired"

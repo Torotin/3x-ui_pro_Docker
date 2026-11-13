@@ -74,13 +74,122 @@ download_transport_candidates() {
 	done
 }
 
-# Печатает исходный URL и необязательные DOWNLOAD_URL_FALLBACKS.
+# Достаёт поле url ассета с заданным name из JSON релиза GitHub.
+download_github_asset_url_from_json() {
+	local json=$1 name=$2
+	if command -v python3 >/dev/null 2>&1; then
+		DOWNLOAD_ASSET_NAME="$name" python3 -c '
+import json, os, sys
+name = os.environ["DOWNLOAD_ASSET_NAME"]
+try:
+    assets = json.load(sys.stdin).get("assets") or []
+except Exception:
+    raise SystemExit(0)
+for asset in assets:
+    if asset.get("name") == name and asset.get("url"):
+        print(asset["url"])
+        break
+' <<<"$json" 2>/dev/null || true
+		return 0
+	fi
+	if command -v jq >/dev/null 2>&1; then
+		jq -r --arg name "$name" '.assets[]? | select(.name == $name) | .url // empty' <<<"$json" 2>/dev/null | head -n1 || true
+		return 0
+	fi
+	# Fallback: url часто идёт раньше name в объекте asset.
+	printf '%s' "$json" | tr '{}' '\n' |
+		awk -v name="$name" '
+			$0 ~ ("\"name\"[[:space:]]*:[[:space:]]*\"" name "\"") {
+				if (match($0, /"url"[[:space:]]*:[[:space:]]*"([^"]+)"/, m)) {
+					print m[1]
+					exit
+				}
+			}
+		' 2>/dev/null || true
+}
+
+# Тянет JSON релиза GitHub через цепочку транспортов (на части хостов api.github.com недоступен direct).
+download_github_release_json() {
+	local api_url=$1 transport
+	local -a transports=()
+	mapfile -t transports < <(download_transport_candidates)
+	for transport in "${transports[@]}"; do
+		[[ -n "$transport" ]] || continue
+		download_set_curl_transport_args "$transport" || continue
+		if json="$(
+			curl -fsSL --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT:-5}" --max-time 30 \
+				-H 'Accept: application/vnd.github+json' \
+				-H 'User-Agent: 3x-ui-pro-docker-download' \
+				"${DOWNLOAD_CURL_TRANSPORT_ARGS[@]}" \
+				"$api_url" 2>/dev/null
+		)" && [[ "$json" == \{* ]]; then
+			printf '%s' "$json"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# GitHub releases/download часто отдаёт 504; Assets API + octet-stream ходит на release-assets.githubusercontent.com.
+# Возвращает api.github.com/.../releases/assets/<id> или пусто, если URL не github-release / resolve не удался.
+download_github_asset_api_url() {
+	local url=$1 owner repo tag name api_url json asset_url
+	download_flag_enabled "${DOWNLOAD_GITHUB_ASSET_API:-true}" || return 0
+	if [[ "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/releases/latest/download/([^/?#]+)$ ]]; then
+		owner=${BASH_REMATCH[1]}
+		repo=${BASH_REMATCH[2]}
+		name=${BASH_REMATCH[3]}
+		api_url="https://api.github.com/repos/${owner}/${repo}/releases/latest"
+	elif [[ "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^/?#]+)$ ]]; then
+		owner=${BASH_REMATCH[1]}
+		repo=${BASH_REMATCH[2]}
+		tag=${BASH_REMATCH[3]}
+		name=${BASH_REMATCH[4]}
+		api_url="https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}"
+	else
+		return 0
+	fi
+	json="$(download_github_release_json "$api_url" || true)"
+	[[ -n "$json" ]] || return 0
+	asset_url="$(download_github_asset_url_from_json "$json" "$name")"
+	[[ -n "$asset_url" ]] || return 0
+	printf '%s\n' "$asset_url"
+}
+
+# Зеркала вида https://ghfast.top/https://github.com/... (пустое DOWNLOAD_GITHUB_MIRRORS отключает).
+download_github_mirror_urls() {
+	local url=$1 mirror
+	[[ "$url" == https://github.com/* ]] || return 0
+	download_flag_enabled "${DOWNLOAD_GITHUB_MIRRORS_ENABLED:-true}" || return 0
+	while IFS= read -r mirror; do
+		[[ -n "$mirror" ]] || continue
+		mirror=${mirror%/}
+		printf '%s/%s\n' "$mirror" "$url"
+	done < <(download_split_list "${DOWNLOAD_GITHUB_MIRRORS:-https://ghfast.top}")
+}
+
+# Печатает кандидатов URL: Assets API → зеркала GitHub → исходный URL → DOWNLOAD_URL_FALLBACKS.
 download_url_candidates() {
-	local url=$1 item
-	printf '%s\n' "$url"
+	local url=$1 item asset_api
+	local -A seen=()
+	asset_api="$(download_github_asset_api_url "$url" || true)"
+	if [[ -n "$asset_api" ]]; then
+		printf '%s\n' "$asset_api"
+		seen[$asset_api]=1
+	fi
 	while IFS= read -r item; do
-		[[ -n "$item" && "$item" != "$url" ]] || continue
+		[[ -n "$item" && -z "${seen[$item]:-}" ]] || continue
 		printf '%s\n' "$item"
+		seen[$item]=1
+	done < <(download_github_mirror_urls "$url")
+	if [[ -z "${seen[$url]:-}" ]]; then
+		printf '%s\n' "$url"
+		seen[$url]=1
+	fi
+	while IFS= read -r item; do
+		[[ -n "$item" && -z "${seen[$item]:-}" ]] || continue
+		printf '%s\n' "$item"
+		seen[$item]=1
 	done < <(download_split_list "${DOWNLOAD_URL_FALLBACKS:-}")
 }
 
@@ -101,11 +210,20 @@ download_set_curl_transport_args() {
 	esac
 }
 
+# Доп. заголовки curl для конкретного URL (Assets API требует Accept: application/octet-stream).
+download_curl_headers_for_url() {
+	local url=$1
+	if [[ "$url" =~ ^https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/[0-9]+/?$ ]]; then
+		printf '%s\n' -H 'Accept: application/octet-stream' -H 'User-Agent: 3x-ui-pro-docker-download'
+	fi
+}
+
 # Одна попытка curl без повторов: таймаут соединения короткий, чтобы быстро перейти к следующему транспорту.
 download_via_transport() {
 	local url=$1 dest=$2 transport=$3
-	local -a args
+	local -a args headers=()
 	download_set_curl_transport_args "$transport" || return 1
+	mapfile -t headers < <(download_curl_headers_for_url "$url" || true)
 	args=(
 		-fsSL
 		--connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT:-5}"
@@ -114,6 +232,9 @@ download_via_transport() {
 		--speed-time "${DOWNLOAD_STALL_SECONDS:-15}"
 		-o "$dest"
 	)
+	if ((${#headers[@]} > 0)); then
+		args+=("${headers[@]}")
+	fi
 	args+=("${DOWNLOAD_CURL_TRANSPORT_ARGS[@]}" "$url")
 	curl "${args[@]}" || return $?
 }

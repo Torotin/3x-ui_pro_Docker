@@ -166,7 +166,7 @@ build_desired_state() {
             grpc: {managed: true, protocol: "vless", port: ($grpcPort|tonumber), remark: $grpcRemark, path: $grpcPath},
             hysteria2: {managed: true, protocol: "hysteria", port: ($udp443Port|tonumber), remark: $hysteria2Remark},
             amneziawg: {managed: true, protocol: "amneziawg", port: ($udp443Port|tonumber), remark: $amneziawgRemark,
-              subnet: "10.8.1.0/24", mtu: 1420, dns1: "8.8.8.8", dns2: "8.8.4.4"},
+              subnet: "10.8.1.0/24", mtu: 1280, dns1: "8.8.8.8", dns2: "8.8.4.4"},
             mixed: {managed: true, protocol: "mixed", port: ($mixedPort|tonumber), remark: $mixedRemark}
           },
           clients: {

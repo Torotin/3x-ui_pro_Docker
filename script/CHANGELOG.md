@@ -1,5 +1,16 @@
 # Журнал изменений установщика
 
+## 0.7.6 - 2026-11-13
+
+- `docker --destroy-docker-data`: перед purge останавливает `docker.socket`, затем `docker`, затем `containerd` (раньше socket оставался active и оставлял `overlay2/*/merged` busy).
+- Перед `rm -rf /var/lib/docker|/var/lib/containerd` — lazy unmount дерева mounts; один retry при busy; иначе явный `die`.
+
+## 0.7.5 - 2026-11-08
+
+- `dnscrypt`: загрузка бинарника через GitHub Assets API (`Accept: application/octet-stream`) — обход 504 на `github.com/.../releases/download/...`.
+- Fallback: browser URL с retry, зеркала `DNSCRYPT_DOWNLOAD_MIRRORS`, offline `--archive` / `DNSCRYPT_ARCHIVE_FILE`.
+- Ясная ошибка с путём обхода, если все источники недоступны.
+
 ## 0.7.4 - 2026-10-31
 
 - Wizard self-update check: если нет `git` (до шага apt) — явный skip вместо ложного «up to date» и ERROR по отсутствующему remote VERSION.
