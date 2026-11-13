@@ -161,6 +161,9 @@ install_normalize_global_bool_env() {
 		TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE \
 		TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR
 	do
+		if [[ "$name" == ENABLE_HYSTERIA2 && -z "${ENABLE_HYSTERIA2+x}" ]]; then
+			continue
+		fi
 		install_normalize_bool_var "$name"
 	done
 }
@@ -398,8 +401,14 @@ install_require_required_env() {
 generate_random_string() {
 	local min=${1:-16} max=${2:-32} len
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		printf 'mock%0.sx' $(seq 1 "$min")
-		printf '\n'
+		local seq=0 seq_file="${INSTALL_STATE_DIR:-${TMPDIR:-/tmp}}/mock-random-seq"
+		if [[ -f "$seq_file" ]]; then
+			seq=$(<"$seq_file")
+		fi
+		seq=$((seq + 1))
+		mkdir -p "${seq_file%/*}"
+		printf '%s\n' "$seq" >"$seq_file"
+		printf 'mockuri%04d\n' "$seq"
 		return 0
 	fi
 	len=$(shuf -i "$min-$max" -n 1)

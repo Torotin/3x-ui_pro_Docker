@@ -101,18 +101,119 @@ test_desired_clients_are_deterministic() {
 }
 
 test_desired_inbound_remarks_use_country_flag() {
-	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark
+	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark amneziawg_remark
 	export EMOJI_FLAG="🇩🇪"
 	desired=$(build_desired_state)
 	vision_remark=$(printf '%s' "$desired" | jq -r '.inbounds.vision.remark')
 	xhttp_remark=$(printf '%s' "$desired" | jq -r '.inbounds.xhttp.remark')
 	grpc_remark=$(printf '%s' "$desired" | jq -r '.inbounds.grpc.remark')
 	hysteria2_remark=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.remark')
+	amneziawg_remark=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.remark')
 	assert_eq "🇩🇪 vless-tcp-reality" "$vision_remark" "vision inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-xhttp" "$xhttp_remark" "xhttp inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-grpc-tls" "$grpc_remark" "gRPC inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 hysteria2" "$hysteria2_remark" "Hysteria2 inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 amneziawg" "$amneziawg_remark" "AmneziaWG inbound remark must use the detected country flag"
 	unset EMOJI_FLAG
+}
+
+test_desired_state_includes_amneziawg_udp443_port() {
+	local desired awg_protocol awg_port hy2_port
+	export PORT_LOCAL_UDP443=5443
+	unset PORT_LOCAL_HYSTERIA
+	desired=$(build_desired_state)
+	awg_protocol=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.protocol')
+	awg_port=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.port')
+	hy2_port=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.port')
+	assert_eq amneziawg "$awg_protocol" "amneziawg desired inbound must use amneziawg protocol"
+	assert_eq 5443 "$awg_port" "amneziawg desired inbound port must read PORT_LOCAL_UDP443"
+	assert_eq 5443 "$hy2_port" "hysteria2 desired inbound port must share PORT_LOCAL_UDP443"
+	unset PORT_LOCAL_UDP443
+}
+
+test_build_amneziawg_inbound_components_use_minimal_shape() {
+	local desired components protocol stream_settings sniffing settings_mtu settings_subnet settings_dns1
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	components=$(build_inbound_components_json amneziawg "$desired")
+	protocol=$(printf '%s' "$components" | jq -r '.protocol')
+	stream_settings=$(printf '%s' "$components" | jq -c '.streamSettings')
+	sniffing=$(printf '%s' "$components" | jq -c '.sniffing')
+	settings_mtu=$(printf '%s' "$components" | jq -r '.settings.mtu')
+	settings_subnet=$(printf '%s' "$components" | jq -r '.settings.subnet')
+	settings_dns1=$(printf '%s' "$components" | jq -r '.settings.dns1')
+	assert_eq amneziawg "$protocol" "amneziawg components must use amneziawg protocol"
+	assert_eq '{}' "$stream_settings" "amneziawg create must use empty streamSettings"
+	assert_eq '{}' "$sniffing" "amneziawg create must use empty sniffing"
+	assert_eq 1280 "$settings_mtu" "amneziawg settings must include mtu 1280"
+	assert_eq true "$(printf '%s' "$components" | jq -r '.settings.server.randomTrailers')" "amneziawg must enable randomTrailers"
+	assert_eq 16 "$(printf '%s' "$components" | jq -r '.settings.server.s1')" "amneziawg S1 must be 16"
+	assert_eq 1280 "$(printf '%s' "$components" | jq -r '.settings.server.mtu')" "amneziawg server.mtu must match"
+	assert_eq "10.8.1.0/24" "$settings_subnet" "amneziawg settings must include subnet"
+	assert_eq "10.8.1.0" "$(printf '%s' "$components" | jq -r '.settings.subnetIp')" "amneziawg settings must include subnetIp"
+	assert_eq 24 "$(printf '%s' "$components" | jq -r '.settings.subnetCidr')" "amneziawg settings must include subnetCidr"
+	assert_eq "10.8.1.0" "$(printf '%s' "$components" | jq -r '.settings.server.subnetIp')" "amneziawg server.subnetIp required by panel 3.11"
+	assert_eq 24 "$(printf '%s' "$components" | jq -r '.settings.server.subnetCidr')" "amneziawg server.subnetCidr required by panel 3.11"
+	assert_eq "8.8.8.8" "$settings_dns1" "amneziawg settings must include dns1"
+	assert_eq "8.8.8.8" "$(printf '%s' "$components" | jq -r '.settings.server.primaryDns')" "amneziawg server.primaryDns must match dns1"
+	unset EMOJI_FLAG
+}
+
+test_managed_inbound_remarks_amneziawg_include_legacy_spike() {
+	local desired remarks has_desired has_legacy has_spike
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	remarks=$(managed_inbound_remarks_json amneziawg "$desired")
+	has_desired=$(printf '%s' "$remarks" | jq -r 'index("🇩🇪 amneziawg") != null')
+	has_legacy=$(printf '%s' "$remarks" | jq -r 'index("managed:amneziawg") != null')
+	has_spike=$(printf '%s' "$remarks" | jq -r 'index("awg-spike-443") != null')
+	assert_eq true "$has_desired" "amneziawg managed remarks must include flag remark"
+	assert_eq true "$has_legacy" "amneziawg managed remarks must include managed:amneziawg"
+	assert_eq true "$has_spike" "amneziawg managed remarks must include awg-spike-443 alias"
+	unset EMOJI_FLAG
+}
+
+test_delete_managed_inbound_kind_plan_records_delete() {
+	local desired changes=() deleted_id=""
+	export MODE=plan EMOJI_FLAG="🇩🇪"
+	CHANGE_COUNT=0
+	desired=$(build_desired_state)
+	record_change() {
+		changes+=("$*")
+	}
+	inbounds_json() {
+		printf '%s\n' '[{"id":42,"remark":"🇩🇪 amneziawg","port":443,"protocol":"amneziawg","enable":true}]'
+	}
+	xui_del_inbound() {
+		deleted_id=$1
+		fail "plan mode must not call inbound delete API"
+	}
+	delete_managed_inbound_kind amneziawg "$desired"
+	unset -f record_change inbounds_json xui_del_inbound
+	unset MODE EMOJI_FLAG
+	grep -Fq 'PLAN: delete managed amneziawg inbound id=42' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must record managed amneziawg inbound delete"
+	assert_eq "" "$deleted_id" "plan mode must not delete inbound"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_runtime_env_normalizes_udp443_backend() {
+	local tmp old_pwd
+	tmp=$(mktemp -d)
+	old_pwd=$PWD
+	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
+	printf 'UDP443_BACKEND=off\n' >"$tmp/.env"
+	printf 'UDP443_BACKEND="${UDP443_BACKEND:-amneziawg}"\n' >"$tmp/3x-ui/3x-ui.env"
+	cd "$tmp"
+	load_runtime_env "$tmp/runtime"
+	cd "$old_pwd"
+	assert_eq off "$UDP443_BACKEND" "runtime env must load UDP443_BACKEND"
+	assert_eq false "$ENABLE_AMNEZIAWG" "UDP443_BACKEND=off must disable AWG"
+	assert_eq false "$ENABLE_HYSTERIA2" "UDP443_BACKEND=off must disable HY2"
+	rm -rf "$tmp"
 }
 
 test_runtime_env_preserves_explicit_optional_inbound_flags() {
@@ -130,7 +231,7 @@ test_runtime_env_preserves_explicit_optional_inbound_flags() {
 	assert_eq false "$ENABLE_VLESS_GRPC" "explicit gRPC flag must override env files"
 	assert_eq true "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag must override env files"
 	rm -rf "$tmp"
-	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 UDP443_BACKEND ENABLE_AMNEZIAWG
 }
 
 test_runtime_env_normalizes_explicit_optional_inbound_flags() {
@@ -140,6 +241,7 @@ test_runtime_env_normalizes_explicit_optional_inbound_flags() {
 	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
 	printf 'ENABLE_VLESS_GRPC=false\nENABLE_HYSTERIA2=true\n' >"$tmp/.env"
 	printf 'ENABLE_VLESS_GRPC="${ENABLE_VLESS_GRPC:-false}"\nENABLE_HYSTERIA2="${ENABLE_HYSTERIA2:-true}"\n' >"$tmp/3x-ui/3x-ui.env"
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
 	export ENABLE_VLESS_GRPC=YES
 	export ENABLE_HYSTERIA2=0
 	cd "$tmp"
@@ -148,7 +250,7 @@ test_runtime_env_normalizes_explicit_optional_inbound_flags() {
 	assert_eq true "$ENABLE_VLESS_GRPC" "explicit gRPC flag aliases must normalize to true"
 	assert_eq false "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag aliases must normalize to false"
 	rm -rf "$tmp"
-	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 UDP443_BACKEND ENABLE_AMNEZIAWG
 }
 
 test_managed_inbound_remarks_include_legacy_names() {
@@ -880,13 +982,17 @@ test_shared_client_create_still_syncs_vless_inbounds_without_grpc() {
 	ensure_vless_stream() {
 		return 0
 	}
-	ensure_shared_client 1 2 "" 4 "$desired"
+	ensure_shared_client 1 2 "" 4 "" "$desired"
 	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
 	assert_eq "1,2,4" "$add_inbounds" "shared client create must target Vision, XHTTP and Hysteria2 when gRPC is disabled"
 	assert_eq "1:xtls-rprx-vision:Vision" "${synced[0]}" "Vision inbound client must be explicitly synchronized after shared client create"
 	assert_eq "2::XHTTP" "${synced[1]}" "XHTTP inbound client must be explicitly synchronized after shared client create"
 	assert_eq 2 "${#synced[@]}" "only VLESS inbounds are synchronized inside ensure_shared_client"
 	[[ -n "$ENSURE_SHARED_CLIENT_ID" ]] || fail "shared client id must be available after create"
+	synced=()
+	ensure_shared_client 1 2 "" "" 13 "$desired"
+	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
+	assert_eq "1,2,13" "$add_inbounds" "shared client create must attach AmneziaWG inbound id when UDP443 backend is amneziawg"
 	unset -f clients_json xui_add_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
 	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
 	# shellcheck source=/dev/null
@@ -930,7 +1036,7 @@ test_existing_shared_client_with_invalid_uuid_is_repaired() {
 	ensure_vless_stream() {
 		return 0
 	}
-	ensure_shared_client 1 2 "" 4 "$desired"
+	ensure_shared_client 1 2 "" 4 "" "$desired"
 	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.id')" "invalid first-class UUID must be replaced with a valid UUID"
 	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.uuid')" "update payload must carry matching uuid"
 	assert_eq 2 "${#synced[@]}" "repaired UUID must be synced to VLESS inbounds"
@@ -1273,7 +1379,7 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_inbound xhttp "$desired"' \
 		'ensure_inbound grpc "$desired"' \
 		'ensure_inbound hysteria2 "$desired"' \
-		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"' \
+		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' \
 		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
 		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
 		'repair_shared_client_after_inbound_sync "$desired" "$vision_id" "$xhttp_id" "$grpc_id"' \
@@ -1297,6 +1403,8 @@ test_afterstart_entrypoint_initializes_optional_inbound_ids() {
 		fail "gRPC inbound id must be initialized for ENABLE_VLESS_GRPC=false"
 	grep -Fq 'hysteria2_id=' <<<"$main_decl" ||
 		fail "Hysteria2 inbound id must be initialized for ENABLE_HYSTERIA2=false"
+	grep -Fq 'amneziawg_id=' <<<"$main_decl" ||
+		fail "AmneziaWG inbound id must be initialized before UDP443 backend orchestration"
 	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
 		fail "gRPC must default to disabled in the runtime entrypoint"
 }
@@ -1316,7 +1424,9 @@ test_afterstart_exports_admin_clash_routing_only() {
 		fail "after-start entrypoint must discover Clash proxy node names as fallback"
 	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
 		fail "Clash node discovery must gate grpc remarks on ENABLE_VLESS_GRPC"
-	grep -Fq 'ENABLE_HYSTERIA2:-true' "$script" ||
+	grep -Fq 'ENABLE_AMNEZIAWG:-false' "$script" ||
+		fail "Clash node discovery must gate amneziawg remarks on ENABLE_AMNEZIAWG"
+	grep -Fq 'ENABLE_HYSTERIA2:-false' "$script" ||
 		fail "Clash node discovery must gate hysteria2 remarks on ENABLE_HYSTERIA2"
 	grep -Fq 'build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file"' "$script" ||
 		fail "after-start entrypoint must fall back to admin Clash rules with discovered nodes"
@@ -1603,9 +1713,12 @@ test_panel_restart_does_not_suppress_xray_restart() {
 test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
 	local checks joined
 	checks=()
+	export UDP443_BACKEND=hysteria2
 	export ENABLE_HYSTERIA2=true
+	export ENABLE_AMNEZIAWG=false
 	export PORT_LOCAL_VISION=1443
 	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=3443
 	export PORT_LOCAL_HYSTERIA=3443
 	export XRAY_RESTART_PORT_TIMEOUT=1
 	xui_list_inbounds() { return 0; }
@@ -1627,7 +1740,7 @@ test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
 	assert_eq "tcp:1443:Vision inbound 1443 tcp:2443:XHTTP inbound 2443 udp:3443:Hysteria2 inbound 3443/udp" "$joined" "managed port wait must include Hysteria2 UDP listener"
 	rm -f "$HTTP_BODY_FILE"
 	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
-	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	unset UDP443_BACKEND ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/http.bash"
 	# shellcheck source=/dev/null
@@ -1636,12 +1749,144 @@ test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
 	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
 }
 
+test_wait_managed_xray_ports_checks_amneziawg_udp_when_backend_active() {
+	local checks joined
+	checks=()
+	export UDP443_BACKEND=amneziawg
+	export ENABLE_AMNEZIAWG=true
+	export ENABLE_HYSTERIA2=false
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=4443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[{"id":1,"port":1443,"protocol":"vless"},{"id":2,"port":2443,"protocol":"vless"},{"id":4,"port":4443,"protocol":"amneziawg"}]}' >"$HTTP_BODY_FILE"
+	wait_tcp_port() {
+		checks+=("tcp:$2:$4")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1:$3")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
+	assert_eq "tcp:1443:Vision inbound 1443 tcp:2443:XHTTP inbound 2443 udp:4443:AmneziaWG inbound 4443/udp" "$joined" \
+		"managed port wait must include AmneziaWG UDP listener for active backend"
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
+test_wait_managed_xray_ports_skips_hysteria_udp_when_amneziawg_backend() {
+	local checks joined
+	checks=()
+	export UDP443_BACKEND=amneziawg
+	export ENABLE_AMNEZIAWG=true
+	export ENABLE_HYSTERIA2=false
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=3443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[{"id":1,"port":1443,"protocol":"vless"},{"id":2,"port":2443,"protocol":"vless"},{"id":3,"port":3443,"protocol":"hysteria"}]}' >"$HTTP_BODY_FILE"
+	wait_tcp_port() {
+		checks+=("tcp:$2")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
+	assert_eq "tcp:1443 tcp:2443" "$joined" "amneziawg backend must not wait on hysteria UDP port"
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
+test_ensure_amneziawg_client_plan_records_add() {
+	local desired changes=() captured_payload="" add_called=false
+	export MODE=plan EMOJI_FLAG="🇩🇪"
+	CHANGE_COUNT=0
+	desired=$(build_desired_state)
+	record_change() {
+		changes+=("$*")
+	}
+	inbound_by_id_json() {
+		printf '%s' '{"settings":{"mtu":1280,"subnet":"10.8.1.0/24","dns1":"8.8.8.8","dns2":"8.8.4.4"}}'
+	}
+	xui_add_client() {
+		captured_payload=$1
+		add_called=true
+		fail "plan mode must not call clients/add API"
+	}
+	ensure_amneziawg_client 77 "$desired"
+	unset -f record_change inbound_by_id_json xui_add_client
+	unset MODE EMOJI_FLAG
+	grep -Fq 'PLAN: AmneziaWG client created email=' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must record AmneziaWG client create"
+	assert_eq false "$add_called" "plan mode must not invoke clients/add"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_afterstart_entrypoint_selects_udp443_backend() {
+	local script block script_main
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	block=$(sed -n '/case "$udp_backend" in/,/^[\t ]*esac/p' "$script")
+	grep -Fq 'delete_managed_inbound_kind hysteria2' <<<"$block" ||
+		fail "AfterStart must delete hysteria2 when amneziawg backend is active"
+	grep -Fq 'ensure_inbound amneziawg' <<<"$block" ||
+		fail "AfterStart must ensure amneziawg inbound for amneziawg backend"
+	grep -Fq 'delete_managed_inbound_kind amneziawg' <<<"$block" ||
+		fail "AfterStart must delete inactive UDP443 backend inbounds"
+	script_main=$(sed -n '/^main()/,/^}/p' "$script")
+	grep -Fq 'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' <<<"$script_main" ||
+		fail "shared client must attach active amneziawg inbound for subscription parity"
+}
+
+test_clash_managed_inbound_remark_slug_includes_amneziawg() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local pattern
+	pattern=$(_clash_managed_inbound_remark_slug_pattern)
+	printf '%s' "$pattern" | grep -Eq 'amneziawg' ||
+		fail "Clash discovery pattern must include amneziawg slug"
+}
+
 test_wait_managed_xray_ports_skips_missing_inbounds_on_first_boot() {
 	local checks
 	checks=()
+	export UDP443_BACKEND=hysteria2
 	export ENABLE_HYSTERIA2=true
+	export ENABLE_AMNEZIAWG=false
 	export PORT_LOCAL_VISION=1443
 	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=3443
 	export PORT_LOCAL_HYSTERIA=3443
 	export XRAY_RESTART_PORT_TIMEOUT=1
 	xui_list_inbounds() { return 0; }
@@ -1662,7 +1907,7 @@ test_wait_managed_xray_ports_skips_missing_inbounds_on_first_boot() {
 	assert_eq "" "$(printf '%s' "${checks[*]-}")" "first-boot port wait must skip when no managed inbounds exist yet"
 	rm -f "$HTTP_BODY_FILE"
 	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
-	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	unset UDP443_BACKEND ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/http.bash"
 	# shellcheck source=/dev/null
@@ -1924,6 +2169,11 @@ test_desired_clients_are_deterministic
 test_runtime_env_preserves_explicit_optional_inbound_flags
 test_runtime_env_normalizes_explicit_optional_inbound_flags
 test_desired_inbound_remarks_use_country_flag
+test_desired_state_includes_amneziawg_udp443_port
+test_build_amneziawg_inbound_components_use_minimal_shape
+test_managed_inbound_remarks_amneziawg_include_legacy_spike
+test_delete_managed_inbound_kind_plan_records_delete
+test_runtime_env_normalizes_udp443_backend
 test_managed_inbound_remarks_include_legacy_names
 test_country_flag_sources_include_iso_code_fallbacks
 test_country_code_to_flag_converts_iso_alpha2
@@ -1992,6 +2242,11 @@ test_log_shared_autogen_subscription_urls_prints_three
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
 test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled
+test_wait_managed_xray_ports_checks_amneziawg_udp_when_backend_active
+test_wait_managed_xray_ports_skips_hysteria_udp_when_amneziawg_backend
+test_ensure_amneziawg_client_plan_records_add
+test_afterstart_entrypoint_selects_udp443_backend
+test_clash_managed_inbound_remark_slug_includes_amneziawg
 test_wait_managed_xray_ports_skips_missing_inbounds_on_first_boot
 test_repair_inbound_vless_client_flows_db_sets_vision_only
 test_warp_outbound_from_registration_prefers_panel_host_endpoint

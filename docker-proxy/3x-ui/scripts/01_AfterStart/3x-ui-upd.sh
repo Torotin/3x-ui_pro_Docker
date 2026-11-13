@@ -49,7 +49,7 @@ trap cleanup EXIT
 
 # Запускает полный цикл панели и Xray в выбранном режиме.
 main() {
-	local desired vision_id xhttp_id grpc_id="" hysteria2_id="" nodes_file remarks_file
+	local desired vision_id xhttp_id grpc_id="" hysteria2_id="" amneziawg_id="" udp_backend nodes_file remarks_file
 	TMP_ROOT=$(mktemp -d)
 	http_init "$TMP_ROOT"
 	load_runtime_env "$SCRIPT_DIR"
@@ -111,7 +111,10 @@ main() {
 		if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
 			jq -r '.inbounds.grpc.remark // empty' <<<"$desired"
 		fi
-		if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
+		if [[ "${ENABLE_AMNEZIAWG:-false}" == "true" ]]; then
+			jq -r '.inbounds.amneziawg.remark // empty' <<<"$desired"
+		fi
+		if [[ "${ENABLE_HYSTERIA2:-false}" == "true" ]]; then
 			jq -r '.inbounds.hysteria2.remark // empty' <<<"$desired"
 		fi
 	} | grep -E . >"$remarks_file" || true
@@ -150,18 +153,45 @@ main() {
 		ensure_inbound grpc "$desired"
 		grpc_id=$ENSURE_INBOUND_ID
 	fi
-	if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
+	udp_backend=${UDP443_BACKEND:-}
+	if [[ -z "$udp_backend" ]]; then
+		if [[ "${ENABLE_AMNEZIAWG:-false}" == "true" ]]; then
+			udp_backend=amneziawg
+		elif [[ "${ENABLE_HYSTERIA2:-false}" == "true" ]]; then
+			udp_backend=hysteria2
+		else
+			udp_backend=off
+		fi
+	fi
+	case "$udp_backend" in
+	amneziawg)
+		delete_managed_inbound_kind hysteria2 "$desired"
+		ensure_inbound amneziawg "$desired"
+		amneziawg_id=$ENSURE_INBOUND_ID
+		sync_amneziawg_profile "$amneziawg_id" "$desired"
+		;;
+	hysteria2)
+		delete_managed_inbound_kind amneziawg "$desired"
 		ensure_inbound hysteria2 "$desired"
 		hysteria2_id=$ENSURE_INBOUND_ID
-	fi
+		;;
+	off)
+		delete_managed_inbound_kind amneziawg "$desired"
+		delete_managed_inbound_kind hysteria2 "$desired"
+		;;
+	*)
+		die "UDP443_BACKEND invalid: $udp_backend"
+		;;
+	esac
 	if [[ "${ENABLE_TELEMT:-false}" == "true" ]]; then
 		ensure_inbound mixed "$desired"
 	fi
-	ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"
+	# Shared client must receive every script-managed inbound (VLESS + active UDP443).
+	ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"
 	if [[ "${ENABLE_VLESS_GRPC:-false}" == "true" ]]; then
 		ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"
 	fi
-	if [[ "${ENABLE_HYSTERIA2:-true}" == "true" ]]; then
+	if [[ "$udp_backend" == "hysteria2" && -n "$hysteria2_id" ]]; then
 		ensure_hysteria2_client "$hysteria2_id" "$desired"
 	fi
 	repair_shared_client_after_inbound_sync "$desired" "$vision_id" "$xhttp_id" "$grpc_id"

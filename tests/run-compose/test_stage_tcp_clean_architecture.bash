@@ -48,7 +48,10 @@ def assert_true(condition, message):
 traefik_compose = load_yaml("docker-proxy/compose.d/06-traefik.yml")
 traefik_service = traefik_compose["services"]["traefik"]
 traefik_ports = [str(port) for port in (traefik_service.get("ports") or [])]
-assert_true(traefik_ports == ["80:80"], f"Traefik must publish only 80:80, got {traefik_ports}")
+assert_true(
+    traefik_ports == ["80:80", "127.0.0.1:${PORT_LOCAL_ADMIN:-9443}:9443"],
+    f"Traefik must publish public 80:80 and loopback admin plane, got {traefik_ports}",
+)
 file_http = load_yaml("docker-proxy/traefik/dynamic/crowdsec.yml").get("http") or {}
 file_middlewares = file_http.get("middlewares") or {}
 file_transports = file_http.get("serversTransports") or {}
@@ -169,8 +172,8 @@ xui_compose = load_yaml("docker-proxy/compose.d/12-3x-ui.yml")
 xui_service = xui_compose["services"]["3x-ui"]
 xui_ports = [str(port) for port in (xui_service.get("ports") or [])]
 assert_true(
-    xui_ports == ["443:${PORT_LOCAL_VISION:-443}/tcp", "443:${PORT_LOCAL_HYSTERIA:-443}/udp"],
-    f"3x-ui must publish Xray 443/tcp and accepted Hysteria2 443/udp, got {xui_ports}",
+    xui_ports == ["443:${PORT_LOCAL_VISION:-443}/tcp", "443:${PORT_LOCAL_UDP443:-443}/udp"],
+    f"3x-ui must publish Xray 443/tcp and UDP443 backend 443/udp, got {xui_ports}",
 )
 xui_volumes = [str(volume) for volume in (xui_service.get("volumes") or [])]
 assert_true(
@@ -343,9 +346,11 @@ for env_template_name, env_template in [("install.env.template", install_env_tem
     assert_true("TELEMT_MAX_CONNECTIONS=${TELEMT_MAX_CONNECTIONS}" in env_template, f"{env_template_name} must persist max_connections")
     assert_true("URI_VLESS_GRPC=" in env_template, f"{env_template_name} must persist VLESS gRPC path")
     assert_true("PORT_LOCAL_GRPC=${PORT_LOCAL_GRPC}" in env_template, f"{env_template_name} must persist VLESS gRPC backend port")
-    assert_true("PORT_LOCAL_HYSTERIA=${PORT_LOCAL_HYSTERIA}" in env_template, f"{env_template_name} must persist Hysteria2 UDP port")
+    assert_true("PORT_LOCAL_UDP443=${PORT_LOCAL_UDP443}" in env_template, f"{env_template_name} must persist UDP443 backend port")
+    assert_true("UDP443_BACKEND=${UDP443_BACKEND}" in env_template, f"{env_template_name} must persist UDP443 backend selector")
     assert_true("ENABLE_VLESS_GRPC=${ENABLE_VLESS_GRPC}" in env_template, f"{env_template_name} must persist VLESS gRPC enable flag")
-    assert_true("ENABLE_HYSTERIA2=${ENABLE_HYSTERIA2}" in env_template, f"{env_template_name} must persist Hysteria2 enable flag")
+    assert_true("PORT_LOCAL_HYSTERIA=" not in env_template, f"{env_template_name} must not persist retired PORT_LOCAL_HYSTERIA key")
+    assert_true("ENABLE_HYSTERIA2=${ENABLE_HYSTERIA2}" not in env_template, f"{env_template_name} must not persist primary ENABLE_HYSTERIA2 key")
     assert_true("XRAY_TLS_CERT_FILE=${XRAY_TLS_CERT_FILE}" in env_template, f"{env_template_name} must persist Xray TLS cert path")
     assert_true("XRAY_TLS_KEY_FILE=${XRAY_TLS_KEY_FILE}" in env_template, f"{env_template_name} must persist Xray TLS key path")
 
@@ -637,8 +642,8 @@ for compose_path in sorted((root / "docker-proxy/compose.d").glob("*.yml")):
         for port in ports:
             if port.startswith("443:") and "/udp" in port:
                 assert_true(
-                    compose_path.name == "12-3x-ui.yml" and service_name == "3x-ui" and port == "443:${PORT_LOCAL_HYSTERIA:-443}/udp",
-                    f"443/udp must belong only to accepted Hysteria2 stage: {compose_path}:{service_name}:{port}",
+                    compose_path.name == "12-3x-ui.yml" and service_name == "3x-ui" and port == "443:${PORT_LOCAL_UDP443:-443}/udp",
+                    f"443/udp must belong only to UDP443 backend stage: {compose_path}:{service_name}:{port}",
                 )
 
 print("stage tcp clean architecture assertions OK")

@@ -29,7 +29,7 @@ admin_sub_proxy_policy_name() {
 
 # Managed inbound remark slugs used to recognize subscription proxy nodes.
 _clash_managed_inbound_remark_slug_pattern() {
-	printf '%s' 'vless-tcp-reality|vless-xhttp|vless-grpc-tls|hysteria2|managed:'
+	printf '%s' 'vless-tcp-reality|vless-xhttp|vless-grpc-tls|hysteria2|amneziawg|managed:'
 }
 
 # Normalizes remark/proxy name lines for AUTO/PROXY membership (never emits DIRECT).

@@ -205,10 +205,147 @@ test_download_url_fallbacks_are_tried_after_primary() {
 	rm -rf "$tmp"
 }
 
+test_download_github_release_json_tries_proxy_after_direct() {
+	local tmp got log
+	tmp=$(mktemp -d)
+	DOWNLOAD_TRANSPORT_CACHE="$tmp/cache"
+	DOWNLOAD_TRANSPORTS="direct,socks5h://usque:1080"
+	# Лог в файл: curl вызывается из $(...) subshell, массив родителя не обновляется.
+	DOWNLOAD_TEST_CURL_LOG_FILE="$tmp/curl.log"
+	: >"$DOWNLOAD_TEST_CURL_LOG_FILE"
+	curl() {
+		local url='' transport=direct
+		while (($# > 0)); do
+			case "$1" in
+			-x)
+				transport=$2
+				shift 2
+				;;
+			--noproxy)
+				shift 2
+				;;
+			https://* | http://*)
+				url=$1
+				shift
+				;;
+			*)
+				shift
+				;;
+			esac
+		done
+		printf '%s:%s\n' "$transport" "$url" >>"$DOWNLOAD_TEST_CURL_LOG_FILE"
+		if [[ "$transport" == socks5h://usque:1080 ]]; then
+			printf '%s' '{"assets":[{"url":"https://api.github.com/repos/o/r/releases/assets/1","name":"geosite.dat"}]}'
+			return 0
+		fi
+		return 22
+	}
+	got=$(download_github_asset_api_url 'https://github.com/o/r/releases/latest/download/geosite.dat')
+	assert_eq 'https://api.github.com/repos/o/r/releases/assets/1' "$got" "API resolve must succeed via usque after direct fails"
+	log=$(tr '\n' ' ' <"$DOWNLOAD_TEST_CURL_LOG_FILE")
+	[[ "$log" == *'direct:https://api.github.com/repos/o/r/releases/latest'* ]] || fail "direct API resolve must be tried"
+	[[ "$log" == *'socks5h://usque:1080:https://api.github.com/repos/o/r/releases/latest'* ]] || fail "usque API resolve must be tried"
+	unset -f curl
+	unset DOWNLOAD_TRANSPORT_CACHE DOWNLOAD_TRANSPORTS DOWNLOAD_TEST_CURL_LOG_FILE
+	rm -rf "$tmp"
+}
+
+test_download_github_mirror_candidates_are_listed() {
+	local got
+	local -a got_arr
+	DOWNLOAD_GITHUB_MIRRORS=https://ghfast.top
+	DOWNLOAD_GITHUB_MIRRORS_ENABLED=true
+	DOWNLOAD_GITHUB_ASSET_API=false
+	unset DOWNLOAD_URL_FALLBACKS
+	curl() { return 22; }
+	mapfile -t got_arr < <(download_url_candidates 'https://github.com/o/r/releases/latest/download/geosite.dat')
+	got=$(download_test_join "${got_arr[@]}")
+	assert_eq 'https://ghfast.top/https://github.com/o/r/releases/latest/download/geosite.dat,https://github.com/o/r/releases/latest/download/geosite.dat' "$got" "github mirror must precede browser URL"
+	unset -f curl
+	unset DOWNLOAD_GITHUB_MIRRORS DOWNLOAD_GITHUB_MIRRORS_ENABLED DOWNLOAD_GITHUB_ASSET_API
+}
+
+test_download_github_asset_api_is_preferred_over_release_url() {
+	local tmp dest
+	tmp=$(mktemp -d)
+	dest="$tmp/geosite.dat"
+	DOWNLOAD_TEST_CURL_LOG=()
+	DOWNLOAD_TRANSPORT_CACHE="$tmp/cache"
+	DOWNLOAD_TRANSPORTS=direct
+	unset DOWNLOAD_URL_FALLBACKS
+	DOWNLOAD_GITHUB_ASSET_API=true
+	curl() {
+		local out='' url='' accept=''
+		while (($# > 0)); do
+			case "$1" in
+			-o)
+				out=$2
+				shift 2
+				;;
+			-H)
+				[[ "$2" == Accept:* ]] && accept=$2
+				shift 2
+				;;
+			--noproxy | -x | --connect-timeout | --max-time | --speed-limit | --speed-time)
+				shift 2
+				;;
+			-fsSL)
+				shift
+				;;
+			https://* | http://*)
+				url=$1
+				shift
+				;;
+			*)
+				shift
+				;;
+			esac
+		done
+		DOWNLOAD_TEST_CURL_LOG+=("$url")
+		if [[ "$url" == https://api.github.com/repos/1andrevich/Re-filter-lists/releases/latest ]]; then
+			printf '%s' '{"assets":[{"url":"https://api.github.com/repos/1andrevich/Re-filter-lists/releases/assets/42","name":"geosite.dat"}]}'
+			return 0
+		fi
+		if [[ "$url" == https://api.github.com/repos/1andrevich/Re-filter-lists/releases/assets/42 ]]; then
+			[[ "$accept" == 'Accept: application/octet-stream' ]] || return 22
+			printf 'asset-payload' >"$out"
+			return 0
+		fi
+		# browser/release URL must not be required for success
+		return 22
+	}
+	download_file_atomic \
+		"https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat" \
+		"$dest" || fail "GitHub Assets API rewrite must succeed when release CDN returns 504"
+	assert_eq asset-payload "$(cat "$dest")" "Assets API payload mismatch"
+	[[ "${DOWNLOAD_TEST_CURL_LOG[*]}" == *'https://api.github.com/repos/1andrevich/Re-filter-lists/releases/assets/42'* ]] ||
+		fail "Assets API download URL must be attempted"
+	[[ "${DOWNLOAD_TEST_CURL_LOG[*]}" != *'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat'* ]] ||
+		fail "browser release URL must not be needed after Assets API success"
+	unset -f curl
+	unset DOWNLOAD_TRANSPORT_CACHE DOWNLOAD_TRANSPORTS DOWNLOAD_GITHUB_ASSET_API
+	DOWNLOAD_TEST_CURL_LOG=()
+	rm -rf "$tmp"
+}
+
+test_download_curl_headers_for_github_asset_api() {
+	local got
+	got=$(download_curl_headers_for_url 'https://api.github.com/repos/owner/repo/releases/assets/123' | tr '\n' ' ')
+	[[ "$got" == *'Accept: application/octet-stream'* ]] || fail "Assets API must request octet-stream"
+	got=$(download_curl_headers_for_url 'https://github.com/owner/repo/releases/latest/download/x.dat' || true)
+	[[ -z "$got" ]] || fail "non-asset URLs must not get Assets API headers"
+}
+
 test_xray_update_keeps_existing_binary_on_download_failure() {
 	local file="$SCRIPTS_DIR/00_BeforeStart/xray_update.sh"
 	grep -Fq 'keeping existing binary' "$file" || fail "xray_update must keep an existing binary when download fails"
 	grep -Fq 'Failed to download xray and no existing binary' "$file" || fail "xray_update must die only when no xray binary is present"
+}
+
+test_download_db_keeps_existing_on_failure() {
+	local file="$SCRIPTS_DIR/00_BeforeStart/download-db.sh"
+	grep -Fq 'Keeping existing' "$file" || fail "download-db must keep existing geodata when download fails"
+	grep -Fq 'continuing without this geodata asset' "$file" || fail "download-db must continue when geodata is missing"
 }
 
 test_download_default_transports_include_stack_proxies
@@ -218,5 +355,10 @@ test_download_file_atomic_falls_back_to_socks_proxy
 test_download_file_atomic_skips_checksum_mismatch_and_retries
 test_download_file_atomic_returns_failure_when_all_transports_fail
 test_download_url_fallbacks_are_tried_after_primary
+test_download_github_release_json_tries_proxy_after_direct
+test_download_github_mirror_candidates_are_listed
+test_download_github_asset_api_is_preferred_over_release_url
+test_download_curl_headers_for_github_asset_api
 test_xray_update_keeps_existing_binary_on_download_failure
+test_download_db_keeps_existing_on_failure
 printf 'test_download.bash: OK\n'

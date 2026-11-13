@@ -43,9 +43,56 @@ normalize_bool_var() {
 
 normalize_runtime_bool_env() {
 	local name
-	for name in ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_MIHOMO; do
+	for name in ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG ENABLE_MIHOMO; do
+		[[ ${!name+x} ]] || continue
 		normalize_bool_var "$name"
 	done
+}
+
+normalize_udp443_port_env() {
+	if [[ -z "${PORT_LOCAL_UDP443:-}" && -n "${PORT_LOCAL_HYSTERIA:-}" ]]; then
+		PORT_LOCAL_UDP443=$PORT_LOCAL_HYSTERIA
+	fi
+	: "${PORT_LOCAL_UDP443:=443}"
+	PORT_LOCAL_HYSTERIA=$PORT_LOCAL_UDP443
+	export PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA
+}
+
+normalize_udp443_backend() {
+	local raw=${UDP443_BACKEND:-}
+	if [[ -z "$raw" ]]; then
+		if [[ "${ENABLE_HYSTERIA2+x}" == x ]]; then
+			normalize_bool_var ENABLE_HYSTERIA2
+			if [[ "$ENABLE_HYSTERIA2" == "true" ]]; then
+				UDP443_BACKEND=hysteria2
+			else
+				UDP443_BACKEND=amneziawg
+			fi
+		else
+			UDP443_BACKEND=amneziawg
+		fi
+	else
+		UDP443_BACKEND=${raw,,}
+	fi
+	case "$UDP443_BACKEND" in
+	amneziawg | hysteria2 | off) ;;
+	*) die "UDP443_BACKEND must be amneziawg|hysteria2|off (got: $UDP443_BACKEND)" ;;
+	esac
+	case "$UDP443_BACKEND" in
+	amneziawg)
+		ENABLE_AMNEZIAWG=true
+		ENABLE_HYSTERIA2=false
+		;;
+	hysteria2)
+		ENABLE_AMNEZIAWG=false
+		ENABLE_HYSTERIA2=true
+		;;
+	off)
+		ENABLE_AMNEZIAWG=false
+		ENABLE_HYSTERIA2=false
+		;;
+	esac
+	export UDP443_BACKEND ENABLE_AMNEZIAWG ENABLE_HYSTERIA2
 }
 
 # Задает значения runtime-параметров, если они не были переданы окружением.
@@ -124,7 +171,7 @@ load_runtime_env() {
 	local script_dir=$1
 	local name
 	local -A preserved_env=()
-	for name in MODE ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_MIHOMO; do
+	for name in MODE ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG ENABLE_MIHOMO UDP443_BACKEND PORT_LOCAL_UDP443; do
 		if [[ ${!name+x} ]]; then
 			preserved_env[$name]=${!name}
 		fi
@@ -136,7 +183,9 @@ load_runtime_env() {
 		export "${name?}"
 	done
 	init_defaults
+	normalize_udp443_port_env
 	normalize_runtime_bool_env
+	normalize_udp443_backend
 }
 
 # Проверяет наличие утилит, требуемых сценарию после запуска контейнера.

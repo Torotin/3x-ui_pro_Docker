@@ -384,6 +384,12 @@ xui_add_inbound() {
 	xui_api_post_json_once_long '/panel/api/inbounds/add' "$body"
 }
 
+# Удаляет inbound по идентификатору (3.x panel API).
+xui_del_inbound() {
+	local id=$1
+	xui_api_post "/panel/api/inbounds/del/${id}" || return 1
+}
+
 # Обновляет существующий inbound nested JSON по его идентификатору.
 xui_update_inbound() {
 	local id=$1 body=$2

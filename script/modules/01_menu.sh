@@ -98,13 +98,24 @@ wizard_load_feature_toggles() {
 	: "${ENABLE_LAMPAC:=false}"
 	: "${ENABLE_TELEMT:=false}"
 	: "${ENABLE_MIHOMO:=false}"
-	: "${ENABLE_HYSTERIA2:=true}"
 	: "${ENABLE_VLESS_GRPC:=false}"
 	install_normalize_bool_var ENABLE_LAMPAC
 	install_normalize_bool_var ENABLE_TELEMT
 	install_normalize_bool_var ENABLE_MIHOMO
-	install_normalize_bool_var ENABLE_HYSTERIA2
 	install_normalize_bool_var ENABLE_VLESS_GRPC
+	install_normalize_udp443_port_env
+	install_normalize_udp443_backend
+}
+
+wizard_cycle_udp443_backend() {
+	case "${UDP443_BACKEND:-amneziawg}" in
+	amneziawg) UDP443_BACKEND=hysteria2 ;;
+	hysteria2) UDP443_BACKEND=off ;;
+	off) UDP443_BACKEND=amneziawg ;;
+	*) UDP443_BACKEND=amneziawg ;;
+	esac
+	export UDP443_BACKEND
+	install_normalize_udp443_backend
 }
 
 wizard_toggle_bool_var() {
@@ -121,7 +132,8 @@ wizard_save_feature_toggles() {
 	install_state_set_env ENABLE_LAMPAC "$ENABLE_LAMPAC"
 	install_state_set_env ENABLE_TELEMT "$ENABLE_TELEMT"
 	install_state_set_env ENABLE_MIHOMO "$ENABLE_MIHOMO"
-	install_state_set_env ENABLE_HYSTERIA2 "$ENABLE_HYSTERIA2"
+	install_state_set_env UDP443_BACKEND "$UDP443_BACKEND"
+	install_state_set_env PORT_LOCAL_UDP443 "$PORT_LOCAL_UDP443"
 	install_state_set_env ENABLE_VLESS_GRPC "$ENABLE_VLESS_GRPC"
 }
 
@@ -133,7 +145,7 @@ wizard_print_feature_toggles() {
 Feature toggles:
   1. ENABLE_LAMPAC      $ENABLE_LAMPAC   Lampac compose service
   2. ENABLE_TELEMT      $ENABLE_TELEMT   Telemt fallback/proxy stack
-  3. ENABLE_HYSTERIA2   $ENABLE_HYSTERIA2   Hysteria2 inbound in 3x-ui/Xray
+  3. UDP443_BACKEND   $UDP443_BACKEND   Owner of public 443/udp (amneziawg|hysteria2|off)
   4. ENABLE_VLESS_GRPC  $ENABLE_VLESS_GRPC   VLESS gRPC inbound in 3x-ui/Xray
   5. ENABLE_MIHOMO      $ENABLE_MIHOMO   Mihomo compose service
 
@@ -156,7 +168,7 @@ wizard_feature_toggles() {
 			wizard_toggle_bool_var ENABLE_TELEMT
 			;;
 		3)
-			wizard_toggle_bool_var ENABLE_HYSTERIA2
+			wizard_cycle_udp443_backend
 			;;
 		4)
 			wizard_toggle_bool_var ENABLE_VLESS_GRPC

@@ -109,7 +109,7 @@ make_fixture() {
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 STRICT_DNS_CHECK STRICT_ACME_CHECK
+	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG UDP443_BACKEND PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA STRICT_DNS_CHECK STRICT_ACME_CHECK
 	unset DNSCRYPT_VERSION
 	unset TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_ME_KEEPALIVE_ENABLED TELEMT_HARDSWAP
 	unset TELEMT_PROXY_SECRET_ROTATE_RUNTIME TELEMT_STUN_USE TELEMT_STUN_TCP_FALLBACK
@@ -119,6 +119,7 @@ make_fixture() {
 	unset INSTALL_MOCK_DOCTOR_PHASE
 	unset INSTALL_MOCK_IP_PROBE_IPV4 INSTALL_MOCK_IP_PROBE_IPV6
 	unset INSTALL_MOCK_PUBLIC_IPV4 INSTALL_MOCK_PUBLIC_IPV6
+	unset DOCKER_ENABLE_IPV6
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -613,7 +614,8 @@ test_env_normalizes_global_boolean_values() {
 		assert_contains "ENABLE_TELEMT=false" "$file" "ENABLE_TELEMT must normalize to false in $file"
 		assert_contains "ENABLE_MIHOMO=false" "$file" "ENABLE_MIHOMO must normalize to false in $file"
 		assert_contains "ENABLE_VLESS_GRPC=true" "$file" "ENABLE_VLESS_GRPC must normalize to true in $file"
-		assert_contains "ENABLE_HYSTERIA2=false" "$file" "ENABLE_HYSTERIA2 must normalize to false in $file"
+		assert_contains "UDP443_BACKEND=amneziawg" "$file" "legacy ENABLE_HYSTERIA2=0 must resolve to amneziawg backend in $file"
+		assert_contains "PORT_LOCAL_UDP443=443" "$file" "env render must persist UDP443 publish port in $file"
 		assert_contains "STRICT_DNS_CHECK=true" "$file" "STRICT_DNS_CHECK must normalize to true in $file"
 		assert_contains "STRICT_ACME_CHECK=false" "$file" "STRICT_ACME_CHECK must normalize to false in $file"
 		assert_contains "TELEMT_MIDDLE_PROXY_NAT_PROBE=true" "$file" "TELEMT_MIDDLE_PROXY_NAT_PROBE must normalize to true in $file"
@@ -636,6 +638,103 @@ test_env_rejects_invalid_global_boolean_values() {
 		fail "env must reject invalid global boolean values"
 	fi
 	assert_contains "ENABLE_HYSTERIA2 must be boolean" "$tmpdir/stderr" "invalid boolean must name the variable and allowed values"
+}
+
+run_udp443_env_resolution() {
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	install_normalize_udp443_port_env
+	install_normalize_udp443_backend
+}
+
+assert_udp443_backend_resolution() {
+	local expected_backend=$1 expected_hy2=$2 expected_awg=$3 message=$4
+	[[ "$UDP443_BACKEND" == "$expected_backend" ]] || fail "$message: expected UDP443_BACKEND=$expected_backend got $UDP443_BACKEND"
+	[[ "$ENABLE_HYSTERIA2" == "$expected_hy2" ]] || fail "$message: expected ENABLE_HYSTERIA2=$expected_hy2 got $ENABLE_HYSTERIA2"
+	[[ "$ENABLE_AMNEZIAWG" == "$expected_awg" ]] || fail "$message: expected ENABLE_AMNEZIAWG=$expected_awg got $ENABLE_AMNEZIAWG"
+}
+
+test_udp443_backend_defaults_amneziawg_when_unset() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution amneziawg false true "unset UDP443_BACKEND and ENABLE_HYSTERIA2"
+}
+
+test_udp443_backend_legacy_hysteria2_when_hy2_true() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
+	export ENABLE_HYSTERIA2=true
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution hysteria2 true false "legacy ENABLE_HYSTERIA2=true"
+}
+
+test_udp443_backend_legacy_amneziawg_when_hy2_false() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
+	export ENABLE_HYSTERIA2=false
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution amneziawg false true "legacy ENABLE_HYSTERIA2=false"
+}
+
+test_udp443_backend_explicit_off() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=off
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution off false false "explicit UDP443_BACKEND=off"
+}
+
+test_udp443_backend_explicit_hysteria2() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=hysteria2
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution hysteria2 true false "explicit UDP443_BACKEND=hysteria2"
+}
+
+test_udp443_port_reads_legacy_hysteria_port() {
+	make_fixture
+	unset PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA
+	export PORT_LOCAL_HYSTERIA=443
+	run_udp443_env_resolution
+	[[ "$PORT_LOCAL_UDP443" == "443" ]] || fail "expected PORT_LOCAL_UDP443=443 from legacy, got $PORT_LOCAL_UDP443"
+	[[ "$PORT_LOCAL_HYSTERIA" == "443" ]] || fail "PORT_LOCAL_HYSTERIA shim must match UDP443 port, got $PORT_LOCAL_HYSTERIA"
+}
+
+test_udp443_port_prefers_udp443_over_legacy() {
+	make_fixture
+	export PORT_LOCAL_UDP443=5443 PORT_LOCAL_HYSTERIA=443
+	run_udp443_env_resolution
+	[[ "$PORT_LOCAL_UDP443" == "5443" ]] || fail "PORT_LOCAL_UDP443 must stay explicit, got $PORT_LOCAL_UDP443"
+	[[ "$PORT_LOCAL_HYSTERIA" == "5443" ]] || fail "PORT_LOCAL_HYSTERIA shim must follow UDP443 port, got $PORT_LOCAL_HYSTERIA"
+}
+
+test_udp443_backend_rejects_invalid_value() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=nope
+	if (
+		# shellcheck source=/dev/null
+		source "$ROOT_DIR/script/modules/00_common.sh"
+		# shellcheck source=/dev/null
+		source "$ROOT_DIR/script/modules/02_env.sh"
+		install_normalize_udp443_port_env
+		install_normalize_udp443_backend
+	); then
+		fail "env must reject invalid UDP443_BACKEND"
+	fi
+}
+
+test_env_rejects_invalid_udp443_backend_on_run() {
+	make_fixture
+	export UDP443_BACKEND=nope
+	if run_installer run env; then
+		fail "installer env must reject invalid UDP443_BACKEND"
+	fi
+	assert_contains "UDP443_BACKEND must be amneziawg|hysteria2|off" "$tmpdir/stderr" "invalid UDP443_BACKEND must name allowed values"
 }
 
 test_state_loader_preserves_literal_dollars() {
@@ -980,6 +1079,10 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "docker.daemon.json.validate printf python3\\ -m\\ json.tool\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker install must log daemon.json validation in mock mode"
 	assert_contains "docker.service.enable systemctl enable docker" "$INSTALL_COMMAND_LOG" "docker install must enable Docker service"
 	assert_not_contains "docker.service.enable systemctl enable --now docker" "$INSTALL_COMMAND_LOG" "docker install must not start service before daemon restart"
+	assert_contains "docker.socket.stop systemctl stop docker.socket" "$INSTALL_COMMAND_LOG" "docker wipe must stop docker.socket before dockerd so overlay mounts can be removed"
+	assert_contains "docker.service.stop systemctl stop docker" "$INSTALL_COMMAND_LOG" "docker wipe must stop docker.service after socket"
+	assert_contains "docker.containerd.stop systemctl stop containerd" "$INSTALL_COMMAND_LOG" "docker wipe must stop containerd after docker"
+	assert_contains "docker.data.unmount install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker wipe must unmount overlay trees before rm -rf"
 	assert_contains "docker.service.reset_failed systemctl reset-failed docker docker.socket" "$INSTALL_COMMAND_LOG" "docker install must clear failed service/socket state before restart"
 	assert_contains "docker.socket.start systemctl start docker.socket" "$INSTALL_COMMAND_LOG" "docker install must start socket before dockerd fd activation restart"
 	assert_contains "docker.service.restart systemctl restart docker" "$INSTALL_COMMAND_LOG" "docker install must restart Docker after daemon config"
@@ -991,7 +1094,7 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "explicit firewall command must be routed through runner"
 	assert_contains "ufw default allow routed" "$INSTALL_COMMAND_LOG" "firewall must allow Docker bridge routed traffic"
 	assert_contains "ufw allow 22022/tcp" "$INSTALL_COMMAND_LOG" "firewall must preserve configured SSH port"
-	assert_contains "ufw allow 443/udp" "$INSTALL_COMMAND_LOG" "firewall must open UDP 443 for accepted Hysteria2 stage"
+	assert_contains "ufw allow 443/udp" "$INSTALL_COMMAND_LOG" "firewall must open UDP 443 for the UDP443 backend stage"
 	assert_contains "ssh.apply bash -c" "$INSTALL_COMMAND_LOG" "ssh apply must render config through shell redirection"
 	assert_contains "ssh.detect" "$INSTALL_COMMAND_LOG" "ssh apply must detect the active SSH systemd unit"
 	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload SSH before restart fallback"
@@ -1082,6 +1185,8 @@ test_docker_install_handles_missing_docker_binary() {
 	assert_contains "apt-get remove -y docker-compose" "$INSTALL_COMMAND_LOG" "docker install must not leave Compose v1 package installed"
 	assert_contains "docker.install.packages" "$INSTALL_COMMAND_LOG" "fresh install must install Docker packages"
 	assert_contains "docker-compose-plugin" "$INSTALL_COMMAND_LOG" "docker install must install Compose v2 plugin"
+	assert_contains "docker.socket.stop systemctl stop docker.socket" "$INSTALL_COMMAND_LOG" "fresh install purge path must still stop docker.socket when present"
+	assert_contains "docker.data.unmount install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "fresh install purge path must unmount before rm -rf"
 	assert_contains "docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker data purge must use rm -rf --"
 }
 
@@ -1331,18 +1436,18 @@ test_wizard_toggles_optional_feature_flags_and_renders_env() {
 	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must have a clear heading"
 	assert_contains "1. ENABLE_LAMPAC" "$tmpdir/stdout" "toggle screen must show Lampac flag"
 	assert_contains "2. ENABLE_TELEMT" "$tmpdir/stdout" "toggle screen must show Telemt flag"
-	assert_contains "3. ENABLE_HYSTERIA2" "$tmpdir/stdout" "toggle screen must show Hysteria2 flag"
+	assert_contains "3. UDP443_BACKEND" "$tmpdir/stdout" "toggle screen must show UDP443 backend selector"
 	assert_contains "4. ENABLE_VLESS_GRPC" "$tmpdir/stdout" "toggle screen must show VLESS gRPC flag"
 	assert_contains "5. ENABLE_MIHOMO" "$tmpdir/stdout" "toggle screen must show Mihomo flag"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "applying toggles must render env through dispatcher"
 	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "Lampac toggle must persist true"
 	assert_contains "ENABLE_TELEMT=true" "$INSTALL_STATE_DIR/install.env" "Telemt toggle must persist true"
-	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_STATE_DIR/install.env" "Hysteria2 toggle must persist false"
+	assert_contains "UDP443_BACKEND=hysteria2" "$INSTALL_STATE_DIR/install.env" "UDP443 backend cycle must persist hysteria2"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_STATE_DIR/install.env" "VLESS gRPC toggle must persist true"
 	assert_contains "ENABLE_MIHOMO=true" "$INSTALL_STATE_DIR/install.env" "Mihomo toggle must persist true"
 	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_ROOT/compose.d/.env" "Lampac toggle must render compose env"
 	assert_contains "ENABLE_TELEMT=true" "$INSTALL_ROOT/compose.d/.env" "Telemt toggle must render compose env"
-	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_ROOT/compose.d/.env" "Hysteria2 toggle must render compose env"
+	assert_contains "UDP443_BACKEND=hysteria2" "$INSTALL_ROOT/compose.d/.env" "UDP443 backend cycle must render compose env"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_ROOT/compose.d/.env" "VLESS gRPC toggle must render compose env"
 	assert_contains "ENABLE_MIHOMO=true" "$INSTALL_ROOT/compose.d/.env" "Mihomo toggle must render compose env"
 	assert_contains "VISION_FALLBACK_HOST=telemt" "$INSTALL_ROOT/compose.d/.env" "enabled Telemt must rerender fallback target"
@@ -1833,6 +1938,15 @@ test_env_applies_lampac_jacred_secrets_when_enabled
 test_env_skips_lampac_jacred_secrets_when_disabled
 test_env_normalizes_global_boolean_values
 test_env_rejects_invalid_global_boolean_values
+test_udp443_backend_defaults_amneziawg_when_unset
+test_udp443_backend_legacy_hysteria2_when_hy2_true
+test_udp443_backend_legacy_amneziawg_when_hy2_false
+test_udp443_backend_explicit_off
+test_udp443_backend_explicit_hysteria2
+test_udp443_port_reads_legacy_hysteria_port
+test_udp443_port_prefers_udp443_over_legacy
+test_udp443_backend_rejects_invalid_value
+test_env_rejects_invalid_udp443_backend_on_run
 test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
 test_env_defaults_optional_services_disabled

@@ -50,13 +50,21 @@ main() {
 	fi
 
 	# Пустые строки и комментарии разрешают расширять список без изменения сценария.
+	# Ошибка одного URL не валит BeforeStart: оставляем существующий файл или идём дальше без него.
 	while IFS= read -r entry || [[ -n "$entry" ]]; do
 		entry=${entry#"${entry%%[![:space:]]*}"}
 		entry=${entry%"${entry##*[![:space:]]}"}
 		[[ -n "$entry" && "${entry:0:1}" != "#" ]] || continue
 		parse_download_entry "$entry"
 		dest="$XUI_BIN_FOLDER/$DOWNLOAD_NAME"
-		download_file_atomic "$DOWNLOAD_URL" "$dest" "$DOWNLOAD_SHA256"
+		if download_file_atomic "$DOWNLOAD_URL" "$dest" "$DOWNLOAD_SHA256"; then
+			continue
+		fi
+		if [[ -s "$dest" ]]; then
+			log WARN "Keeping existing $dest after download failure"
+		else
+			log WARN "Missing $dest and download failed; continuing without this geodata asset"
+		fi
 	done <"$source_file"
 
 	log INFO "Data files are up to date."

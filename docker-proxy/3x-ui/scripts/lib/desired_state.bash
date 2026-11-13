@@ -71,6 +71,7 @@ inbound_remark_slug() {
 	xhttp) printf '%s' vless-xhttp ;;
 	grpc) printf '%s' vless-grpc-tls ;;
 	hysteria2) printf '%s' hysteria2 ;;
+	amneziawg) printf '%s' amneziawg ;;
 	mixed) printf '%s' mixed-docker-net ;;
 	*) return 1 ;;
 	esac
@@ -102,6 +103,12 @@ managed_inbound_remarks_json() {
 			'[$desired, $legacy, $old1, $old2] | unique'
 		return 0
 	fi
+	if [[ "$kind" == "amneziawg" ]]; then
+		jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" \
+			--arg spike 'awg-spike-443' \
+			'[$desired, $legacy, $spike] | unique'
+		return 0
+	fi
 	jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" '[$desired, $legacy] | unique'
 }
 
@@ -111,7 +118,7 @@ build_desired_state() {
 	local shared_email=${CLIENT_EMAIL_SHARED:-"$prefix"}
 	local sub_id=${CLIENT_SUB_ID:-}
 	local tls_domain=${WEBDOMAIN:-localhost}
-	local vision_remark xhttp_remark grpc_remark hysteria2_remark mixed_remark
+	local vision_remark xhttp_remark grpc_remark hysteria2_remark amneziawg_remark mixed_remark
 	if [[ -z "$sub_id" ]]; then
 		# Стабильный subId производен от домена и общей метки клиента.
 		sub_id=$(printf '%s:%s' "${WEBDOMAIN:-localhost}" "$shared_email" | sha256sum | cut -c1-16)
@@ -120,6 +127,7 @@ build_desired_state() {
 	xhttp_remark=$(inbound_remark xhttp)
 	grpc_remark=$(inbound_remark grpc)
 	hysteria2_remark=$(inbound_remark hysteria2)
+	amneziawg_remark=$(inbound_remark amneziawg)
 	mixed_remark=$(inbound_remark mixed)
 
 	jq -nc \
@@ -132,7 +140,7 @@ build_desired_state() {
 		--arg xhttpPath "${URI_VLESS_XHTTP:-/xhttp}" \
 		--arg grpcPort "${PORT_LOCAL_GRPC:-9444}" \
 		--arg grpcPath "${URI_VLESS_GRPC:-/grpc}" \
-		--arg hysteria2Port "${PORT_LOCAL_HYSTERIA:-443}" \
+		--arg udp443Port "${PORT_LOCAL_UDP443:-${PORT_LOCAL_HYSTERIA:-443}}" \
 		--arg mixedPort "${PORT_LOCAL_XRAY_MIXED:-10808}" \
 		--arg xrayTlsCert "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${tls_domain}-cert.pem}" \
 		--arg xrayTlsKey "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${tls_domain}-key.pem}" \
@@ -143,6 +151,7 @@ build_desired_state() {
 		--arg xhttpRemark "$xhttp_remark" \
 		--arg grpcRemark "$grpc_remark" \
 		--arg hysteria2Remark "$hysteria2_remark" \
+		--arg amneziawgRemark "$amneziawg_remark" \
 		--arg mixedRemark "$mixed_remark" \
 		'{
           panel: {
@@ -155,7 +164,9 @@ build_desired_state() {
             vision: {managed: true, protocol: "vless", port: ($visionPort|tonumber), remark: $visionRemark},
             xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath},
             grpc: {managed: true, protocol: "vless", port: ($grpcPort|tonumber), remark: $grpcRemark, path: $grpcPath},
-            hysteria2: {managed: true, protocol: "hysteria", port: ($hysteria2Port|tonumber), remark: $hysteria2Remark},
+            hysteria2: {managed: true, protocol: "hysteria", port: ($udp443Port|tonumber), remark: $hysteria2Remark},
+            amneziawg: {managed: true, protocol: "amneziawg", port: ($udp443Port|tonumber), remark: $amneziawgRemark,
+              subnet: "10.8.1.0/24", mtu: 1280, dns1: "8.8.8.8", dns2: "8.8.4.4"},
             mixed: {managed: true, protocol: "mixed", port: ($mixedPort|tonumber), remark: $mixedRemark}
           },
           clients: {
