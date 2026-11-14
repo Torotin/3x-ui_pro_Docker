@@ -268,13 +268,31 @@ wizard_toggle_bool_var() {
 	export "${name?}"
 }
 
+wizard_state_set_env_literal() {
+	local key=$1 value=$2 file tmp
+	file="$INSTALL_STATE_DIR/install.env"
+	mkdir -p "$(dirname "$file")"
+	touch "$file"
+	tmp=$(mktemp)
+	awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" {print k "=" v; done=1; next} {print} END{if(!done) print k "=" v}' "$file" >"$tmp"
+	mv "$tmp" "$file"
+}
+
 wizard_save_feature_toggles() {
-	install_state_set_env ENABLE_LAMPAC "$ENABLE_LAMPAC"
-	install_state_set_env ENABLE_TELEMT "$ENABLE_TELEMT"
-	install_state_set_env ENABLE_MIHOMO "$ENABLE_MIHOMO"
-	install_state_set_env UDP443_BACKEND "$UDP443_BACKEND"
-	install_state_set_env PORT_LOCAL_UDP443 "$PORT_LOCAL_UDP443"
-	install_state_set_env ENABLE_VLESS_GRPC "$ENABLE_VLESS_GRPC"
+	wizard_state_set_env_literal ENABLE_LAMPAC "$ENABLE_LAMPAC"
+	wizard_state_set_env_literal ENABLE_TELEMT "$ENABLE_TELEMT"
+	wizard_state_set_env_literal ENABLE_MIHOMO "$ENABLE_MIHOMO"
+	wizard_state_set_env_literal UDP443_BACKEND "$UDP443_BACKEND"
+	wizard_state_set_env_literal PORT_LOCAL_UDP443 "$PORT_LOCAL_UDP443"
+	wizard_state_set_env_literal ENABLE_VLESS_GRPC "$ENABLE_VLESS_GRPC"
+}
+
+wizard_bool_toggle_badge() {
+	if [[ "$1" == true ]]; then
+		printf '[ON ]'
+	else
+		printf '[OFF]'
+	fi
 }
 
 wizard_print_feature_toggles() {
@@ -282,19 +300,22 @@ wizard_print_feature_toggles() {
 		printf '\033[H\033[2J'
 	fi
 	cat <<MENU
-Feature toggles:
-  1. ENABLE_LAMPAC      $ENABLE_LAMPAC   Lampac compose service
-  2. ENABLE_TELEMT      $ENABLE_TELEMT   Telemt fallback/proxy stack
-  3. UDP443_BACKEND   $UDP443_BACKEND   Owner of public 443/udp (amneziawg|hysteria2|off)
-  4. ENABLE_VLESS_GRPC  $ENABLE_VLESS_GRPC   VLESS gRPC inbound in 3x-ui/Xray
-  5. ENABLE_MIHOMO      $ENABLE_MIHOMO   Mihomo compose service
+Optional Stack Features
+  1. Lampac         $(wizard_bool_toggle_badge "$ENABLE_LAMPAC")
+  2. Telemt         $(wizard_bool_toggle_badge "$ENABLE_TELEMT")
+  3. UDP443 backend [${UDP443_BACKEND}]
+  4. VLESS gRPC     $(wizard_bool_toggle_badge "$ENABLE_VLESS_GRPC")
+  5. Mihomo         $(wizard_bool_toggle_badge "$ENABLE_MIHOMO")
+
+  a. Save + render env (+ optional compose)
+  x. Return
 
 Choose 1-5 to toggle, a to apply/render env, x to return:
 MENU
 }
 
 wizard_feature_toggles() {
-	local input
+	local input dirty=0
 	wizard_load_feature_toggles
 	while true; do
 		wizard_print_feature_toggles
@@ -303,26 +324,40 @@ wizard_feature_toggles() {
 		case "$input" in
 		1)
 			wizard_toggle_bool_var ENABLE_LAMPAC
+			dirty=1
 			;;
 		2)
 			wizard_toggle_bool_var ENABLE_TELEMT
+			dirty=1
 			;;
 		3)
 			wizard_cycle_udp443_backend
+			dirty=1
 			;;
 		4)
 			wizard_toggle_bool_var ENABLE_VLESS_GRPC
+			dirty=1
 			;;
 		5)
 			wizard_toggle_bool_var ENABLE_MIHOMO
+			dirty=1
 			;;
 		a | apply)
 			wizard_save_feature_toggles
+			dirty=0
 			wizard_execute_step env dispatch_step env
+			if wizard_confirm "Apply compose stack now?"; then
+				wizard_execute_step compose dispatch_step compose
+			fi
 			return 0
 			;;
 		x | q | quit)
-			WIZARD_LAST_STATUS="SKIPPED toggles"
+			if ((dirty == 0)); then
+				return 0
+			fi
+			if wizard_confirm "Save changes?"; then
+				wizard_save_feature_toggles
+			fi
 			return 0
 			;;
 		'')

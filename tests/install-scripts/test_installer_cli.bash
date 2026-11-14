@@ -1433,14 +1433,14 @@ test_wizard_menu_accepts_numbered_choices() {
 
 test_wizard_toggles_optional_feature_flags_and_renders_env() {
 	make_fixture
-	printf 't\n1\n2\n3\n4\n5\na\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf 't\n1\n2\n3\n4\n5\na\n\nn\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "t. toggles" "$tmpdir/stdout" "wizard must expose feature toggles"
-	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must have a clear heading"
-	assert_contains "1. ENABLE_LAMPAC" "$tmpdir/stdout" "toggle screen must show Lampac flag"
-	assert_contains "2. ENABLE_TELEMT" "$tmpdir/stdout" "toggle screen must show Telemt flag"
-	assert_contains "3. UDP443_BACKEND" "$tmpdir/stdout" "toggle screen must show UDP443 backend selector"
-	assert_contains "4. ENABLE_VLESS_GRPC" "$tmpdir/stdout" "toggle screen must show VLESS gRPC flag"
-	assert_contains "5. ENABLE_MIHOMO" "$tmpdir/stdout" "toggle screen must show Mihomo flag"
+	assert_contains "Optional Stack Features" "$tmpdir/stdout" "toggle screen heading"
+	assert_contains "1. Lampac" "$tmpdir/stdout" "human-readable Lampac"
+	assert_contains "2. Telemt" "$tmpdir/stdout" "human-readable Telemt"
+	assert_contains "3. UDP443" "$tmpdir/stdout" "UDP443 selector"
+	assert_contains "4. VLESS gRPC" "$tmpdir/stdout" "VLESS gRPC"
+	assert_contains "5. Mihomo" "$tmpdir/stdout" "Mihomo"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "applying toggles must render env through dispatcher"
 	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "Lampac toggle must persist true"
 	assert_contains "ENABLE_TELEMT=true" "$INSTALL_STATE_DIR/install.env" "Telemt toggle must persist true"
@@ -1457,10 +1457,17 @@ test_wizard_toggles_optional_feature_flags_and_renders_env() {
 
 test_wizard_toggle_exit_does_not_persist_changes() {
 	make_fixture
-	printf 't\n1\nx\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must render before exit"
-	assert_not_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "exiting toggles without apply must not persist changes"
-	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "exiting toggles without apply must not render env"
+	printf 't\n1\nx\nn\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Optional Stack Features" "$tmpdir/stdout" "toggle screen must render before exit"
+	assert_not_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "discard dirty exit must not persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "discard dirty exit must not render env"
+}
+
+test_wizard_toggle_dirty_exit_yes_saves_without_env() {
+	make_fixture
+	printf 't\n1\nx\ny\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "dirty-exit Yes must persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "dirty-exit Yes is save-only"
 }
 
 test_wizard_removes_html_and_shows_last_status() {
@@ -2046,6 +2053,7 @@ test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_toggles_optional_feature_flags_and_renders_env
 test_wizard_toggle_exit_does_not_persist_changes
+test_wizard_toggle_dirty_exit_yes_saves_without_env
 test_wizard_removes_html_and_shows_last_status
 test_wizard_rejects_unknown_menu_choice_without_exit
 test_wizard_step_state_records_ok_env
