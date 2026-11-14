@@ -181,9 +181,9 @@ install_apt_wait_for_locks() {
 }
 
 install_apt_pick_ubuntu_mirror() {
-	local codename=$1 limit="${APT_MIRROR_LIMIT:-8}" list_url="${APT_MIRROR_LIST_URL:-}"
+	local codename=$1 limit="${APT_MIRROR_LIMIT:-6}" list_url="${APT_MIRROR_LIST_URL:-}"
 	local sources="/etc/apt/sources.list" deb822="/etc/apt/sources.list.d/ubuntu.sources"
-	local best="" mirror release_url country
+	local best="" best_time="" mirror release_url country elapsed
 	country="${APT_COUNTRY:-$(install_apt_detect_country || true)}"
 	if [[ -z "$list_url" ]]; then
 		list_url=$(install_apt_country_mirror_list_url "$country")
@@ -192,17 +192,21 @@ install_apt_pick_ubuntu_mirror() {
 	while IFS= read -r mirror; do
 		[[ "$mirror" =~ ^https?:// ]] || continue
 		release_url="${mirror%/}/dists/$codename/Release"
-		if curl -ILfs --max-time 4 "$release_url" >/dev/null 2>&1; then
-			best="${mirror%/}/"
-			break
+		elapsed=$(curl -fsSL --connect-timeout 2 --max-time 4 \
+			-o /dev/null -w '%{time_total}' "$release_url" 2>/dev/null || true)
+		if [[ -n "$elapsed" && "$elapsed" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+			if [[ -z "$best" ]] || awk -v a="$elapsed" -v b="$best_time" 'BEGIN { exit (a < b) ? 0 : 1 }'; then
+				best="${mirror%/}/"
+				best_time="$elapsed"
+			fi
 		fi
 		((--limit <= 0)) && break
-	done < <(curl -fsSL "$list_url")
+	done < <(curl -fsSL --connect-timeout 3 --max-time 5 "$list_url" 2>/dev/null || true)
 	[[ -n "$best" ]] || {
 		printf 'No faster Ubuntu mirror selected; keeping current APT sources\n'
 		return 0
 	}
-	printf 'Selected Ubuntu mirror: %s\n' "$best"
+	printf 'Selected Ubuntu mirror: %s (%.3fs)\n' "$best" "$best_time"
 	install_apt_apply_ubuntu_mirror "$codename" "$best"
 }
 
