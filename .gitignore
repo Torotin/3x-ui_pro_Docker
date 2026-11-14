@@ -54,3 +54,5 @@ __pycache__/
 
 # ==== Installer local state ====
 script/install-state/
+
+.worktrees/
