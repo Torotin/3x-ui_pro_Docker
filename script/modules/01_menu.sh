@@ -68,8 +68,10 @@ wizard_ui_yesno() {
 			"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH"
 		rc=$?
 		set -e
-		((rc == 0))
-		return
+		if ((rc == 0)); then
+			return 0
+		fi
+		return 1
 	fi
 	printf '%s [y/N] ' "$prompt"
 	read -r answer || answer=n
