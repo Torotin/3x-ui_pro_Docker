@@ -120,6 +120,8 @@ make_fixture() {
 	unset INSTALL_MOCK_IP_PROBE_IPV4 INSTALL_MOCK_IP_PROBE_IPV6
 	unset INSTALL_MOCK_PUBLIC_IPV4 INSTALL_MOCK_PUBLIC_IPV6
 	unset DOCKER_ENABLE_IPV6
+	export WIZARD_UI=text
+	unset WIZARD_ASSUME_YES
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -1775,6 +1777,15 @@ test_apt_falls_back_when_selected_mirror_update_fails() {
 	assert_contains "apt.install.deps" "$INSTALL_COMMAND_LOG" "apt must install dependencies only after retry"
 }
 
+test_wizard_yes_skips_apt_confirm_but_not_docker() {
+	make_fixture
+	# apt needs no "y"; Enter after apt pause; docker still needs "y"; then Enter; exit
+	printf '1\n\n3\nn\n\nx\n' | bash "$INSTALLER" wizard --yes >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "wizard --yes must run apt without confirm y"
+	assert_not_contains "docker.destroy" "$INSTALL_COMMAND_LOG" "declined docker wipe must not destroy"
+	assert_contains "SKIPPED docker" "$tmpdir/stdout" "docker force_prompt decline must skip"
+}
+
 test_wizard_skips_docker_wipe_when_user_declines() {
 	make_fixture
 	printf 'docker\nn\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
@@ -2049,6 +2060,7 @@ test_final_summary_mentions_host_dnscrypt
 test_apt_detects_country_specific_mirror_list
 test_apt_installs_required_dependencies
 test_apt_falls_back_when_selected_mirror_update_fails
+test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines
 test_wizard_confirms_apply_steps
 test_wizard_prompts_for_missing_user

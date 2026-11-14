@@ -1,6 +1,51 @@
 #!/usr/bin/env bash
 # Wizard/menu runtime. The wizard delegates to the same dispatcher as CLI run.
 
+: "${WIZARD_ASSUME_YES:=0}"
+: "${WIZARD_UI:=auto}"
+: "${WIZARD_UI_RESOLVED:=}"
+: "${WIZARD_UI_WARNED:=0}"
+
+wizard_parse_args() {
+	local arg
+	WIZARD_ASSUME_YES=0
+	for arg in "$@"; do
+		case "$arg" in
+		--yes | -y) WIZARD_ASSUME_YES=1 ;;
+		*) die "wizard: unknown option: $arg" ;;
+		esac
+	done
+	export WIZARD_ASSUME_YES
+}
+
+wizard_resolve_ui_mode() {
+	local mode=${WIZARD_UI:-auto}
+	case "$mode" in
+	text)
+		WIZARD_UI_RESOLVED=text
+		;;
+	whiptail)
+		if command -v whiptail >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; then
+			WIZARD_UI_RESOLVED=whiptail
+		else
+			WIZARD_UI_RESOLVED=text
+			if [[ "$WIZARD_UI_WARNED" != "1" ]]; then
+				log WARN "WIZARD_UI=whiptail but whiptail/TTY unavailable; using text UI"
+				WIZARD_UI_WARNED=1
+			fi
+		fi
+		;;
+	auto | *)
+		if command -v whiptail >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; then
+			WIZARD_UI_RESOLVED=whiptail
+		else
+			WIZARD_UI_RESOLVED=text
+		fi
+		;;
+	esac
+	export WIZARD_UI_RESOLVED
+}
+
 install_wizard_print_menu() {
 	if [[ -t 1 ]]; then
 		printf '\033[H\033[2J'
@@ -289,7 +334,13 @@ wizard_offer_self_update() {
 }
 
 wizard_confirm() {
-	local prompt=$1 answer
+	local prompt=$1
+	local force_prompt=${2:-0}
+	local answer
+	if [[ "$force_prompt" != "1" && "$WIZARD_ASSUME_YES" == "1" ]]; then
+		return 0
+	fi
+	# Task 5 replaces body with wizard_ui_yesno; text path required now:
 	printf '%s [y/N] ' "$prompt"
 	read -r answer || answer=n
 	case "$answer" in
@@ -320,7 +371,7 @@ wizard_dispatch_step() {
 		fi
 		;;
 	docker)
-		if wizard_confirm "Destroy Docker data and reinstall Docker?"; then
+		if wizard_confirm "Destroy Docker data and reinstall Docker?" 1; then
 			wizard_execute_step docker dispatch_step docker --destroy-docker-data
 		else
 			WIZARD_LAST_STATUS="SKIPPED docker"
@@ -362,6 +413,8 @@ wizard_dispatch_step() {
 }
 
 install_wizard() {
+	wizard_parse_args "$@"
+	wizard_resolve_ui_mode
 	wizard_offer_self_update
 	install_require_required_env wizard
 
