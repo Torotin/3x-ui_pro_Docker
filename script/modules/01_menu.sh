@@ -47,6 +47,207 @@ wizard_resolve_ui_mode() {
 	export WIZARD_UI_RESOLVED
 }
 
+wizard_ui_size() {
+	local lines cols
+	lines=$(tput lines 2>/dev/null || echo 24)
+	cols=$(tput cols 2>/dev/null || echo 80)
+	WIZARD_UI_HEIGHT=$((lines < 20 ? 20 : (lines > 40 ? 40 : lines - 2)))
+	WIZARD_UI_WIDTH=$((cols < 60 ? 60 : (cols > 100 ? 100 : cols - 2)))
+	export WIZARD_UI_HEIGHT WIZARD_UI_WIDTH
+}
+
+wizard_ui_yesno() {
+	local prompt=$1 force_prompt=${2:-0} rc answer
+	if [[ "$force_prompt" != "1" && "$WIZARD_ASSUME_YES" == "1" ]]; then
+		return 0
+	fi
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_ui_size
+		set +e
+		whiptail --title "3x-ui wizard" --yesno "$prompt" --defaultno \
+			"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH"
+		rc=$?
+		set -e
+		((rc == 0))
+		return
+	fi
+	printf '%s [y/N] ' "$prompt"
+	read -r answer || answer=n
+	case "$answer" in
+	y | Y | yes | YES) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+wizard_confirm() {
+	wizard_ui_yesno "$@"
+}
+
+wizard_ui_input() {
+	local prompt=$1 default=${2:-} result rc
+	if [[ "$WIZARD_UI_RESOLVED" != "whiptail" ]]; then
+		if [[ -n "$default" ]]; then
+			printf '%s [%s] ' "$prompt" "$default"
+		else
+			printf '%s ' "$prompt"
+		fi
+		read -r result || result=
+		[[ -z "$result" && -n "$default" ]] && result=$default
+		printf '%s\n' "$result"
+		return 0
+	fi
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --inputbox "$prompt" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$default" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		return 1
+	fi
+	printf '%s\n' "$result"
+}
+
+wizard_ui_menu() {
+	local result rc
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" --menu "$2" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${@:4}" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		printf 'x\n'
+		return 0
+	fi
+	printf '%s\n' "$result"
+}
+
+wizard_ui_checklist() {
+	local result rc
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" --checklist "$2" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${@:4}" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		return 1
+	fi
+	printf '%s\n' "$result" | tr -d '"'
+	return 0
+}
+
+wizard_ui_radiolist() {
+	local result rc
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" --radiolist "$2" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${@:4}" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		return 1
+	fi
+	printf '%s\n' "$result" | tr -d '"'
+	return 0
+}
+
+wizard_step_badge_ascii() {
+	local st
+	st=$(wizard_step_state_get "$1")
+	case "$st" in
+	OK) printf '[OK]' ;;
+	FAIL) printf '[FAIL]' ;;
+	*) printf '[ ]' ;;
+	esac
+}
+
+wizard_whiptail_backtitle() {
+	local features status bt
+	features=$(wizard_features_summary)
+	status=${WIZARD_LAST_STATUS:-No operation yet}
+	bt="3x-ui installer | Features: ${features} | Last operation: ${status}"
+	if [[ "$WIZARD_ASSUME_YES" == "1" ]]; then
+		bt="${bt} | Mode: --yes"
+	fi
+	printf '%s' "$bt"
+}
+
+wizard_whiptail_main_menu() {
+	local backtitle b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
+	backtitle=$(wizard_whiptail_backtitle)
+	b0=$(wizard_step_badge_ascii dnscrypt)
+	b1=$(wizard_step_badge_ascii apt)
+	b4=$(wizard_step_badge_ascii user)
+	b6=$(wizard_step_badge_ascii ssh)
+	b5=$(wizard_step_badge_ascii firewall)
+	b7=$(wizard_step_badge_ascii network)
+	b2=$(wizard_step_badge_ascii env)
+	b3=$(wizard_step_badge_ascii docker)
+	b8=$(wizard_step_badge_ascii compose)
+	b9=$(wizard_step_badge_ascii final)
+	wizard_ui_menu "$backtitle" "Choose an action" 18 \
+		a "auto — Full install (recommended)" \
+		t "toggles — Optional stack features" \
+		d "doctor — System / stack diagnostics" \
+		0 "${b0} dnscrypt — DNSCrypt system DNS" \
+		1 "${b1} apt — APT mirror and OS packages" \
+		4 "${b4} user — Service user" \
+		6 "${b6} ssh — SSH policy" \
+		5 "${b5} firewall — Firewall policy" \
+		7 "${b7} network — Network tuning" \
+		2 "${b2} env — Render env files" \
+		3 "${b3} docker — Docker (destructive)" \
+		8 "${b8} compose — Validate/start stack" \
+		9 "${b9} final — Final summary" \
+		x "Exit"
+}
+
+wizard_feature_toggles_whiptail() {
+	local backtitle selected backend l t g m
+	wizard_load_feature_toggles
+	backtitle=$(wizard_whiptail_backtitle)
+	[[ "${ENABLE_LAMPAC}" == true ]] && l=ON || l=OFF
+	[[ "${ENABLE_TELEMT}" == true ]] && t=ON || t=OFF
+	[[ "${ENABLE_VLESS_GRPC}" == true ]] && g=ON || g=OFF
+	[[ "${ENABLE_MIHOMO}" == true ]] && m=ON || m=OFF
+	selected=$(wizard_ui_checklist "$backtitle" "Optional stack features (Space toggles)" 4 \
+		ENABLE_LAMPAC "Lampac [$l]" "$l" \
+		ENABLE_TELEMT "Telemt [$t]" "$t" \
+		ENABLE_VLESS_GRPC "VLESS gRPC [$g]" "$g" \
+		ENABLE_MIHOMO "Mihomo [$m]" "$m") || return 0
+	ENABLE_LAMPAC=false
+	ENABLE_TELEMT=false
+	ENABLE_VLESS_GRPC=false
+	ENABLE_MIHOMO=false
+	for tag in $selected; do
+		case "$tag" in
+		ENABLE_LAMPAC) ENABLE_LAMPAC=true ;;
+		ENABLE_TELEMT) ENABLE_TELEMT=true ;;
+		ENABLE_VLESS_GRPC) ENABLE_VLESS_GRPC=true ;;
+		ENABLE_MIHOMO) ENABLE_MIHOMO=true ;;
+		esac
+	done
+	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_VLESS_GRPC ENABLE_MIHOMO
+	backend=$(wizard_ui_radiolist "$backtitle" "UDP443 backend" 3 \
+		amneziawg "amneziawg" "$([[ ${UDP443_BACKEND:-off} == amneziawg ]] && echo ON || echo OFF)" \
+		hysteria2 "hysteria2" "$([[ ${UDP443_BACKEND:-off} == hysteria2 ]] && echo ON || echo OFF)" \
+		off "off" "$([[ ${UDP443_BACKEND:-off} == off ]] && echo ON || echo OFF)") || return 0
+	UDP443_BACKEND=$backend
+	export UDP443_BACKEND
+	install_normalize_udp443_backend
+	wizard_save_feature_toggles
+	wizard_execute_step env dispatch_step env
+	if wizard_confirm "Apply compose stack now?"; then
+		wizard_execute_step compose dispatch_step compose
+	fi
+}
+
 wizard_step_state_file() {
 	WIZARD_STEPS_STATE="${INSTALL_STATE_DIR}/wizard-steps.state"
 	export WIZARD_STEPS_STATE
@@ -315,6 +516,10 @@ MENU
 }
 
 wizard_feature_toggles() {
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_feature_toggles_whiptail
+		return 0
+	fi
 	local input dirty=0
 	wizard_load_feature_toggles
 	while true; do
@@ -463,29 +668,21 @@ wizard_offer_self_update() {
 	esac
 }
 
-wizard_confirm() {
-	local prompt=$1
-	local force_prompt=${2:-0}
-	local answer
-	if [[ "$force_prompt" != "1" && "$WIZARD_ASSUME_YES" == "1" ]]; then
-		return 0
-	fi
-	# Task 5 replaces body with wizard_ui_yesno; text path required now:
-	printf '%s [y/N] ' "$prompt"
-	read -r answer || answer=n
-	case "$answer" in
-	y | Y | yes | YES) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
 wizard_auto_install() {
 	local step rc
 	install_load_state_env
 	if [[ -z "${USER_SSH:-}" ]]; then
-		printf 'SSH username: '
-		read -r USER_SSH || USER_SSH=
-		export USER_SSH
+		if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+			if ! USER_SSH=$(wizard_ui_input "SSH username:" ""); then
+				WIZARD_LAST_STATUS="SKIPPED auto"
+				return 0
+			fi
+			export USER_SSH
+		else
+			printf 'SSH username: '
+			read -r USER_SSH || USER_SSH=
+			export USER_SSH
+		fi
 		[[ -n "$USER_SSH" ]] || {
 			WIZARD_LAST_STATUS="SKIPPED auto"
 			wizard_wait_continue
@@ -565,9 +762,14 @@ wizard_dispatch_step() {
 	user)
 		install_load_state_env
 		if [[ -z "${USER_SSH:-}" ]]; then
-			printf 'SSH username: '
-			read -r USER_SSH || USER_SSH=
-			export USER_SSH
+			if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+				USER_SSH=$(wizard_ui_input "SSH username:" "") || USER_SSH=
+				export USER_SSH
+			else
+				printf 'SSH username: '
+				read -r USER_SSH || USER_SSH=
+				export USER_SSH
+			fi
 		fi
 		wizard_execute_step user dispatch_step user
 		;;
@@ -599,15 +801,23 @@ install_wizard() {
 	install_require_required_env wizard
 
 	while true; do
-		install_wizard_print_menu
-		install_wizard_print_status
-		printf '> '
-		local input
-		read -r input || break
-		[[ -z "$input" ]] && continue
-		[[ "$input" == "x" ]] && break
-		[[ "$input" == "q" || "$input" == "quit" ]] && break
-		input=$(wizard_normalize_step "$input")
+		if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+			local input
+			input=$(wizard_whiptail_main_menu)
+			[[ "$input" == "x" ]] && break
+			[[ -z "$input" ]] && continue
+			input=$(wizard_normalize_step "$input")
+		else
+			install_wizard_print_menu
+			install_wizard_print_status
+			printf '> '
+			local input
+			read -r input || break
+			[[ -z "$input" ]] && continue
+			[[ "$input" == "x" ]] && break
+			[[ "$input" == "q" || "$input" == "quit" ]] && break
+			input=$(wizard_normalize_step "$input")
+		fi
 		if ! wizard_dispatch_step "$input"; then
 			log WARN "wizard step failed: $input"
 		fi
