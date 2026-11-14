@@ -1620,10 +1620,39 @@ test_dnscrypt_mock_install_logs_intent_without_host_mutation() {
 	assert_contains "dnscrypt.config" "$INSTALL_COMMAND_LOG" "dnscrypt must log config write"
 	assert_contains "dnscrypt.unit" "$INSTALL_COMMAND_LOG" "dnscrypt must log unit write"
 	assert_contains "dnscrypt.resolved" "$INSTALL_COMMAND_LOG" "dnscrypt must log resolved drop-in"
+	assert_contains "dnscrypt.hosts.ensure" "$INSTALL_COMMAND_LOG" "dnscrypt must ensure local hostname in /etc/hosts"
 	assert_contains "dnscrypt.service.enable" "$INSTALL_COMMAND_LOG" "dnscrypt must log service enable"
 	assert_contains "dnscrypt.dig" "$INSTALL_COMMAND_LOG" "dnscrypt must log dig readiness check"
 	assert_not_contains "vendor/" "$INSTALL_COMMAND_LOG" "dnscrypt must not reference a vendor path"
 	assert_not_contains "chattr +i" "$INSTALL_COMMAND_LOG" "mock dnscrypt must not lock resolv.conf"
+}
+
+test_dnscrypt_ensure_local_hostname_writes_debian_hosts_line() {
+	make_fixture
+	local hosts="$tmpdir/hosts"
+	printf '127.0.0.1\tlocalhost\n' >"$hosts"
+	export INSTALL_MOCK=1
+	export DNSCRYPT_HOSTS_FILE="$hosts"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_dnscrypt.sh"
+	# Force a deterministic short name regardless of the test host.
+	hostname() {
+		case "${1:-}" in
+		-s) printf 'cyberdock-doarc\n' ;;
+		-f) printf 'cyberdock-doarc\n' ;;
+		*) printf 'cyberdock-doarc\n' ;;
+		esac
+	}
+	dnscrypt_ensure_local_hostname >/dev/null
+	grep -Eq '^127\.0\.1\.1[[:space:]]+cyberdock-doarc([[:space:]]|$)' "$hosts" \
+		|| fail "ensure_local_hostname must append 127.0.1.1 cyberdock-doarc"
+	# Idempotent: second call must not duplicate.
+	dnscrypt_ensure_local_hostname >/dev/null
+	local count
+	count="$(grep -cE '[[:space:]]cyberdock-doarc([[:space:]]|$)' "$hosts" || true)"
+	[[ "$count" == "1" ]] || fail "ensure_local_hostname must be idempotent (got $count entries)"
 }
 
 test_dnscrypt_forwards_force_flag() {
@@ -2009,6 +2038,7 @@ test_wizard_persists_required_variables_before_env_step
 test_batch_requires_ssh_and_web_credentials
 test_dnscrypt_requires_apply_confirmation
 test_dnscrypt_mock_install_logs_intent_without_host_mutation
+test_dnscrypt_ensure_local_hostname_writes_debian_hosts_line
 test_dnscrypt_forwards_force_flag
 test_dnscrypt_pins_version_flag
 test_dnscrypt_detect_connectivity_uses_shared_probe_in_mock

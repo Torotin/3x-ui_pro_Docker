@@ -10,6 +10,8 @@ DNSCRYPT_SERVICE_FILE="${DNSCRYPT_SERVICE_FILE:-/etc/systemd/system/dnscrypt-pro
 DNSCRYPT_RESOLVED_DROPIN_DIR="${DNSCRYPT_RESOLVED_DROPIN_DIR:-/etc/systemd/resolved.conf.d}"
 DNSCRYPT_RESOLVED_DROPIN="${DNSCRYPT_RESOLVED_DROPIN:-$DNSCRYPT_RESOLVED_DROPIN_DIR/dnscrypt-proxy.conf}"
 DNSCRYPT_RESOLV_CONF="${DNSCRYPT_RESOLV_CONF:-${INSTALL_TEST_RESOLV_CONF:-/etc/resolv.conf}}"
+# Hosts file used for local short-hostname mapping (sudo/getaddrinfo). Overridable in tests.
+DNSCRYPT_HOSTS_FILE="${DNSCRYPT_HOSTS_FILE:-${INSTALL_TEST_HOSTS:-/etc/hosts}}"
 DNSCRYPT_GITHUB_REPO="${DNSCRYPT_GITHUB_REPO:-DNSCrypt/dnscrypt-proxy}"
 DNSCRYPT_GITHUB_API_LATEST="${DNSCRYPT_GITHUB_API_LATEST:-https://api.github.com/repos/${DNSCRYPT_GITHUB_REPO}/releases/latest}"
 # Optional offline/local archive (absolute path). Also settable via --archive.
@@ -886,6 +888,7 @@ block_ipv6 = __BLOCK_IPV6__
 
 ## Immediately respond to A and AAAA queries for host names without a domain name
 ## This also prevents "dotless domain names" from being resolved upstream.
+## Keep true: short hostnames must come from /etc/hosts (see dnscrypt_ensure_local_hostname).
 
 block_unqualified = true
 
@@ -1624,6 +1627,41 @@ dnscrypt_lock_resolv() {
 	chattr +i "$resolv"
 }
 
+# With block_unqualified=true, short hostnames never resolve via DNS.
+# Missing /etc/hosts entry → sudo: unable to resolve host <hostname>.
+dnscrypt_ensure_local_hostname() {
+	local hosts=${DNSCRYPT_HOSTS_FILE:-/etc/hosts}
+	local short fqdn line
+	short="$(hostname -s 2>/dev/null || true)"
+	[[ -n "$short" ]] || short="$(hostname 2>/dev/null || true)"
+	short="${short%%.*}"
+	[[ -n "$short" && "$short" != "localhost" ]] || return 0
+
+	fqdn="$(hostname -f 2>/dev/null || true)"
+	if [[ -z "$fqdn" || "$fqdn" == "$short" || "$fqdn" == "localhost" || "$fqdn" == *\ * ]]; then
+		fqdn=""
+	fi
+
+	if [[ -r "$hosts" ]] && grep -Eq "[[:space:]]${short}([[:space:]]|$)" "$hosts"; then
+		printf '[+] Local hostname already present in %s (%s)\n' "$hosts" "$short"
+		return 0
+	fi
+
+	printf '[+] Mapping local hostname in %s (sudo/getaddrinfo; block_unqualified=true)\n' "$hosts"
+	mkdir -p -- "$(dirname -- "$hosts")"
+	[[ -e "$hosts" ]] || : >"$hosts"
+	if [[ -s "$hosts" ]]; then
+		# Ensure file ends with a newline before appending.
+		[[ "$(tail -c1 "$hosts" | wc -l)" -gt 0 ]] || printf '\n' >>"$hosts"
+	fi
+	if [[ -n "$fqdn" ]]; then
+		line=$'127.0.1.1\t'"${short}"$'\t'"${fqdn}"
+	else
+		line=$'127.0.1.1\t'"${short}"
+	fi
+	printf '%s\n' "$line" >>"$hosts"
+}
+
 dnscrypt_wait_ready() {
 	local ready_dig_target ready=0 _
 	printf '[+] Enabling and starting dnscrypt-proxy\n'
@@ -1730,6 +1768,7 @@ dnscrypt_run_install() {
 	dnscrypt_decide_mode
 
 	if ((DNSCRYPT_SKIP_HEALTHY == 1)); then
+		dnscrypt_ensure_local_hostname
 		printf '[+] Keeping existing binary: %s\n' "${DNSCRYPT_INSTALLED_VERSION}"
 		printf '[+] Done. dnscrypt-proxy %s is already installed and set as system DNS.\n' "$DNSCRYPT_VERSION"
 		return 0
@@ -1779,6 +1818,7 @@ dnscrypt_run_install() {
 
 	dnscrypt_wait_ready
 	dnscrypt_lock_resolv
+	dnscrypt_ensure_local_hostname
 	dnscrypt_print_summary
 }
 
@@ -1811,6 +1851,7 @@ install_dnscrypt_command() {
 		run_cmd dnscrypt.config write "$DNSCRYPT_CONFIG_FILE"
 		run_cmd dnscrypt.unit write "$DNSCRYPT_SERVICE_FILE"
 		run_cmd dnscrypt.resolved write "$DNSCRYPT_RESOLVED_DROPIN"
+		run_cmd dnscrypt.hosts.ensure printf 'ensure 127.0.1.1 local hostname in /etc/hosts\n'
 		run_cmd dnscrypt.service.enable systemctl enable dnscrypt-proxy
 		run_cmd dnscrypt.service.restart systemctl restart dnscrypt-proxy
 		run_cmd dnscrypt.dig dig +time=2 +tries=1 +short example.com @127.0.0.1
@@ -1860,6 +1901,18 @@ install_doctor_check_dnscrypt() {
 			doctor_record dnscrypt OK "resolv.conf points to localhost DNS"
 		else
 			doctor_issue dnscrypt "resolv.conf does not clearly point to 127.0.0.1/::1" "$next_action"
+		fi
+		local short_host hosts_file=${DNSCRYPT_HOSTS_FILE:-${INSTALL_TEST_HOSTS:-/etc/hosts}}
+		short_host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+		short_host="${short_host%%.*}"
+		if [[ -n "$short_host" && "$short_host" != "localhost" ]]; then
+			if [[ -r "$hosts_file" ]] && grep -Eq "[[:space:]]${short_host}([[:space:]]|$)" "$hosts_file"; then
+				doctor_ok_detail "local hostname mapped in hosts ($short_host)"
+			elif getent hosts "$short_host" >/dev/null 2>&1; then
+				doctor_ok_detail "local hostname resolves ($short_host)"
+			else
+				doctor_issue dnscrypt "local hostname '$short_host' does not resolve (sudo may warn: unable to resolve host); expected 127.0.1.1 in $hosts_file" "$next_action --reconfigure"
+			fi
 		fi
 		if command -v dig >/dev/null 2>&1; then
 			if dig +time=2 +tries=1 +short example.com @127.0.0.1 >/dev/null 2>&1; then

@@ -1,5 +1,11 @@
 # Журнал изменений установщика
 
+## 0.7.7 - 2026-11-13
+
+- `dnscrypt`: после установки/reconfigure пишет `127.0.1.1 <hostname>` в `/etc/hosts`, если short-hostname отсутствует.
+- Причина: `block_unqualified=true` в toml не отдаёт A/AAAA для имён без точки → `sudo: unable to resolve host` при пустом hosts.
+- Doctor: проверка, что локальный hostname резолвится (hosts/getent).
+
 ## 0.7.6 - 2026-11-13
 
 - `docker --destroy-docker-data`: перед purge останавливает `docker.socket`, затем `docker`, затем `containerd` (раньше socket оставался active и оставлял `overlay2/*/merged` busy).
