@@ -22,6 +22,28 @@ apt_os_id() {
 	printf '%s\n' "$id"
 }
 
+install_apt_lock_is_busy() {
+	local path=$1
+	if command -v fuser >/dev/null 2>&1; then
+		fuser "$path" >/dev/null 2>&1
+		return $?
+	fi
+	if command -v flock >/dev/null 2>&1; then
+		[[ -e "$path" ]] || return 1
+		if flock -n "$path" true; then
+			return 1
+		else
+			return 0
+		fi
+	fi
+	die "APT lock check needs fuser or flock"
+}
+
+install_apt_dpkg_force_opts() {
+	local -n _opts=$1
+	_opts+=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+}
+
 install_apt_required_packages() {
 	printf '%s\n' \
 		ca-certificates \
@@ -68,9 +90,11 @@ install_apt_command() {
 		run_cmd apt.mirror.check curl -fsSL "http://mirrors.ubuntu.com/$country.txt"
 		run_cmd apt.sources.backup cp /etc/apt/sources.list "$INSTALL_STATE_DIR/backups/sources.list"
 		install_apt_update_with_fallback ubuntu noble
-		run_cmd apt.install.deps apt-get install -y "${required_packages[@]}"
+		local -a dpkg_opts=()
+		install_apt_dpkg_force_opts dpkg_opts
+		run_cmd apt.install.deps apt-get install -y "${dpkg_opts[@]}" "${required_packages[@]}"
 		run_cmd apt.list.upgradable apt list --upgradable
-		run_cmd apt.upgrade apt-get upgrade -y -V
+		run_cmd apt.upgrade apt-get upgrade -y -V "${dpkg_opts[@]}"
 		run_cmd apt.autoremove apt-get autoremove -y
 		install_apt_enable_auto_updates
 		printf 'APT mirror check completed\nAPT package list updated\nAPT upgrade completed\n'
@@ -86,12 +110,14 @@ install_apt_command() {
 		printf 'APT mirror selection skipped for OS: %s\n' "$os_id"
 	fi
 	install_apt_update_with_fallback "$os_id" "$codename"
-	run_cmd apt.install.deps env DEBIAN_FRONTEND=noninteractive apt-get install -y "${required_packages[@]}" || die "failed to install required APT packages"
+	local -a dpkg_opts=()
+	install_apt_dpkg_force_opts dpkg_opts
+	run_cmd apt.install.deps env DEBIAN_FRONTEND=noninteractive apt-get install -y "${dpkg_opts[@]}" "${required_packages[@]}" || die "failed to install required APT packages"
 	local updates
 	updates=$(apt list --upgradable 2>/dev/null | grep -c "upgradable" || true)
 	printf 'Upgradable packages: %s\n' "$updates"
 	if ((updates > 0)); then
-		run_cmd apt.upgrade env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -V || die "APT upgrade failed"
+		run_cmd apt.upgrade env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -V "${dpkg_opts[@]}" || die "APT upgrade failed"
 		run_cmd apt.autoremove apt-get autoremove -y || die "APT autoremove failed"
 	else
 		printf 'No upgrades available; system is up to date\n'
@@ -142,7 +168,7 @@ install_apt_wait_for_locks() {
 	for ((i = 1; i <= attempts; i++)); do
 		local busy=0
 		for lock in "${locks[@]}"; do
-			if fuser "$lock" >/dev/null 2>&1; then
+			if install_apt_lock_is_busy "$lock"; then
 				busy=1
 				break
 			fi

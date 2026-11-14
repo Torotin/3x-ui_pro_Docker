@@ -1781,6 +1781,8 @@ test_apt_installs_required_dependencies() {
 	assert_contains "apt.locks.wait" "$INSTALL_COMMAND_LOG" "apt must wait for apt/dpkg locks"
 	assert_contains "apt.timer.enable" "$INSTALL_COMMAND_LOG" "apt must enable unattended-upgrades timers"
 	assert_contains "apt.unattended.dry-run" "$INSTALL_COMMAND_LOG" "apt must validate unattended-upgrades"
+	assert_contains "force-confdef" "$INSTALL_COMMAND_LOG" "apt install/upgrade must pass dpkg force-confdef"
+	assert_contains "force-confold" "$INSTALL_COMMAND_LOG" "apt install/upgrade must pass dpkg force-confold"
 }
 
 test_apt_falls_back_when_selected_mirror_update_fails() {
