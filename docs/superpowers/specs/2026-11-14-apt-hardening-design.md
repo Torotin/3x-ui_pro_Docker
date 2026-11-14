@@ -181,6 +181,6 @@ bash tests/install-scripts/run.sh   # mock-only
 
 - No TBD placeholders.
 - Classic sed negative filter and flock `[[ -e ]]` noted explicitly.
-- Dpkg helper uses named array append (no word-splitting on `::`).
+- Dpkg helper uses Bash nameref (`local -n`) into caller array (no `eval` / word-splitting on `::`).
 - Mock keeps `apt.auto.install`; real-path drops duplicate install.
 - Scope is surgical; wizard out of bounds.
