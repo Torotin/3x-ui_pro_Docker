@@ -222,7 +222,10 @@ wizard_feature_toggles_whiptail() {
 		ENABLE_LAMPAC "Lampac [$l]" "$l" \
 		ENABLE_TELEMT "Telemt [$t]" "$t" \
 		ENABLE_VLESS_GRPC "VLESS gRPC [$g]" "$g" \
-		ENABLE_MIHOMO "Mihomo [$m]" "$m") || return 0
+		ENABLE_MIHOMO "Mihomo [$m]" "$m") || {
+		WIZARD_LAST_STATUS="SKIPPED toggles"
+		return 0
+	}
 	ENABLE_LAMPAC=false
 	ENABLE_TELEMT=false
 	ENABLE_VLESS_GRPC=false
@@ -239,11 +242,15 @@ wizard_feature_toggles_whiptail() {
 	backend=$(wizard_ui_radiolist "$backtitle" "UDP443 backend" 3 \
 		amneziawg "amneziawg" "$([[ ${UDP443_BACKEND:-off} == amneziawg ]] && echo ON || echo OFF)" \
 		hysteria2 "hysteria2" "$([[ ${UDP443_BACKEND:-off} == hysteria2 ]] && echo ON || echo OFF)" \
-		off "off" "$([[ ${UDP443_BACKEND:-off} == off ]] && echo ON || echo OFF)") || return 0
+		off "off" "$([[ ${UDP443_BACKEND:-off} == off ]] && echo ON || echo OFF)") || {
+		WIZARD_LAST_STATUS="SKIPPED toggles"
+		return 0
+	}
 	UDP443_BACKEND=$backend
 	export UDP443_BACKEND
 	install_normalize_udp443_backend
 	wizard_save_feature_toggles
+	# After OK on both dialogs, render env immediately (compose remains optional confirm).
 	wizard_execute_step env dispatch_step env
 	if wizard_confirm "Apply compose stack now?"; then
 		wizard_execute_step compose dispatch_step compose
@@ -492,9 +499,17 @@ wizard_save_feature_toggles() {
 
 wizard_bool_toggle_badge() {
 	if [[ "$1" == true ]]; then
-		printf '[ON ]'
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[ON ]'
+		else
+			printf '\033[32m[ON ]\033[0m'
+		fi
 	else
-		printf '[OFF]'
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[OFF]'
+		else
+			printf '\033[2m[OFF]\033[0m'
+		fi
 	fi
 }
 
