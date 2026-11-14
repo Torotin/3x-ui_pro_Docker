@@ -121,6 +121,7 @@ make_fixture() {
 	unset INSTALL_MOCK_IP_PROBE_IPV4 INSTALL_MOCK_IP_PROBE_IPV6
 	unset INSTALL_MOCK_PUBLIC_IPV4 INSTALL_MOCK_PUBLIC_IPV6
 	unset DOCKER_ENABLE_IPV6
+	unset APT_SOURCES_LIST APT_UBUNTU_SOURCES APT_AUTO_UPGRADES_FILE APT_UNATTENDED_FILE
 	export WIZARD_UI=text
 	unset WIZARD_ASSUME_YES
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
@@ -1835,6 +1836,30 @@ EOF
 		"generated security must stay on security.ubuntu.com"
 }
 
+test_apt_unattended_origins_debian() {
+	make_fixture
+	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
+ID=debian
+VERSION_CODENAME=bookworm
+OS
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_apt.sh"
+	local unattended=$tmpdir/50unattended-upgrades
+	export APT_AUTO_UPGRADES_FILE="$tmpdir/20auto-upgrades"
+	export APT_UNATTENDED_FILE="$unattended"
+	INSTALL_MOCK=0 install_apt_write_auto_upgrades all
+	assert_contains 'origin=Debian,codename=${distro_codename}-security,label=Debian-Security' "$unattended" \
+		"Debian security origin must use Debian-Security label"
+	assert_contains 'origin=Debian,codename=${distro_codename},label=Debian' "$unattended" \
+		"Debian base origin must be present"
+	assert_contains 'origin=Debian,codename=${distro_codename}-updates,label=Debian' "$unattended" \
+		"Debian mode=all must include updates origin"
+	assert_not_contains '${distro_id}:${distro_codename}-security' "$unattended" \
+		"must not use Ubuntu origin form on Debian"
+}
+
 test_apt_falls_back_when_selected_mirror_update_fails() {
 	make_fixture
 	export INSTALL_MOCK_APT_UPDATE_FAIL_ONCE=1
@@ -2163,6 +2188,7 @@ test_final_summary_mentions_host_dnscrypt
 test_apt_detects_country_specific_mirror_list
 test_apt_installs_required_dependencies
 test_apt_apply_mirror_preserves_security_uri
+test_apt_unattended_origins_debian
 test_apt_falls_back_when_selected_mirror_update_fails
 test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines

@@ -278,12 +278,10 @@ install_apt_enable_auto_updates() {
 		install_apt_unattended_dry_run
 		return 0
 	fi
-	run_cmd apt.auto.install env DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades
 	install_apt_write_auto_upgrades "$mode"
 	run_cmd apt.timer.enable systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
-	if install_apt_wait_for_locks; then
-		install_apt_unattended_dry_run
-	fi
+	install_apt_wait_for_locks
+	install_apt_unattended_dry_run
 }
 
 install_apt_unattended_dry_run() {
@@ -300,7 +298,29 @@ install_apt_unattended_dry_run() {
 }
 
 install_apt_write_auto_upgrades() {
-	local mode=$1 auto_file=/etc/apt/apt.conf.d/20auto-upgrades unattended_file=/etc/apt/apt.conf.d/50unattended-upgrades tmp
+	local mode=$1
+	local auto_file=${APT_AUTO_UPGRADES_FILE:-/etc/apt/apt.conf.d/20auto-upgrades}
+	local unattended_file=${APT_UNATTENDED_FILE:-/etc/apt/apt.conf.d/50unattended-upgrades}
+	local os_id origins tmp
+	os_id=$(apt_os_id)
+	origins=
+	if [[ "$os_id" == "debian" ]]; then
+		origins+='    "origin=Debian,codename=${distro_codename},label=Debian";'
+		origins+=$'\n'
+		origins+='    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";'
+		origins+=$'\n'
+		if [[ "$mode" == "all" ]]; then
+			origins+='    "origin=Debian,codename=${distro_codename}-updates,label=Debian";'
+			origins+=$'\n'
+		fi
+	else
+		origins+='    "${distro_id}:${distro_codename}-security";'
+		origins+=$'\n'
+		if [[ "$mode" == "all" ]]; then
+			origins+='    "${distro_id}:${distro_codename}-updates";'
+			origins+=$'\n'
+		fi
+	fi
 	backup_file "$auto_file"
 	tmp=$(mktemp)
 	cat >"$tmp" <<'EOF'
@@ -315,9 +335,7 @@ EOF
 	cat >"$tmp" <<EOF
 // Managed by install.sh
 Unattended-Upgrade::Allowed-Origins {
-    "\${distro_id}:\${distro_codename}-security";
-$([[ "$mode" == "all" ]] && printf '    "${distro_id}:${distro_codename}-updates";\n')
-};
+${origins}};
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 Unattended-Upgrade::Automatic-Reboot "false";
