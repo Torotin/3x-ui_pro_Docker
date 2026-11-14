@@ -671,7 +671,7 @@ wizard_offer_self_update() {
 }
 
 wizard_auto_install() {
-	local step rc
+	local step
 	install_load_state_env
 	if [[ -z "${USER_SSH:-}" ]]; then
 		if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
