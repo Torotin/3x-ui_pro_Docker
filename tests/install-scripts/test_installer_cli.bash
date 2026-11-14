@@ -1477,7 +1477,16 @@ test_wizard_rejects_unknown_menu_choice_without_exit() {
 	printf '99\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: INVALID 99" "$tmpdir/stdout" "wizard must report invalid menu choices"
 	assert_contains "Unknown menu item: 99" "$tmpdir/stdout" "wizard must explain invalid menu choice"
-	assert_contains "Available steps:" "$tmpdir/stdout" "wizard must continue after invalid menu choice"
+	assert_contains "Quick Actions" "$tmpdir/stdout" "wizard must continue after invalid menu choice"
+}
+
+test_wizard_step_state_records_ok_env() {
+	make_fixture
+	printf '2\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "env=OK" "$INSTALL_STATE_DIR/wizard-steps.state" "successful env must persist step state"
+	assert_contains "Last operation: OK env" "$tmpdir/stdout" "Last operation phrasing must stay"
+	assert_contains "No operation yet" "$tmpdir/stdout" "first paint must show No operation yet"
+	assert_contains "Quick Actions" "$tmpdir/stdout" "grouped menu marker required"
 }
 
 test_wizard_streams_output_and_waits_for_enter() {
@@ -2039,6 +2048,7 @@ test_wizard_toggles_optional_feature_flags_and_renders_env
 test_wizard_toggle_exit_does_not_persist_changes
 test_wizard_removes_html_and_shows_last_status
 test_wizard_rejects_unknown_menu_choice_without_exit
+test_wizard_step_state_records_ok_env
 test_wizard_streams_output_and_waits_for_enter
 test_wizard_apt_step_streams_and_uses_confirmation
 test_wizard_compose_output_filter_removes_pull_noise

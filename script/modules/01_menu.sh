@@ -5,6 +5,7 @@
 : "${WIZARD_UI:=auto}"
 : "${WIZARD_UI_RESOLVED:=}"
 : "${WIZARD_UI_WARNED:=0}"
+: "${WIZARD_STEPS_STATE:=}"
 
 wizard_parse_args() {
 	local arg
@@ -46,25 +47,115 @@ wizard_resolve_ui_mode() {
 	export WIZARD_UI_RESOLVED
 }
 
+wizard_step_state_file() {
+	WIZARD_STEPS_STATE="${INSTALL_STATE_DIR}/wizard-steps.state"
+	export WIZARD_STEPS_STATE
+	printf '%s\n' "$WIZARD_STEPS_STATE"
+}
+
+wizard_step_state_get() {
+	local step=$1 file
+	file=$(wizard_step_state_file)
+	[[ -f "$file" ]] || { printf '\n'; return 0; }
+	awk -F= -v s="$step" '$1==s { print $2; found=1; exit } END { if (!found) print "" }' "$file"
+}
+
+wizard_step_state_set() {
+	local step=$1 status=$2 file tmp
+	file=$(wizard_step_state_file)
+	tmp=$(mktemp)
+	mkdir -p "$INSTALL_STATE_DIR"
+	if [[ -f "$file" ]]; then
+		awk -F= -v s="$step" -v st="$status" '
+			$1==s { print s "=" st; seen=1; next }
+			{ print }
+			END { if (!seen) print s "=" st }
+		' "$file" >"$tmp"
+	else
+		printf '%s=%s\n' "$step" "$status" >"$tmp"
+	fi
+	mv "$tmp" "$file"
+}
+
+wizard_features_summary() {
+	local -a items=()
+	wizard_load_feature_toggles
+	[[ "${ENABLE_LAMPAC}" == true ]] && items+=(lampac)
+	[[ "${ENABLE_TELEMT}" == true ]] && items+=(telemt)
+	[[ "${ENABLE_VLESS_GRPC}" == true ]] && items+=(vless-grpc)
+	[[ "${ENABLE_MIHOMO}" == true ]] && items+=(mihomo)
+	if [[ "${UDP443_BACKEND:-off}" != off ]]; then
+		items+=("udp443:${UDP443_BACKEND}")
+	fi
+	if ((${#items[@]} == 0)); then
+		printf 'none'
+		return 0
+	fi
+	local IFS=,
+	printf '%s' "${items[*]}"
+}
+
+wizard_step_badge() {
+	local st
+	st=$(wizard_step_state_get "$1")
+	case "$st" in
+	OK)
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[✓]'
+		else
+			printf '\033[32m[✓]\033[0m'
+		fi
+		;;
+	FAIL)
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[!]'
+		else
+			printf '\033[31m[!]\033[0m'
+		fi
+		;;
+	*) printf '[ ]' ;;
+	esac
+}
+
+wizard_print_menu_step() {
+	local step=$1
+	shift
+	printf '  '
+	wizard_step_badge "$step"
+	printf ' %s\n' "$*"
+}
+
 install_wizard_print_menu() {
+	local features
 	if [[ -t 1 ]]; then
 		printf '\033[H\033[2J'
 	fi
+	features=$(wizard_features_summary)
+	printf '3x-ui installer · wizard\n'
+	printf 'Features: %s\n' "$features"
+	if [[ "$WIZARD_ASSUME_YES" == "1" ]]; then
+		printf 'Mode: --yes\n'
+	fi
+	printf '\n── Quick Actions ─────────────────────────\n'
 	cat <<'MENU'
-Available steps:
-  0. dnscrypt  Install DNSCrypt as system DNS (DoH/DNSCrypt)
-  1. apt       Select APT mirror and update OS packages
-  2. env       Render installer and compose env files
-  3. docker    Install/prepare Docker resources
-  4. user      Create or update service user
-  5. firewall  Apply firewall policy
-  6. ssh       Apply SSH policy
-  7. network   Apply sysctl/network tuning
-  8. compose   Validate/start compose stack
-  9. final     Render final summary
-  t. toggles   Enable/disable optional stack features
-  x. Exit
+  a. auto      Full install (recommended path)
+  t. toggles   Optional stack features
+  d. doctor    System / stack diagnostics
 MENU
+	printf '\n── 1. Host & Security Preparation ────────\n'
+	wizard_print_menu_step dnscrypt '0. dnscrypt   Install DNSCrypt as system DNS (DoH/DNSCrypt)'
+	wizard_print_menu_step apt '1. apt        Select APT mirror and update OS packages'
+	wizard_print_menu_step user '4. user       Create or update service user'
+	wizard_print_menu_step ssh '6. ssh        Apply SSH policy'
+	wizard_print_menu_step firewall '5. firewall  Apply firewall policy'
+	wizard_print_menu_step network '7. network    Apply sysctl/network tuning'
+	printf '\n── 2. Docker & Stack Deployment ──────────\n'
+	wizard_print_menu_step env '2. env        Render installer and compose env files'
+	wizard_print_menu_step docker '3. docker     Install/prepare Docker resources (destructive)'
+	wizard_print_menu_step compose '8. compose    Validate/start compose stack'
+	wizard_print_menu_step final '9. final      Render final summary'
+	printf '\n  x. Exit\n'
+	printf 'Keys: 0-9 step · a/t/d · names (apt, compose) · q quit\n'
 }
 
 install_wizard_print_status() {
@@ -85,6 +176,8 @@ wizard_normalize_step() {
 	8) printf 'compose\n' ;;
 	9) printf 'final\n' ;;
 	t) printf 'toggles\n' ;;
+	a) printf 'auto\n' ;;
+	d) printf 'doctor\n' ;;
 	*) printf '%s\n' "$1" ;;
 	esac
 }
@@ -121,11 +214,13 @@ wizard_execute_step() {
 	fi
 	set -e
 	if ((rc == 0)); then
+		wizard_step_state_set "$label" OK
 		WIZARD_LAST_STATUS="OK $label"
 		printf '\nLast operation: OK %s\nLog: %s\n' "$label" "$output_file"
 		wizard_wait_continue
 		return 0
 	fi
+	wizard_step_state_set "$label" FAIL
 	WIZARD_LAST_STATUS="FAILED $label"
 	printf '\nLast operation: FAILED %s\nLog: %s\n' "$label" "$output_file"
 	wizard_wait_continue
@@ -403,6 +498,14 @@ wizard_dispatch_step() {
 	toggles)
 		wizard_feature_toggles
 		;;
+	auto)
+		WIZARD_LAST_STATUS="INVALID auto"
+		printf '\nauto not implemented yet\n'
+		wizard_wait_continue
+		;;
+	doctor)
+		wizard_execute_step doctor dispatch_step doctor
+		;;
 	*)
 		WIZARD_LAST_STATUS="INVALID $input"
 		printf '\nUnknown menu item: %s\n' "$input"
@@ -420,8 +523,8 @@ install_wizard() {
 
 	while true; do
 		install_wizard_print_menu
-		printf '> '
 		install_wizard_print_status
+		printf '> '
 		local input
 		read -r input || break
 		[[ -z "$input" ]] && continue
