@@ -56,22 +56,21 @@ Keep existing entrypoints and mock/`run_cmd` patterns. Add small helpers inside 
 
 ## 2. Dpkg force options
 
-Caller pattern (preferred):
+Use a Bash nameref (`local -n`, Bash ≥ 4.3 — same era as existing `mapfile`) so the helper appends into the caller array without `eval` or word-splitting on `::`:
 
 ```bash
+install_apt_dpkg_force_opts() {
+	local -n _opts=$1
+	_opts+=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+}
+
+# caller:
 local -a dpkg_opts=()
-install_apt_dpkg_force_opts dpkg_opts   # appends two -o entries into named array
+install_apt_dpkg_force_opts dpkg_opts
 env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -V "${dpkg_opts[@]}"
 ```
 
-Options:
-
-```text
--o Dpkg::Options::=--force-confdef
--o Dpkg::Options::=--force-confold
-```
-
-Apply to real-path `apt-get install` (required deps) and `apt-get upgrade`. Mock `run_cmd` strings should include the same flags so tests can assert them. Do **not** rely on unquoted string expansion through word splitting.
+Apply to real-path `apt-get install` (required deps) and `apt-get upgrade`. Mock `run_cmd` strings should include the same flags so tests can assert them.
 
 ## 3. Security-safe mirror apply
 
