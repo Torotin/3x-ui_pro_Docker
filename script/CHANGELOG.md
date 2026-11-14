@@ -1,5 +1,11 @@
 # Журнал изменений установщика
 
+## 0.7.8 - 2026-11-14
+
+- Wizard: hybrid whiptail + ANSI text UI, step badges, Quick Actions (`auto`/`toggles`/`doctor`).
+- Wizard: `install.sh wizard --yes|-y` skips non-destructive confirms; docker wipe always prompts.
+- Wizard: feature toggles dirty-exit save-only; `WIZARD_UI=auto|whiptail|text`.
+
 ## 0.7.7 - 2026-11-13
 
 - `dnscrypt`: после установки/reconfigure пишет `127.0.1.1 <hostname>` в `/etc/hosts`, если short-hostname отсутствует.

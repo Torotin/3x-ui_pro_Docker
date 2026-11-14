@@ -1819,6 +1819,14 @@ test_wizard_confirms_apply_steps() {
 	assert_contains "network.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to network"
 }
 
+test_wizard_doctor_from_menu() {
+	make_fixture
+	printf 'd\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "d. doctor" "$tmpdir/stdout" "menu must list doctor"
+	assert_contains "doctor: profile=" "$tmpdir/stdout" "doctor must run from wizard"
+	assert_contains "Last operation: OK doctor" "$tmpdir/stdout" "doctor success status"
+}
+
 test_wizard_prompts_for_missing_user() {
 	make_fixture
 	unset USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
@@ -2106,6 +2114,7 @@ test_apt_falls_back_when_selected_mirror_update_fails
 test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines
 test_wizard_confirms_apply_steps
+test_wizard_doctor_from_menu
 test_wizard_prompts_for_missing_user
 test_wizard_auto_runs_chain_with_docker_force_prompt
 test_wizard_auto_yes_skips_start_but_asks_docker
