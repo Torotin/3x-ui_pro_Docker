@@ -208,20 +208,25 @@ install_apt_pick_ubuntu_mirror() {
 
 install_apt_apply_ubuntu_mirror() {
 	local codename=$1 mirror=$2
-	local sources="/etc/apt/sources.list" deb822="/etc/apt/sources.list.d/ubuntu.sources"
+	local sources="${APT_SOURCES_LIST:-/etc/apt/sources.list}"
+	local deb822="${APT_UBUNTU_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources}"
 	if [[ -f "$deb822" ]]; then
 		backup_file "$deb822"
 		local tmp
 		tmp=$(mktemp)
 		awk -v mirror="$mirror" '
-			/^URIs:/ {$0="URIs: " mirror}
-			{print}
+			/^URIs:/ {
+				if ($0 !~ /security\.ubuntu\.com/) {
+					$0 = "URIs: " mirror
+				}
+			}
+			{ print }
 		' "$deb822" >"$tmp"
 		run_cmd apt.sources.apply install -m 0644 "$tmp" "$deb822"
 		rm -f "$tmp"
 	elif [[ -f "$sources" ]]; then
 		backup_file "$sources"
-		run_cmd apt.sources.apply sed -i -E "s|https?://[^ ]*/ubuntu/?|$mirror|g" "$sources"
+		run_cmd apt.sources.apply sed -i -E "/security\\.ubuntu\\.com/! s|https?://[^ ]*/ubuntu/?|${mirror}|g" "$sources"
 	else
 		local tmp
 		tmp=$(mktemp)
@@ -229,7 +234,7 @@ install_apt_apply_ubuntu_mirror() {
 deb ${mirror} ${codename} main restricted universe multiverse
 deb ${mirror} ${codename}-updates main restricted universe multiverse
 deb ${mirror} ${codename}-backports main restricted universe multiverse
-deb ${mirror} ${codename}-security main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu ${codename}-security main restricted universe multiverse
 EOF
 		run_cmd apt.sources.apply install -m 0644 "$tmp" "$sources"
 		rm -f "$tmp"

@@ -1785,6 +1785,56 @@ test_apt_installs_required_dependencies() {
 	assert_contains "force-confold" "$INSTALL_COMMAND_LOG" "apt install/upgrade must pass dpkg force-confold"
 }
 
+test_apt_apply_mirror_preserves_security_uri() {
+	make_fixture
+	local mirror=http://mirror.example/ubuntu/
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_apt.sh"
+
+	local sources=$tmpdir/sources.list
+	local missing_deb822=$tmpdir/no-ubuntu.sources
+	export APT_SOURCES_LIST="$sources" APT_UBUNTU_SOURCES="$missing_deb822"
+	cat >"$sources" <<'EOF'
+deb http://archive.ubuntu.com/ubuntu/ noble main
+deb http://security.ubuntu.com/ubuntu noble-security main
+deb http://mirror.yandex.ru/ubuntu/ noble-updates main
+EOF
+	INSTALL_MOCK=0 install_apt_apply_ubuntu_mirror noble "$mirror"
+	assert_contains "security.ubuntu.com/ubuntu" "$sources" "classic security URI must remain"
+	assert_contains "mirror.example/ubuntu" "$sources" "archive/updates lines must rewrite"
+	grep -Fq 'deb http://security.ubuntu.com/ubuntu noble-security' "$sources" \
+		|| fail "classic security line must be unchanged"
+	grep -Fq 'deb http://mirror.example/ubuntu/ noble main' "$sources" \
+		|| fail "classic archive line must use selected mirror"
+
+	local deb822=$tmpdir/ubuntu.sources
+	local missing_sources=$tmpdir/no-sources.list
+	export APT_SOURCES_LIST="$missing_sources" APT_UBUNTU_SOURCES="$deb822"
+	cat >"$deb822" <<'EOF'
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu/
+Suites: noble noble-updates
+Components: main
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu
+Suites: noble-security
+Components: main
+EOF
+	INSTALL_MOCK=0 install_apt_apply_ubuntu_mirror noble "$mirror"
+	assert_contains "URIs: http://security.ubuntu.com/ubuntu" "$deb822" "DEB822 security URIs must remain"
+	assert_contains "URIs: http://mirror.example/ubuntu/" "$deb822" "DEB822 archive URIs must rewrite"
+
+	local generated=$tmpdir/generated.sources.list
+	export APT_SOURCES_LIST="$generated" APT_UBUNTU_SOURCES="$missing_deb822"
+	INSTALL_MOCK=0 install_apt_apply_ubuntu_mirror noble "$mirror"
+	assert_contains "deb ${mirror} noble main" "$generated" "generated list must use mirror for main"
+	assert_contains "deb http://security.ubuntu.com/ubuntu noble-security" "$generated" \
+		"generated security must stay on security.ubuntu.com"
+}
+
 test_apt_falls_back_when_selected_mirror_update_fails() {
 	make_fixture
 	export INSTALL_MOCK_APT_UPDATE_FAIL_ONCE=1
@@ -2112,6 +2162,7 @@ test_uninstall_purge_dnscrypt_is_explicit
 test_final_summary_mentions_host_dnscrypt
 test_apt_detects_country_specific_mirror_list
 test_apt_installs_required_dependencies
+test_apt_apply_mirror_preserves_security_uri
 test_apt_falls_back_when_selected_mirror_update_fails
 test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines
