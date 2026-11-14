@@ -479,6 +479,50 @@ wizard_confirm() {
 	esac
 }
 
+wizard_auto_install() {
+	local step rc
+	install_load_state_env
+	if [[ -z "${USER_SSH:-}" ]]; then
+		printf 'SSH username: '
+		read -r USER_SSH || USER_SSH=
+		export USER_SSH
+		[[ -n "$USER_SSH" ]] || {
+			WIZARD_LAST_STATUS="SKIPPED auto"
+			wizard_wait_continue
+			return 0
+		}
+	fi
+	if [[ "$WIZARD_ASSUME_YES" != "1" ]]; then
+		if ! wizard_confirm "Run full install (apt→env→docker→user→firewall→ssh→network→compose→final)? Docker wipe is destructive."; then
+			WIZARD_LAST_STATUS="SKIPPED auto"
+			wizard_wait_continue
+			return 0
+		fi
+	fi
+	for step in apt env docker user firewall ssh network compose final; do
+		case "$step" in
+		docker)
+			if ! wizard_confirm "Destroy Docker data and reinstall Docker?" 1; then
+				WIZARD_LAST_STATUS="SKIPPED docker"
+				wizard_wait_continue
+				return 0
+			fi
+			wizard_execute_step docker dispatch_step docker --destroy-docker-data || return $?
+			;;
+		apt)
+			wizard_execute_step apt dispatch_step apt --apply --yes || return $?
+			;;
+		firewall | ssh | network)
+			wizard_execute_step "$step" dispatch_step "$step" --apply --yes || return $?
+			;;
+		user | env | compose | final)
+			wizard_execute_step "$step" dispatch_step "$step" || return $?
+			;;
+		esac
+	done
+	WIZARD_LAST_STATUS="OK auto"
+}
+
 wizard_dispatch_step() {
 	local input=$1
 	case "$input" in
@@ -534,9 +578,7 @@ wizard_dispatch_step() {
 		wizard_feature_toggles
 		;;
 	auto)
-		WIZARD_LAST_STATUS="INVALID auto"
-		printf '\nauto not implemented yet\n'
-		wizard_wait_continue
+		wizard_auto_install
 		;;
 	doctor)
 		wizard_execute_step doctor dispatch_step doctor

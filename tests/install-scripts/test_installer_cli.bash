@@ -117,6 +117,7 @@ make_fixture() {
 	unset VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER
 	unset REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
 	unset INSTALL_MOCK_DOCTOR_PHASE
+	unset INSTALL_MOCK_DOCKER_PRESENT
 	unset INSTALL_MOCK_IP_PROBE_IPV4 INSTALL_MOCK_IP_PROBE_IPV6
 	unset INSTALL_MOCK_PUBLIC_IPV4 INSTALL_MOCK_PUBLIC_IPV6
 	unset DOCKER_ENABLE_IPV6
@@ -1826,6 +1827,30 @@ test_wizard_prompts_for_missing_user() {
 	assert_contains "user.ensure useradd -m -d /home/wizard-user -s /bin/bash wizard-user" "$INSTALL_COMMAND_LOG" "wizard must pass prompted user to user step"
 }
 
+test_wizard_auto_runs_chain_with_docker_force_prompt() {
+	make_fixture
+	printf 'a\ny\n\n\ny\n\n\n\n\n\n\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Run full install" "$tmpdir/stdout" "auto without --yes must show start confirm"
+	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "auto must run apt"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "auto must run env"
+	assert_contains "docker.system.prune" "$INSTALL_COMMAND_LOG" "auto must run docker after force confirm"
+	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "auto must run firewall"
+	assert_contains "ssh.apply" "$INSTALL_COMMAND_LOG" "auto must run ssh"
+	assert_contains "network.apply" "$INSTALL_COMMAND_LOG" "auto must run network"
+	assert_contains "OK auto" "$tmpdir/stdout" "auto must finish with OK status"
+}
+
+test_wizard_auto_yes_skips_start_but_asks_docker() {
+	make_fixture
+	printf 'a\n\n\nn\n\nx\n' | bash "$INSTALLER" wizard --yes >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_not_contains "Run full install" "$tmpdir/stdout" "auto --yes must skip start confirm"
+	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "auto --yes must run apt"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "auto must render env before docker"
+	assert_not_contains "docker.system.prune" "$INSTALL_COMMAND_LOG" "declined docker must stop chain"
+	assert_not_contains "compose.up" "$INSTALL_COMMAND_LOG" "chain must stop before compose when docker declined"
+	assert_contains "SKIPPED docker" "$tmpdir/stdout" "declined docker must mark skip status"
+}
+
 test_user_loads_rendered_state_env() {
 	make_fixture
 	unset USER_SSH PASS_SSH
@@ -2082,6 +2107,8 @@ test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines
 test_wizard_confirms_apply_steps
 test_wizard_prompts_for_missing_user
+test_wizard_auto_runs_chain_with_docker_force_prompt
+test_wizard_auto_yes_skips_start_but_asks_docker
 test_user_loads_rendered_state_env
 test_user_configures_ssh_sudo_groups_and_aliases
 test_user_sudoers_content_uses_portable_defaults
