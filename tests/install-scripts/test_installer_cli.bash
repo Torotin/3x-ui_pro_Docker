@@ -1196,15 +1196,36 @@ test_ssh_auth_mode_follows_optional_public_key() {
 
 	export SSH_PBK=ssh-ed25519-mock
 	install_ssh_set_auth_mode
+	install_ssh_assert_auth_enabled
 	install_render_sshd_config "$ROOT_DIR/script/template/sshd_config.template" "$rendered"
 	assert_contains "PubkeyAuthentication yes" "$rendered" "ssh with public key must enable pubkey auth"
 	assert_contains "PasswordAuthentication no" "$rendered" "ssh with public key must disable password auth"
+	assert_contains "AuthenticationMethods publickey" "$rendered" "pubkey mode must pin AuthenticationMethods"
+	assert_not_contains "Protocol 2" "$rendered" "deprecated Protocol directive must be removed"
+	assert_contains "aes256-gcm@openssh.com" "$rendered" "ciphers must include AES-GCM"
+	assert_contains "hmac-sha2-256-etm@openssh.com" "$rendered" "MACs must prefer ETM"
+	assert_not_contains "hmac-sha2-256," "$rendered" "non-ETM MACs must be dropped"
+	assert_contains "AllowTcpForwarding yes" "$rendered" "Match User must allow TCP forwarding for service user"
+	assert_not_contains "AllowAgentForwarding yes" "$rendered" "Match User must not re-enable agent forwarding"
 
 	export SSH_PBK=
 	install_ssh_set_auth_mode
+	install_ssh_assert_auth_enabled
 	install_render_sshd_config "$ROOT_DIR/script/template/sshd_config.template" "$rendered"
 	assert_contains "PubkeyAuthentication no" "$rendered" "ssh without public key must disable pubkey auth"
 	assert_contains "PasswordAuthentication yes" "$rendered" "ssh without public key must enable password auth"
+	assert_contains "AuthenticationMethods password" "$rendered" "password mode must pin AuthenticationMethods"
+}
+
+test_ssh_rejects_dual_auth_disabled_lockout() {
+	make_fixture
+	source "$ROOT_DIR/script/modules/07_ssh.sh"
+	export PUBKEY_AUTH=no PASSWORD_AUTH=no SSH_AUTH_METHODS=
+	# die() exits the process — run in a subshell so the suite continues.
+	if (install_ssh_assert_auth_enabled) 2>"$tmpdir/stderr"; then
+		fail "ssh must refuse both auth methods disabled"
+	fi
+	assert_contains "SSH auth lockout" "$tmpdir/stderr" "ssh must explain dual-auth lockout"
 }
 
 test_docker_install_handles_missing_docker_binary() {
@@ -2225,6 +2246,8 @@ test_ssh_rejects_invalid_port_before_apply
 test_ssh_restarts_when_listener_check_fails_after_reload
 test_ssh_socket_retries_when_listener_check_fails
 test_ssh_listener_mock_uses_realistic_address_pattern
+test_ssh_auth_mode_follows_optional_public_key
+test_ssh_rejects_dual_auth_disabled_lockout
 test_docker_install_handles_missing_docker_binary
 test_network_sysctl_dual_preserves_slaac
 test_network_sysctl_ipv4_keeps_ra_off

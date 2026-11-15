@@ -16,6 +16,7 @@ install_ssh_command() {
 	[[ -f "$template" ]] || die "template not found: $template"
 	export USER_SSH PORT_REMOTE_SSH
 	install_ssh_set_auth_mode
+	install_ssh_assert_auth_enabled
 	install_ssh_log_context "$target"
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		service_unit=$(install_ssh_detect_service)
@@ -39,11 +40,27 @@ install_ssh_set_auth_mode() {
 	if [[ -n "${SSH_PBK:-}" ]]; then
 		PUBKEY_AUTH=yes
 		PASSWORD_AUTH=no
+		SSH_AUTH_METHODS=publickey
 	else
 		PUBKEY_AUTH=no
 		PASSWORD_AUTH=yes
+		SSH_AUTH_METHODS=password
 	fi
-	export PUBKEY_AUTH PASSWORD_AUTH
+	export PUBKEY_AUTH PASSWORD_AUTH SSH_AUTH_METHODS
+}
+
+# Refuse a lockout config: at least one interactive auth method must stay enabled.
+install_ssh_assert_auth_enabled() {
+	local pubkey=${PUBKEY_AUTH:-no} password=${PASSWORD_AUTH:-no}
+	if [[ "$pubkey" != "yes" && "$password" != "yes" ]]; then
+		die "SSH auth lockout: PubkeyAuthentication and PasswordAuthentication are both disabled"
+	fi
+	case "${SSH_AUTH_METHODS:-}" in
+	publickey | password | "publickey password" | "password publickey") ;;
+	*)
+		die "SSH_AUTH_METHODS is invalid or empty: ${SSH_AUTH_METHODS:-<unset>}"
+		;;
+	esac
 }
 
 install_ssh_log_context() {
@@ -57,6 +74,7 @@ install_ssh_log_context() {
 	printf 'SSH user: %s\n' "$USER_SSH"
 	printf 'SSH port: %s\n' "$PORT_REMOTE_SSH"
 	printf 'SSH auth mode: %s\n' "$auth_mode"
+	printf 'SSH AuthenticationMethods: %s\n' "${SSH_AUTH_METHODS:-}"
 }
 
 install_render_sshd_config() {
