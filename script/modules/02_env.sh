@@ -143,6 +143,59 @@ assert_uri_telemt_sub_unique() {
 	return 0
 }
 
+install_webdomain_is_ipv4() {
+	[[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+install_webdomain_is_ipv6() {
+	local domain=${1:-}
+	[[ "$domain" == *:* ]] && ! install_webdomain_is_ipv4 "$domain"
+}
+
+# WEBDOMAIN must be a hostname, never a bare IP: Let's Encrypt rejects IP
+# identifiers, Telemt rejects IP web.vhosts hosts, and Traefik Host() rules
+# need a name that can obtain certs (use sslip.io or a real DNS name).
+assert_webdomain_is_hostname() {
+	local domain=${1:-${WEBDOMAIN:-}}
+	[[ -n "$domain" ]] || die "WEBDOMAIN is required"
+	if install_webdomain_is_ipv4 "$domain"; then
+		die "WEBDOMAIN must be a DNS hostname, not an IPv4 address (got: $domain). Use a real domain or <ipv4>.sslip.io"
+	fi
+	if install_webdomain_is_ipv6 "$domain"; then
+		die "WEBDOMAIN must be a DNS hostname, not an IPv6 address (got: $domain)"
+	fi
+	return 0
+}
+
+# When WEBDOMAIN is unset/placeholder/IP, derive <PUBLIC_IPV4>.sslip.io so LE + Telemt
+# still get a resolvable FQDN after an IP-only bootstrap (admin Hosts also resolve).
+ensure_webdomain_or_sslip() {
+	local ipv4=${PUBLIC_IPV4:-}
+	[[ -n "$ipv4" ]] || die "PUBLIC_IPV4 is required before WEBDOMAIN defaulting"
+	if [[ -z "${WEBDOMAIN:-}" || "$WEBDOMAIN" == "example.invalid" ]] \
+		|| install_webdomain_is_ipv4 "$WEBDOMAIN" || install_webdomain_is_ipv6 "$WEBDOMAIN"; then
+		WEBDOMAIN="${ipv4}.sslip.io"
+		export WEBDOMAIN
+		printf 'WEBDOMAIN defaulted to %s (sslip.io)\n' "$WEBDOMAIN"
+	fi
+	assert_webdomain_is_hostname "$WEBDOMAIN"
+}
+
+# Traefik PEM paths must track WEBDOMAIN; stale IP-based paths abort AfterStart
+# before Vision/XHTTP are created (public :443 stays dark).
+sync_xray_traefik_pem_paths() {
+	local domain=${WEBDOMAIN:-localhost}
+	if [[ -z "${XRAY_TLS_CERT_FILE:-}" || "$XRAY_TLS_CERT_FILE" == /etc/traefik/pem/* ]]; then
+		XRAY_TLS_CERT_FILE="/etc/traefik/pem/${domain}-cert.pem"
+	fi
+	if [[ -z "${XRAY_TLS_KEY_FILE:-}" || "$XRAY_TLS_KEY_FILE" == /etc/traefik/pem/* ]]; then
+		XRAY_TLS_KEY_FILE="/etc/traefik/pem/${domain}-key.pem"
+	fi
+	# Stack contract: Hysteria2 masquerade hits Traefik websecure via WEBDOMAIN.
+	HYSTERIA2_MASQ_URL="https://${domain}:4443/"
+	export XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
+}
+
 detect_docker_socket_gid() {
 	if getent group docker >/dev/null 2>&1; then
 		getent group docker | awk -F: '{print $3}'
@@ -154,10 +207,10 @@ detect_docker_socket_gid() {
 }
 
 ensure_env_defaults() {
-	: "${WEBDOMAIN:=example.invalid}"
 	ip_probe_resolve_host_mode
 	# PUBLIC_IPV4 is required for this product; probe already died if missing.
 	: "${PUBLIC_IPV4:?PUBLIC_IPV4 required}"
+	ensure_webdomain_or_sslip
 	# PUBLIC_IPV6 may be empty when HOST_IP_MODE=ipv4 — do not default to PUBLIC_IPV4
 	if [[ "${HOST_IP_MODE}" == "dual" ]]; then
 		TOR_IPV6_AVAILABLE=true
@@ -295,11 +348,9 @@ ensure_env_defaults() {
 	: "${ENABLE_VLESS_GRPC:=false}"
 	install_normalize_global_bool_env
 	install_normalize_udp443_backend
-	: "${XRAY_TLS_CERT_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}"
-	: "${XRAY_TLS_KEY_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	# Prefer Traefik inside docker-net. https://${WEBDOMAIN}/ self-loops when
 	# the 3x-ui container hostname is WEBDOMAIN (no TCP :443 inside).
-	: "${HYSTERIA2_MASQ_URL:=https://${WEBDOMAIN}:4443/}"
+	sync_xray_traefik_pem_paths
 	if install_telemt_enabled; then
 		: "${VISION_FALLBACK_HOST:=telemt}"
 		: "${VISION_FALLBACK_PORT:=$PORT_LOCAL_TELEMT_PROXY}"

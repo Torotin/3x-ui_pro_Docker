@@ -462,6 +462,20 @@ install_doctor_check_state() {
 	else
 		doctor_record env WARN "installer env file not found: $INSTALL_STATE_DIR/install.env" "$next_action"
 	fi
+	if [[ -n "${WEBDOMAIN:-}" ]]; then
+		if [[ "$WEBDOMAIN" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ || "$WEBDOMAIN" == *:* ]]; then
+			doctor_issue env "WEBDOMAIN is an IP address ($WEBDOMAIN); Let's Encrypt and Telemt require a hostname" "run env (auto <ipv4>.sslip.io) or set a DNS name"
+		elif [[ "$WEBDOMAIN" == *.sslip.io ]]; then
+			doctor_ok_detail "WEBDOMAIN uses sslip.io fallback: $WEBDOMAIN"
+		else
+			doctor_ok_detail "WEBDOMAIN looks like a hostname: $WEBDOMAIN"
+		fi
+	fi
+	if [[ -n "${WEBDOMAIN:-}" && -n "${XRAY_TLS_CERT_FILE:-}" && "$XRAY_TLS_CERT_FILE" == /etc/traefik/pem/* ]]; then
+		if [[ "$XRAY_TLS_CERT_FILE" != "/etc/traefik/pem/${WEBDOMAIN}-cert.pem" ]]; then
+			doctor_issue env "XRAY_TLS_CERT_FILE ($XRAY_TLS_CERT_FILE) does not match WEBDOMAIN ($WEBDOMAIN); AfterStart will abort before Vision" "run env"
+		fi
+	fi
 	if ((configured == checked)) && [[ -n "${HT_PASS_ENCODED:-}" || -n "${PASS_WEB:-}" ]] && [[ -f "$INSTALL_STATE_DIR/install.env" ]]; then
 		doctor_record env OK "installer state: configured"
 	else

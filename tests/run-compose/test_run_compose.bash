@@ -159,8 +159,22 @@ exit 0
 BASH
 	chmod +x "$tmpdir/telemt-panel/ensure-geoip.sh"
 	run_runner restart --logs telemt
+	assert_contains "up -d --no-deps --force-recreate telemt-fix-perms" "$tmpdir/docker.log" "restart telemt must heal ownership via telemt-fix-perms even with --no-deps"
 	assert_contains "logs -f telemt" "$tmpdir/docker.log" "restart --logs telemt must follow logs after GeoIP hook"
 	[[ -f "$tmpdir/compose.d/.ensure-geoip.log" ]] || fail "GeoIP hook must write beside ENV_FILE without unbound COMPOSE_ENV"
+}
+
+test_geoip_background_and_logs_release_compose_lock_fd() {
+	# Regression: nohup ensure-geoip inherited flock fd 9 and kept restart locked
+	# after Ctrl+C on --logs / after up returned.
+	assert_contains '9>&-' "$RUNNER" "GeoIP nohup must close lock fd 9 so background work cannot hold flock"
+	awk '
+		/^run_restart\(\)/ { in_fn=1 }
+		in_fn && /release_lock/ { saw_release=1 }
+		in_fn && saw_release && /exec docker logs -f/ { found=1 }
+		in_fn && /^}/ { in_fn=0 }
+		END { exit found ? 0 : 1 }
+	' "$RUNNER" || fail "run_restart must release_lock before exec docker logs -f"
 }
 
 test_up_is_safe_by_default() {
@@ -383,6 +397,7 @@ test_restart_uses_no_deps_by_default
 test_restart_can_include_dependencies
 test_restart_logs_is_explicit
 test_restart_telemt_geoip_hook_uses_env_file_dir
+test_geoip_background_and_logs_release_compose_lock_fd
 test_up_is_safe_by_default
 test_compose_invocation_sanitizes_transformed_environment
 test_legacy_docker_compose_is_rejected

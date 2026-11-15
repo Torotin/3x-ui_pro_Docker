@@ -462,6 +462,20 @@ test_env_reports_permission_problem_before_backup() {
 	assert_not_contains "cp:" "$tmpdir/stderr" "env must not fail with raw cp permission errors"
 }
 
+test_env_defaults_missing_or_ip_webdomain_to_sslip() {
+	make_fixture
+	export WEBDOMAIN=31.59.155.170
+	export INSTALL_MOCK_PUBLIC_IPV4=31.59.155.170
+	run_installer run env >/tmp/install-webdomain-sslip.out 2>/tmp/install-webdomain-sslip.err
+	assert_contains "WEBDOMAIN=31.59.155.170.sslip.io" "$INSTALL_STATE_DIR/install.env" "bare IPv4 WEBDOMAIN must become <ipv4>.sslip.io"
+	assert_contains "XRAY_TLS_CERT_FILE=/etc/traefik/pem/31.59.155.170.sslip.io-cert.pem" "$INSTALL_ROOT/compose.d/.env" "PEM cert path must track sslip WEBDOMAIN"
+	assert_contains "WEBDOMAIN defaulted to 31.59.155.170.sslip.io" /tmp/install-webdomain-sslip.out "env must log sslip defaulting"
+	unset WEBDOMAIN
+	export INSTALL_MOCK_PUBLIC_IPV4=198.51.100.10
+	run_installer run env >/tmp/install-webdomain-empty.out 2>/tmp/install-webdomain-empty.err
+	assert_contains "WEBDOMAIN=198.51.100.10.sslip.io" "$INSTALL_STATE_DIR/install.env" "empty WEBDOMAIN must become <ipv4>.sslip.io"
+}
+
 test_env_preserves_existing_state_defaults() {
 	make_fixture
 	unset WEBDOMAIN USER_SSH CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
@@ -2149,6 +2163,7 @@ test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
 test_compose_installs_docker_maintenance_timer
 test_env_reports_permission_problem_before_backup
+test_env_defaults_missing_or_ip_webdomain_to_sslip
 test_env_preserves_existing_state_defaults
 test_env_renders_mihomo_config_with_generated_secret
 test_env_persists_generated_lampac_jacred_apikey
