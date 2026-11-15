@@ -1471,6 +1471,27 @@ test_wizard_toggle_dirty_exit_yes_saves_without_env() {
 	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "dirty-exit Yes is save-only"
 }
 
+test_wizard_whiptail_sets_dark_newt_colors_when_unset() {
+	make_fixture
+	unset NEWT_COLORS
+	# shellcheck source=script/modules/01_menu.sh
+	source "$ROOT_DIR/script/modules/01_menu.sh"
+	wizard_apply_whiptail_theme
+	[[ -n "${NEWT_COLORS:-}" ]] || fail "NEWT_COLORS must be set by theme helper"
+	case "$NEWT_COLORS" in
+	*root=,black*) ;;
+	*) fail "dark theme must use root=,black; got: $NEWT_COLORS" ;;
+	esac
+	case "$NEWT_COLORS" in
+	*actbutton=black,brightcyan*) ;;
+	*) fail "dark theme must include actbutton=black,brightcyan" ;;
+	esac
+
+	export NEWT_COLORS='custom=white,red'
+	wizard_apply_whiptail_theme
+	[[ "$NEWT_COLORS" == "custom=white,red" ]] || fail "preset NEWT_COLORS must not be overwritten"
+}
+
 test_wizard_removes_html_and_shows_last_status() {
 	make_fixture
 	printf '2\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
@@ -2085,6 +2106,7 @@ test_wizard_skips_self_update_check_when_git_missing
 test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_toggles_optional_feature_flags_and_renders_env
+test_wizard_whiptail_sets_dark_newt_colors_when_unset
 test_wizard_toggle_exit_does_not_persist_changes
 test_wizard_toggle_dirty_exit_yes_saves_without_env
 test_wizard_removes_html_and_shows_last_status

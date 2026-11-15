@@ -45,6 +45,38 @@ wizard_resolve_ui_mode() {
 		;;
 	esac
 	export WIZARD_UI_RESOLVED
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_apply_whiptail_theme
+	fi
+}
+
+wizard_apply_whiptail_theme() {
+	: "${NEWT_COLORS:=
+root=,black
+window=white,black
+border=gray,black
+shadow=black,black
+title=brightcyan,black
+button=black,cyan
+actbutton=black,brightcyan
+compactbutton=white,black
+checkbox=white,black
+actcheckbox=black,cyan
+entry=white,gray
+disentry=gray,black
+label=white,black
+listbox=white,black
+actlistbox=black,cyan
+sellistbox=brightcyan,black
+actsellistbox=black,brightcyan
+textbox=white,black
+acttextbox=black,cyan
+emptyscale=,gray
+fullscale=,cyan
+helpline=gray,black
+roottext=gray,black
+}"
+	export NEWT_COLORS
 }
 
 wizard_ui_size() {
