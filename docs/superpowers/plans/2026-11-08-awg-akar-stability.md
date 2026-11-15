@@ -30,7 +30,7 @@
 | `/tmp/awg-akar-apply.py` (scp’d, not committed) | Read DB/API settings, patch profile, call panel update, verify publicKey unchanged |
 | `/tmp/awg-akar-verify-server.sh` (scp’d) | Assert live server params + UDP 443 listen |
 | Local `C:\Users\...\Temp\prizrak-awg-watch.py` | Poll provider `akar` / `🇵🇱 amneziawg` history |
-| `udp443-evidence/awg-akar-stability.md` (optional, `git add -f`) | Sanitized before/after delays + checklist |
+| Local ops note (outside git; do not commit) | Sanitized before/after delays + checklist |
 | `.project_context/02_state/last_changes.md` | One-line outcome after canary |
 
 No production repo code changes are required for the canary itself. Encoding the profile into `build_amneziawg_settings_json` is **out of this plan** (follow-up after canary success).
@@ -312,7 +312,7 @@ Re-list last 5 history entries for `🇵🇱 amneziawg`. Expect fewer immediate 
 ### Task 5: Observation window + manual smoke
 
 **Files:**
-- Update: `udp443-evidence/awg-akar-stability.md` (sanitized)
+- Update: local ops note only (do not commit evidence files)
 
 **Interfaces:**
 - Consumes: prizrak history over 30–60 minutes; operator manual traffic result
@@ -335,14 +335,7 @@ Check one VLESS node from provider `akar` still has healthy delays (non-AWG).
 
 - [ ] **Step 4: Write sanitized evidence**
 
-Create `udp443-evidence/awg-akar-stability.md` with before/after delay tables (numbers only), profile summary (no keys), smoke result, backup dir name.
-
-```powershell
-git add -f udp443-evidence/awg-akar-stability.md
-git commit -m "docs(evidence): akar AWG stability canary results"
-```
-
-Only commit if canary completed (pass or fail with clear notes).
+Keep a local ops note (outside git) with before/after delay tables (numbers only), profile summary (no keys), smoke result, backup dir name. Do not add evidence files to the repository.
 
 ---
 

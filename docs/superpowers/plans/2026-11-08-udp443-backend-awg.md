@@ -486,7 +486,7 @@ git commit -m "feat(3x-ui): AfterStart UDP443 backend ensure/delete and AWG clie
 ### Task 6: Streambase live verification
 
 **Files:**
-- Create (tracked evidence): `awg-spike-evidence/udp443-backend-live.md` **or** new `awg-managed-evidence/live.md` (prefer `awg-spike-evidence/` only if continuing that folder; otherwise `docs/` + `git add -f` / small `udp443-evidence/live.md`)
+- Create local ops note only (outside git; do not commit evidence files)
 - Local only: sync scripts via existing project sync helper if present (`tmp/sync-streambase.sh`)
 
 **Interfaces:**
@@ -530,13 +530,9 @@ Phone QR and/or WSL conf (fix booleans `true`→`on` if using awg-quick). Handsh
 
 Set `UDP443_BACKEND=hysteria2`, restart AfterStart path, confirm AWG deleted and HY2 on 443; switch back to `amneziawg`.
 
-- [ ] **Step 6: Write sanitized evidence + commit**
+- [ ] **Step 6: Write sanitized evidence (local only)**
 
-```powershell
-git add udp443-evidence/live.md
-# or awg-spike-evidence/udp443-backend-live.md
-git commit -m "docs(udp443): streambase live verification for managed AWG backend"
-```
+Keep a local ops note outside git. Do not add evidence files to the repository.
 
 - [ ] **Step 7: Stop — do not merge until user asks**
 
