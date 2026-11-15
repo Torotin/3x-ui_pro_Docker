@@ -1855,6 +1855,30 @@ test_wizard_config_menu_entry_exposed() {
 	assert_contains "a/t/c/d" "$tmpdir/stdout" "keys hint must include c"
 }
 
+test_wizard_config_edits_and_persists_variables() {
+	make_fixture
+	# c → edit USER_SSH (item 2) → apply a → Enter after env stream → exit
+	printf 'c\n2\ndeployer2\na\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Installer variables" "$tmpdir/stdout" "config screen heading"
+	assert_contains "1. WEBDOMAIN" "$tmpdir/stdout" "must list WEBDOMAIN"
+	assert_contains "3. PASS_SSH" "$tmpdir/stdout" "must list PASS_SSH"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "apply must render env through dispatcher"
+	assert_contains 'USER_SSH="deployer2"' "$INSTALL_STATE_DIR/install.env" "edited USER_SSH must persist"
+}
+
+test_wizard_config_dirty_exit_save_only_and_discard() {
+	make_fixture
+	printf 'c\n2\ndeployer-discard\nx\nn\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Installer variables" "$tmpdir/stdout" "config screen must render"
+	assert_not_contains 'USER_SSH="deployer-discard"' "$INSTALL_STATE_DIR/install.env" "discard dirty exit must not persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "discard dirty exit must not render env"
+
+	make_fixture
+	printf 'c\n2\ndeployer-save\nx\ny\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains 'USER_SSH="deployer-save"' "$INSTALL_STATE_DIR/install.env" "dirty-exit Yes must persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "dirty-exit Yes is save-only"
+}
+
 test_wizard_prompts_for_missing_user() {
 	make_fixture
 	unset USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
@@ -2145,6 +2169,8 @@ test_wizard_skips_docker_wipe_when_user_declines
 test_wizard_confirms_apply_steps
 test_wizard_doctor_from_menu
 test_wizard_config_menu_entry_exposed
+test_wizard_config_edits_and_persists_variables
+test_wizard_config_dirty_exit_save_only_and_discard
 test_wizard_prompts_for_missing_user
 test_wizard_auto_runs_chain_with_docker_force_prompt
 test_wizard_auto_yes_skips_start_but_asks_docker

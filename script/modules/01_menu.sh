@@ -720,6 +720,148 @@ wizard_offer_self_update() {
 	esac
 }
 
+wizard_config_is_secret() {
+	case "$1" in
+	PASS_SSH | PASS_WEB) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+wizard_config_is_clearable() {
+	case "$1" in
+	WEBDOMAIN | SSH_PBK) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+wizard_config_display_value() {
+	local var=$1
+	local value=${!var-}
+	if [[ -z "$value" ]]; then
+		printf '<not set>'
+		return 0
+	fi
+	if wizard_config_is_secret "$var"; then
+		printf '********'
+		return 0
+	fi
+	printf '%s' "$value"
+}
+
+wizard_config_persist() {
+	export WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
+	install_persist_required_env
+}
+
+wizard_config_assign() {
+	local var=$1 raw=$2
+	if [[ -z "$raw" ]]; then
+		return 1
+	fi
+	if [[ "$raw" == "-" || "$raw" == "clear" ]]; then
+		if wizard_config_is_clearable "$var"; then
+			printf -v "$var" '%s' ""
+			export "${var?}"
+			return 0
+		fi
+		printf 'Cannot clear required variable %s\n' "$var"
+		return 1
+	fi
+	printf -v "$var" '%s' "$raw"
+	export "${var?}"
+	return 0
+}
+
+wizard_print_config_vars() {
+	cat <<MENU
+Installer variables
+  1. WEBDOMAIN   $(wizard_config_display_value WEBDOMAIN)
+  2. USER_SSH    $(wizard_config_display_value USER_SSH)
+  3. PASS_SSH    $(wizard_config_display_value PASS_SSH)
+  4. USER_WEB    $(wizard_config_display_value USER_WEB)
+  5. PASS_WEB    $(wizard_config_display_value PASS_WEB)
+  6. SSH_PBK     $(wizard_config_display_value SSH_PBK)
+
+  a. Save + render env
+  x. Return
+
+Choose 1-6 to edit, a to apply/render env, x to return:
+MENU
+}
+
+wizard_config_prompt_text() {
+	local var=$1 prompt=$2 value
+	if wizard_config_is_secret "$var"; then
+		printf '%s (empty=keep, -=clear if allowed): ' "$prompt"
+		read -rs value || value=
+		printf '\n'
+	else
+		printf '%s [%s] (empty=keep, -=clear if allowed): ' "$prompt" "${!var-}"
+		read -r value || value=
+	fi
+	if [[ -z "$value" ]]; then
+		return 1
+	fi
+	wizard_config_assign "$var" "$value"
+}
+
+wizard_edit_config_text() {
+	local input dirty=0
+	install_load_state_env
+	while true; do
+		wizard_print_config_vars
+		printf '> '
+		read -r input || return 0
+		case "$input" in
+		1)
+			if wizard_config_prompt_text WEBDOMAIN "WEBDOMAIN"; then dirty=1; fi
+			;;
+		2)
+			if wizard_config_prompt_text USER_SSH "USER_SSH"; then dirty=1; fi
+			;;
+		3)
+			if wizard_config_prompt_text PASS_SSH "PASS_SSH"; then dirty=1; fi
+			;;
+		4)
+			if wizard_config_prompt_text USER_WEB "USER_WEB"; then dirty=1; fi
+			;;
+		5)
+			if wizard_config_prompt_text PASS_WEB "PASS_WEB"; then dirty=1; fi
+			;;
+		6)
+			if wizard_config_prompt_text SSH_PBK "SSH_PBK"; then dirty=1; fi
+			;;
+		a | apply)
+			if wizard_config_persist; then
+				dirty=0
+				wizard_execute_step env dispatch_step env
+			else
+				printf 'Failed to persist installer variables\n'
+				wizard_wait_continue
+			fi
+			return 0
+			;;
+		x | q | quit)
+			if ((dirty == 0)); then
+				WIZARD_LAST_STATUS="SKIPPED config"
+				return 0
+			fi
+			if wizard_confirm "Save changes?"; then
+				wizard_config_persist || true
+			fi
+			return 0
+			;;
+		'')
+			;;
+		*)
+			WIZARD_LAST_STATUS="INVALID config $input"
+			printf '\nUnknown config item: %s\n' "$input"
+			wizard_wait_continue
+			;;
+		esac
+	done
+}
+
 wizard_auto_install() {
 	local step
 	install_load_state_env
@@ -773,7 +915,7 @@ wizard_auto_install() {
 }
 
 wizard_edit_config() {
-	WIZARD_LAST_STATUS="SKIPPED config"
+	wizard_edit_config_text
 }
 
 wizard_dispatch_step() {
