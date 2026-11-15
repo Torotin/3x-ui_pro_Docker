@@ -65,8 +65,8 @@ net.ipv4.tcp_keepalive_time      = 600
 net.ipv4.tcp_keepalive_probes    = 5
 # Интервал между TCP keepalive-проверками (сек)
 net.ipv4.tcp_keepalive_intvl     = 30
-# Автоматический поиск оптимального MTU при обнаружении ICMP blackhole (режим 1 — только при проблемах)
-net.ipv4.tcp_mtu_probing         = 1
+# Активный Path MTU discovery с первого SYN (2); надёжнее режима 1 на облачных MTU 1450–1480 без ICMP)
+net.ipv4.tcp_mtu_probing         = 2
 # Включить TCP Fast Open для входящих (1) и исходящих (2) соединений (1 + 2 = 3)
 net.ipv4.tcp_fastopen            = 3
 # Не сбрасывать окно перегрузки TCP после простоя соединения (ускоряет возобновление трафика)
@@ -144,6 +144,9 @@ net.ipv4.conf.default.arp_filter = 0
 # 7. IPv6 маршрутизация и защита / IPv6 Routing & Hardening
 #############################
 
+# Полное отключение IPv6 на хосте (1) при HOST_IP_MODE=ipv4 — без AAAA-таймаутов в apt/curl/dockerd
+net.ipv6.conf.all.disable_ipv6     = __IPV6_DISABLE__
+net.ipv6.conf.default.disable_ipv6 = __IPV6_DISABLE__
 # Пересылка IPv6-пакетов (0 — выключена, 1 — включена)
 net.ipv6.conf.all.forwarding     = __IPV6_FORWARDING__
 net.ipv6.conf.default.forwarding = __IPV6_FORWARDING__

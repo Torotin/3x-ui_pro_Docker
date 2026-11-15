@@ -143,20 +143,37 @@ wizard_ui_input() {
 	printf '%s\n' "$result"
 }
 
+# Newt/whiptail prints CSI escapes as literal ^[[…; strip before TUI labels.
+wizard_strip_ansi() {
+	printf '%s' "${1-}" | sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g'
+}
+
 wizard_ui_menu() {
-	local result rc
+	local result rc backtitle prompt
 	local -a opts=()
 	local -a items=("${@:4}")
+	local -a clean=()
+	local i
 	# Optional --notags after list-height: hide tag column when the hotkey
 	# character is already the first glyph of each item (avoids "0 0 …").
 	if [[ "${items[0]:-}" == "--notags" ]]; then
 		opts+=(--notags)
 		items=("${items[@]:1}")
 	fi
+	# Tags (even) keep return values; descriptions (odd) must be ANSI-free for newt.
+	for ((i = 0; i < ${#items[@]}; i++)); do
+		if ((i % 2 == 1)); then
+			clean+=("$(wizard_strip_ansi "${items[i]}")")
+		else
+			clean+=("${items[i]}")
+		fi
+	done
+	backtitle=$(wizard_strip_ansi "$1")
+	prompt=$(wizard_strip_ansi "$2")
 	wizard_ui_size
 	set +e
-	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" "${opts[@]}" --menu "$2" \
-		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${items[@]}" \
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$backtitle" "${opts[@]}" --menu "$prompt" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${clean[@]}" \
 		3>&1 1>&2 2>&3)
 	rc=$?
 	set -e
@@ -200,24 +217,13 @@ wizard_ui_radiolist() {
 }
 
 wizard_step_badge_whiptail() {
-	# Prefer ANSI so OK/FAIL read as green/red in whiptail; fall back to plain tags.
+	# Plain ASCII for whiptail (newt has no ANSI; optional \Z colors need --colors).
+	# Text UI keeps colored badges via wizard_step_badge.
 	local st
 	st=$(wizard_step_state_get "$1")
 	case "$st" in
-	OK)
-		if [[ -n "${NO_COLOR:-}" ]]; then
-			printf '[OK]'
-		else
-			printf '\033[32m[OK]\033[0m'
-		fi
-		;;
-	FAIL)
-		if [[ -n "${NO_COLOR:-}" ]]; then
-			printf '[FAIL]'
-		else
-			printf '\033[31m[FAIL]\033[0m'
-		fi
-		;;
+	OK) printf '[OK]' ;;
+	FAIL) printf '[FAIL]' ;;
 	*) printf '[ ]' ;;
 	esac
 }
@@ -234,9 +240,9 @@ wizard_whiptail_backtitle() {
 }
 
 wizard_whiptail_main_menu() {
-	# Sequential 0-9 keys match on-screen order. Newt binds the first character
-	# of the *item* text (tags alone do not bind digits), so each item starts
-	# with its key. --notags hides the tag column to avoid "0 0 …" duplication.
+	# Newt hotkeys match isalpha(tag) only — digits 0-9 are ignored. Use letter
+	# tags (avoid a/t/c/d/x). --notags + letter prefix in the item label.
+	# Text UI keeps 0-9; wizard_normalize_step accepts both.
 	local backtitle b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
 	backtitle=$(wizard_whiptail_backtitle)
 	b0=$(wizard_step_badge_whiptail dnscrypt)
@@ -249,21 +255,21 @@ wizard_whiptail_main_menu() {
 	b7=$(wizard_step_badge_whiptail docker)
 	b8=$(wizard_step_badge_whiptail compose)
 	b9=$(wizard_step_badge_whiptail final)
-	wizard_ui_menu "$backtitle" "Choose an action" 18 --notags \
+	wizard_ui_menu "$backtitle" "Choose an action (letter hotkeys)" 18 --notags \
 		a "a  auto — Full install (recommended)" \
 		t "t  toggles — Optional stack features" \
 		c "c  config — Edit installer variables" \
 		d "d  doctor — System / stack diagnostics" \
-		0 "0  ${b0} dnscrypt — DNSCrypt system DNS" \
-		1 "1  ${b1} apt — APT mirror and OS packages" \
-		2 "2  ${b2} user — Service user" \
-		3 "3  ${b3} ssh — SSH policy" \
-		4 "4  ${b4} firewall — Firewall policy" \
-		5 "5  ${b5} network — Network tuning" \
-		6 "6  ${b6} env — Render env files" \
-		7 "7  ${b7} docker — Docker (destructive)" \
-		8 "8  ${b8} compose — Validate/start stack" \
-		9 "9  ${b9} final — Final summary" \
+		n "n  ${b0} dnscrypt — DNSCrypt system DNS" \
+		p "p  ${b1} apt — APT mirror and OS packages" \
+		u "u  ${b2} user — Service user" \
+		s "s  ${b3} ssh — SSH policy" \
+		f "f  ${b4} firewall — Firewall policy" \
+		w "w  ${b5} network — Network tuning" \
+		e "e  ${b6} env — Render env files" \
+		o "o  ${b7} docker — Docker (destructive)" \
+		m "m  ${b8} compose — Validate/start stack" \
+		l "l  ${b9} final — Final summary" \
 		x "x  Exit"
 }
 
@@ -307,11 +313,9 @@ wizard_feature_toggles_whiptail() {
 	export UDP443_BACKEND
 	install_normalize_udp443_backend
 	wizard_save_feature_toggles
-	# After OK on both dialogs, render env immediately (compose remains optional confirm).
+	# Persist toggles/UDP443 into install.env + compose.d/.env, then return to main menu.
+	# Compose apply stays a separate menu step.
 	wizard_execute_step env dispatch_step env
-	if wizard_confirm "Apply compose stack now?"; then
-		wizard_execute_step compose dispatch_step compose
-	fi
 }
 
 wizard_step_state_file() {
@@ -424,6 +428,7 @@ MENU
 	wizard_print_menu_step final '9. final      Render final summary'
 	printf '\n  x. Exit\n'
 	printf 'Keys: 0-9 step · a/t/c/d · names (apt, compose) · q quit\n'
+	printf 'Whiptail hotkeys: n/p/u/s/f/w/e/o/m/l (steps) · a/t/c/d/x\n'
 }
 
 install_wizard_print_status() {
@@ -432,18 +437,18 @@ install_wizard_print_status() {
 }
 
 wizard_normalize_step() {
-	# Keys follow on-screen sequential order (not legacy install-step ids).
+	# Text UI: 0-9. Whiptail: letter tags (newt isalpha-only hotkeys).
 	case "$1" in
-	0) printf 'dnscrypt\n' ;;
-	1) printf 'apt\n' ;;
-	2) printf 'user\n' ;;
-	3) printf 'ssh\n' ;;
-	4) printf 'firewall\n' ;;
-	5) printf 'network\n' ;;
-	6) printf 'env\n' ;;
-	7) printf 'docker\n' ;;
-	8) printf 'compose\n' ;;
-	9) printf 'final\n' ;;
+	0 | n) printf 'dnscrypt\n' ;;
+	1 | p) printf 'apt\n' ;;
+	2 | u) printf 'user\n' ;;
+	3 | s) printf 'ssh\n' ;;
+	4 | f) printf 'firewall\n' ;;
+	5 | w) printf 'network\n' ;;
+	6 | e) printf 'env\n' ;;
+	7 | o) printf 'docker\n' ;;
+	8 | m) printf 'compose\n' ;;
+	9 | l) printf 'final\n' ;;
 	t) printf 'toggles\n' ;;
 	c) printf 'config\n' ;;
 	a) printf 'auto\n' ;;
@@ -585,10 +590,10 @@ Optional Stack Features
   4. VLESS gRPC     $(wizard_bool_toggle_badge "$ENABLE_VLESS_GRPC")
   5. Mihomo         $(wizard_bool_toggle_badge "$ENABLE_MIHOMO")
 
-  a. Save + render env (+ optional compose)
+  a. Save + render env
   x. Return
 
-Choose 1-5 to toggle, a to apply/render env, x to return:
+Choose 1-5 to toggle, a to save/render env and return, x to return:
 MENU
 }
 
@@ -627,10 +632,8 @@ wizard_feature_toggles() {
 		a | apply)
 			wizard_save_feature_toggles
 			dirty=0
+			# Render full env only; compose remains a separate menu step.
 			wizard_execute_step env dispatch_step env
-			if wizard_confirm "Apply compose stack now?"; then
-				wizard_execute_step compose dispatch_step compose
-			fi
 			return 0
 			;;
 		x | q | quit)
@@ -658,48 +661,96 @@ wizard_filter_compose_output() {
 	if command -v stdbuf >/dev/null 2>&1; then
 		awk_bin=(stdbuf -oL awk)
 	fi
-	"${awk_bin[@]}" '
-		/^[[:space:]]*[[:xdigit:]]{12,}[[:space:]]+(Preparing|Waiting|Verifying Checksum|Already exists|Pulling fs layer|Downloading|Download complete|Extracting|Pull complete)([[:space:]].*)?$/ { next }
-
-		/^ Image .+ Pulling$/ {
-			ref=$0
-			sub(/^ Image /, "", ref)
-			sub(/ Pulling$/, "", ref)
-			print "Pulling image: " ref
-			next
+	# Compose/TTY progress often uses \r; normalize so awk sees line boundaries.
+	# Caller already merges streams (2>&1) and preserves rc via PIPESTATUS[0].
+	tr '\r' '\n' | "${awk_bin[@]}" '
+		function emit(msg) {
+			print msg
+			fflush()
 		}
 
-		/^ Image .+ Pulled$/ {
-			if (!pulled) {
-				print "Docker images pulled"
-				pulled=1
-			}
-			next
-		}
-
-		/\[run-compose\] Проверяем конфигурацию: / {
-			print "Validating compose configuration..."
-			next
-		}
-		/\[run-compose\] Попытка [0-9]+\/[0-9]+: / {
-			line=$0
-			sub(/^.*\[run-compose\] /, "", line)
-			sub(/: docker compose .*$/, "", line)
-			print "Starting compose stack: " line
-			next
-		}
-
-		/\[run-compose\] Каталог с compose-файлами:/ { next }
-		/\[run-compose\] Используем env-файл:/ { next }
-		/\[run-compose\] Project root:/ { next }
-		/\[run-compose\] Lock file:/ { next }
-
+		/^[[:space:]]*$/ { next }
+		/\[run-compose\] (Каталог с compose-файлами|Используем env-файл|Project root|Lock file):/ { next }
 		/^Created symlink / { next }
 		/^NEXT[[:space:]]+LEFT[[:space:]]+LAST[[:space:]]+PASSED[[:space:]]+UNIT[[:space:]]+ACTIVATES/ { next }
 		/docker-proxy-maintenance\.timer/ { next }
 		/^[0-9]+ timers? listed\.?$/ { next }
 
-		{ print }
+		/^[[:space:]]*[[:xdigit:]]{12,}[[:space:]]+(Preparing|Waiting|Verifying Checksum|Already exists|Pulling fs layer|Downloading|Download complete|Extracting|Pull complete)([[:space:]].*)?$/ { next }
+
+		/\[run-compose\] Проверяем конфигурацию:/ {
+			emit("[+] Validating compose configuration...")
+			next
+		}
+		/\[run-compose\] Проверяем и скачиваем обновления образов/ {
+			emit("[+] Checking for image updates...")
+			next
+		}
+		/\[run-compose\] Образы уже актуальны/ {
+			emit("[+] Docker images are up to date")
+			next
+		}
+		/\[run-compose\] Обновлены образы:/ {
+			emit("[+] Updated images:")
+			next
+		}
+		/\[run-compose\] Попытка [0-9]+\/[0-9]+:/ {
+			line = $0
+			sub(/^.*\[run-compose\] Попытка /, "", line)
+			sub(/:.*$/, "", line)
+			emit("[+] Starting compose stack (attempt " line ")...")
+			next
+		}
+		/\[run-compose\] Попытка [0-9]+ неудачна/ {
+			line = $0
+			sub(/^.*\[run-compose\] /, "[!] ", line)
+			emit(line)
+			next
+		}
+		/\[run-compose\] Applying Telemt panel GeoIP/ {
+			emit("[+] Updating Telemt GeoIP databases in background...")
+			next
+		}
+		/\[run-compose\] Unhealthy контейнеров не обнаружено/ { next }
+
+		/^[[:space:]]*Image .+ Pulling$/ {
+			ref = $0
+			sub(/^[[:space:]]*Image /, "", ref)
+			sub(/ Pulling$/, "", ref)
+			emit("[+] Pulling image: " ref)
+			next
+		}
+		/^[[:space:]]*Image .+ Pulled$/ {
+			ref = $0
+			sub(/^[[:space:]]*Image /, "", ref)
+			sub(/ Pulled$/, "", ref)
+			emit("[+] Pulled image: " ref)
+			next
+		}
+
+		/^[[:space:]]*(Network|Volume) .+ (Creating|Created|Removing|Removed)$/ {
+			if (!net_announced) {
+				emit("[+] Preparing Docker networks and volumes...")
+				net_announced = 1
+			}
+			next
+		}
+		/^[[:space:]]*Container .+ (Creating|Created|Starting|Waiting|Stopping|Stopped|Removing|Removed)$/ { next }
+		/^[[:space:]]*Container .+ (Started|Healthy|Unhealthy|Error)$/ {
+			line = $0
+			sub(/^[[:space:]]*Container /, "", line)
+			emit("[+] Container " line)
+			next
+		}
+
+		/\[run-compose\] (ERROR|WARN):/ {
+			line = $0
+			sub(/^.*\[run-compose\] /, "[!] ", line)
+			emit(line)
+			next
+		}
+
+		{ emit($0) }
 	'
 }
 
@@ -835,22 +886,23 @@ wizard_edit_config_whiptail() {
 	install_load_state_env
 	backtitle=$(wizard_whiptail_backtitle)
 	while true; do
-		choice=$(wizard_ui_menu "$backtitle" "Installer variables" 10 \
-			1 "WEBDOMAIN — $(wizard_config_display_value WEBDOMAIN)" \
-			2 "USER_SSH — $(wizard_config_display_value USER_SSH)" \
-			3 "PASS_SSH — $(wizard_config_display_value PASS_SSH)" \
-			4 "USER_WEB — $(wizard_config_display_value USER_WEB)" \
-			5 "PASS_WEB — $(wizard_config_display_value PASS_WEB)" \
-			6 "SSH_PBK — $(wizard_config_display_value SSH_PBK)" \
-			a "Save + render env" \
-			x "Back")
+		# Letter tags only: newt ignores digit hotkeys (isalpha).
+		choice=$(wizard_ui_menu "$backtitle" "Installer variables (letter hotkeys)" 10 --notags \
+			b "b  WEBDOMAIN — $(wizard_config_display_value WEBDOMAIN)" \
+			h "h  USER_SSH — $(wizard_config_display_value USER_SSH)" \
+			i "i  PASS_SSH — $(wizard_config_display_value PASS_SSH)" \
+			j "j  USER_WEB — $(wizard_config_display_value USER_WEB)" \
+			k "k  PASS_WEB — $(wizard_config_display_value PASS_WEB)" \
+			r "r  SSH_PBK — $(wizard_config_display_value SSH_PBK)" \
+			a "a  Save + render env" \
+			x "x  Back")
 		case "$choice" in
-		1) var=WEBDOMAIN ;;
-		2) var=USER_SSH ;;
-		3) var=PASS_SSH ;;
-		4) var=USER_WEB ;;
-		5) var=PASS_WEB ;;
-		6) var=SSH_PBK ;;
+		b | 1) var=WEBDOMAIN ;;
+		h | 2) var=USER_SSH ;;
+		i | 3) var=PASS_SSH ;;
+		j | 4) var=USER_WEB ;;
+		k | 5) var=PASS_WEB ;;
+		r | 6) var=SSH_PBK ;;
 		a)
 			if ! wizard_config_persist; then
 				continue
@@ -1098,6 +1150,9 @@ install_wizard() {
 	wizard_resolve_ui_mode
 	wizard_offer_self_update
 	install_require_required_env wizard
+	# Persist required keys alone leaves install.env sparse (no PORT_REMOTE_SSH / URIs).
+	# Bootstrap full install.env.template so ssh/firewall/user can run before `env`.
+	install_bootstrap_install_env
 
 	while true; do
 		if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then

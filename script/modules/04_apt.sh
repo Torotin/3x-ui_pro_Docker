@@ -78,6 +78,10 @@ install_apt_required_packages() {
 install_apt_command() {
 	require_opt_in --apply "$@"
 	require_apply_confirmation "$@"
+	# Path MTU clamp before mirror/package downloads when the helper is loaded.
+	if declare -F install_network_fix_path_mtu >/dev/null 2>&1; then
+		install_network_fix_path_mtu
+	fi
 	install_apt_wait_for_locks
 	local -a required_packages=()
 	mapfile -t required_packages < <(install_apt_required_packages)
@@ -85,7 +89,7 @@ install_apt_command() {
 		local country="${APT_COUNTRY:-}"
 		if [[ -z "$country" ]]; then
 			country=ZZ
-			run_cmd apt.country.detect curl -fsSL https://ipapi.co/country/
+			run_cmd apt.country.detect curl -4 -fsSL https://ipapi.co/country/
 		fi
 		run_cmd apt.mirror.check curl -fsSL "http://mirrors.ubuntu.com/$country.txt"
 		run_cmd apt.sources.backup cp /etc/apt/sources.list "$INSTALL_STATE_DIR/backups/sources.list"
@@ -247,8 +251,9 @@ EOF
 
 install_apt_detect_country() {
 	local country
-	country=$(curl -fsSL --max-time 3 https://ipapi.co/country/ 2>/dev/null || true)
-	[[ "$country" =~ ^[A-Za-z]{2}$ ]] || country=$(curl -fsSL --max-time 3 https://ifconfig.co/country-iso 2>/dev/null || true)
+	# Force IPv4: dual-stack hosts can resolve geo over v6 to a different country/ASN.
+	country=$(curl -4 -fsSL --max-time 3 https://ipapi.co/country/ 2>/dev/null || true)
+	[[ "$country" =~ ^[A-Za-z]{2}$ ]] || country=$(curl -4 -fsSL --max-time 3 https://ifconfig.co/country-iso 2>/dev/null || true)
 	[[ "$country" =~ ^[A-Za-z]{2}$ ]] || return 1
 	printf '%s\n' "$(tr '[:lower:]' '[:upper:]' <<<"$country")"
 }

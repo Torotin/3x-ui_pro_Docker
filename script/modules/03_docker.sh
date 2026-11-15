@@ -4,6 +4,10 @@
 install_docker_command() {
 	require_opt_in --destroy-docker-data "$@"
 	printf 'WARNING: Docker data will be destroyed\n'
+	# Fix Path MTU before registry/apt traffic and image pulls.
+	if declare -F install_network_fix_path_mtu >/dev/null 2>&1; then
+		install_network_fix_path_mtu
+	fi
 	install_docker_setup_repository
 	if install_docker_available; then
 		printf 'Docker found; destroying existing Docker data\n'
@@ -16,6 +20,7 @@ install_docker_command() {
 	install_docker_remove_legacy_compose
 	install_docker_install_packages
 	install_docker_configure_daemon
+	install_docker_configure_registry_helpers
 	install_docker_journald_policy
 	run_cmd docker.service.enable systemctl enable docker
 	run_cmd docker.service.reset_failed systemctl reset-failed docker docker.socket || true
@@ -23,6 +28,29 @@ install_docker_command() {
 	run_cmd docker.service.restart systemctl restart docker
 	install_docker_validate
 	install_docker_networks
+	# user may have been created before docker existed; re-attach docker group now.
+	install_docker_ensure_service_user_access
+}
+
+# Add USER_SSH to the docker group after the engine is installed (idempotent).
+install_docker_ensure_service_user_access() {
+	install_load_state_env
+	local user
+	user=$(install_sanitize_user "${USER_SSH:-}")
+	[[ -n "$user" && "$user" != "root" ]] || return 0
+	USER_SSH=$user
+	export USER_SSH
+	if [[ "$INSTALL_MOCK" != "1" ]] && ! id -u "$USER_SSH" >/dev/null 2>&1; then
+		log INFO "USER_SSH=$USER_SSH not created yet; docker group will be applied on user step"
+		return 0
+	fi
+	if declare -F install_user_groups >/dev/null 2>&1; then
+		install_user_groups
+	else
+		run_cmd user.groups.docker.ensure groupadd --system docker || true
+		run_cmd user.groups usermod -aG docker "$USER_SSH"
+	fi
+	printf 'Docker access: user %s added to docker group (re-login or newgrp docker required)\n' "$USER_SSH"
 }
 
 install_docker_available() {
@@ -80,15 +108,17 @@ install_docker_write_repo_key() {
 	local os_id=$1 keyring=$2 url
 	url="https://download.docker.com/linux/$os_id/gpg"
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd docker.repo.gpg printf 'curl -fsSL %s | gpg --dearmor -o %s\n' "$url" "$keyring"
+		run_cmd docker.repo.gpg printf 'curl -fsSL %s | gpg --batch --yes --dearmor -o %s\n' "$url" "$keyring"
 		return 0
 	fi
-	runner_log docker.repo.gpg bash -c 'curl -fsSL "$1" | gpg --dearmor -o "$2"' _ "$url" "$keyring"
-	curl -fsSL "$url" | gpg --dearmor -o "$keyring"
+	# --batch --yes: avoid interactive Overwrite? prompt if keyring already exists.
+	runner_log docker.repo.gpg bash -c 'curl -fsSL "$1" | gpg --batch --yes --dearmor -o "$2"' _ "$url" "$keyring"
+	curl -fsSL "$url" | gpg --batch --yes --dearmor -o "$keyring"
 }
 
 install_docker_install_packages() {
-	run_cmd docker.install.packages env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+	# pigz: dockerd auto-uses it for multi-threaded layer Extracting on multi-core VPS.
+	run_cmd docker.install.packages env DEBIAN_FRONTEND=noninteractive apt-get install -y pigz docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
 install_docker_remove_legacy_compose() {
@@ -120,6 +150,7 @@ install_docker_configure_daemon() {
 		run_cmd docker.daemon.write printf '%s\n' "$config"
 		printf '%s\n' "$config" | python3 -m json.tool >/dev/null || die "invalid Docker daemon JSON"
 		run_cmd docker.daemon.json.validate printf 'python3 -m json.tool %s\n' "$daemon_file"
+		install_docker_prefer_ipv4_gai
 		return 0
 	fi
 	[[ -f "$daemon_file" ]] && backup_file "$daemon_file"
@@ -132,12 +163,35 @@ install_docker_configure_daemon() {
 	rm -f "$tmp"
 	run_cmd docker.daemon.json.validate python3 -m json.tool "$daemon_file" >/dev/null
 	printf 'Docker daemon configured: %s\n' "$daemon_file"
+	install_docker_prefer_ipv4_gai
+}
+
+# Host uplink MTU for docker0 / bridge defaults (override: DOCKER_MTU).
+install_docker_host_mtu() {
+	local iface mtu
+	if [[ -n "${DOCKER_MTU:-}" && "$DOCKER_MTU" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$DOCKER_MTU"
+		return 0
+	fi
+	if [[ "${INSTALL_MOCK:-0}" == "1" ]]; then
+		printf '%s\n' "${INSTALL_MOCK_DOCKER_MTU:-1500}"
+		return 0
+	fi
+	iface=$(network_default_iface 2>/dev/null || true)
+	mtu=$(network_iface_mtu "${iface:-}" 2>/dev/null || true)
+	[[ "$mtu" =~ ^[0-9]+$ ]] || mtu=1500
+	printf '%s\n' "$mtu"
 }
 
 install_docker_daemon_json() {
 	local ipv6_subnet="${DOCKER_IPV6_SUBNET:-fd00:dead:aaaa::/64}"
+	local host_mtu
 	local storage_opts=""
 	local features_block=""
+	local mirrors_block=""
+	local pull_parallel_block='  "max-concurrent-downloads": 8,
+  "max-concurrent-uploads": 5,'
+	host_mtu=$(install_docker_host_mtu)
 	if install_docker_overlay2_size_limit_enabled; then
 		storage_opts='  "storage-opts": [
     "overlay2.size=20G"
@@ -148,6 +202,12 @@ install_docker_daemon_json() {
     "containerd-snapshotter": true
   },'
 	fi
+	# Hub pull-through cache (does not cover ghcr.io). Opt out: DOCKER_DISABLE_REGISTRY_MIRRORS=1.
+	if [[ "${DOCKER_DISABLE_REGISTRY_MIRRORS:-0}" != "1" ]]; then
+		mirrors_block='  "registry-mirrors": [
+    "https://mirror.gcr.io"
+  ],'
+	fi
 	if [[ "${DOCKER_ENABLE_IPV6:-1}" == "1" ]]; then
 		cat <<JSON
 {
@@ -155,7 +215,10 @@ install_docker_daemon_json() {
   "storage-driver": "overlay2",
 ${storage_opts:+$storage_opts
 }${features_block:+$features_block
-}  "ipv6": true,
+}${pull_parallel_block}
+${mirrors_block:+$mirrors_block
+}  "mtu": ${host_mtu},
+  "ipv6": true,
   "fixed-cidr-v6": "$ipv6_subnet",
   "log-driver": "json-file",
   "log-opts": {
@@ -174,7 +237,10 @@ JSON
   "storage-driver": "overlay2",
 ${storage_opts:+$storage_opts
 }${features_block:+$features_block
-}  "log-driver": "json-file",
+}${pull_parallel_block}
+${mirrors_block:+$mirrors_block
+}  "mtu": ${host_mtu},
+  "log-driver": "json-file",
   "log-opts": {
     "max-size": "10m",
     "max-file": "3",
@@ -185,6 +251,84 @@ ${storage_opts:+$storage_opts
 }
 JSON
 	fi
+}
+
+# Optional GHCR mirror (certs.d hosts.toml) and docker.service HTTP(S) proxy drop-in.
+install_docker_configure_registry_helpers() {
+	install_load_state_env 2>/dev/null || true
+	install_docker_configure_ghcr_mirror
+	install_docker_configure_http_proxy
+}
+
+install_docker_configure_ghcr_mirror() {
+	local mirror=${DOCKER_GHCR_MIRROR:-}
+	local certs_dir="${INSTALL_DOCKER_CERTS_D:-/etc/docker/certs.d/ghcr.io}"
+	local hosts_file="$certs_dir/hosts.toml"
+	[[ -n "$mirror" ]] || return 0
+	mirror=${mirror%/}
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.ghcr.mirror.write printf 'hosts.toml mirror=%s\n' "$mirror"
+		return 0
+	fi
+	run_cmd docker.ghcr.mirror.dir install -d -m 0755 "$certs_dir"
+	backup_file "$hosts_file" 2>/dev/null || true
+	cat >"$hosts_file" <<TOML
+server = "https://ghcr.io"
+
+[host."${mirror}"]
+  capabilities = ["pull", "resolve"]
+TOML
+	chmod 0644 "$hosts_file"
+	run_cmd docker.ghcr.mirror.write printf 'wrote %s -> %s\n' "$hosts_file" "$mirror"
+}
+
+install_docker_configure_http_proxy() {
+	local proxy=${DOCKER_HTTP_PROXY:-}
+	local dropin_dir=/etc/systemd/system/docker.service.d
+	local dropin_file="$dropin_dir/http-proxy.conf"
+	local no_proxy=${DOCKER_NO_PROXY:-localhost,127.0.0.1,::1}
+	[[ -n "$proxy" ]] || return 0
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.proxy.write printf 'HTTP_PROXY=%s\n' "$proxy"
+		return 0
+	fi
+	run_cmd docker.proxy.dir install -d -m 0755 "$dropin_dir"
+	backup_file "$dropin_file" 2>/dev/null || true
+	cat >"$dropin_file" <<UNIT
+[Service]
+Environment="HTTP_PROXY=${proxy}"
+Environment="HTTPS_PROXY=${proxy}"
+Environment="NO_PROXY=${no_proxy}"
+UNIT
+	chmod 0644 "$dropin_file"
+	run_cmd docker.proxy.write printf 'wrote %s\n' "$dropin_file"
+	run_cmd docker.proxy.reload systemctl daemon-reload
+}
+
+# Prefer IPv4 for getaddrinfo so dockerd registry pulls avoid slow/lossy IPv6 CDN paths.
+# Does not disable IPv6. Opt out: DOCKER_PREFER_IPV4=0.
+install_docker_prefer_ipv4_gai() {
+	local gai_file="${INSTALL_DOCKER_GAI_CONF:-/etc/gai.conf}"
+	local line='precedence ::ffff:0:0/96  100'
+	[[ "${DOCKER_PREFER_IPV4:-1}" == "1" ]] || return 0
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd docker.gai.prefer_ipv4 printf '%s\n' "$line"
+		return 0
+	fi
+	if [[ -f "$gai_file" ]] && grep -Eq '^[[:space:]]*precedence[[:space:]]+::ffff:0:0/96[[:space:]]+100([[:space:]]|$)' "$gai_file"; then
+		return 0
+	fi
+	mkdir -p "$INSTALL_STATE_DIR/backups" 2>/dev/null || true
+	if [[ -f "$gai_file" ]]; then
+		backup_file "$gai_file" || true
+		{
+			printf '\n# 3x-ui installer: prefer IPv4 for dual-stack getaddrinfo (registry CDN pulls)\n'
+			printf '%s\n' "$line"
+		} >>"$gai_file"
+	else
+		printf '%s\n' "$line" >"$gai_file"
+	fi
+	run_cmd docker.gai.prefer_ipv4 printf 'preferred IPv4 via %s\n' "$gai_file"
 }
 
 install_docker_containerd_snapshotter_enabled() {
@@ -358,13 +502,15 @@ install_docker_networks() {
 	if [[ "${DOCKER_ENABLE_IPV6:-1}" == "0" ]]; then
 		die "DOCKER_ENABLE_IPV6=0 conflicts with dual-stack user networks (traefik-proxy, dns-net) required by compose ipv6_address pins; unset DOCKER_ENABLE_IPV6 or set it to 1"
 	fi
+	local host_mtu
+	host_mtu=$(install_docker_host_mtu)
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd docker.network.ensure docker network create --subnet "$traefik_v4" --ipv6 --subnet "$traefik_v6" traefik-proxy
-		run_cmd docker.network.ensure docker network create --subnet "$dns_v4" --ipv6 --subnet "$dns_v6" dns-net
+		run_cmd docker.network.ensure docker network create --subnet "$traefik_v4" --ipv6 --subnet "$traefik_v6" -o "com.docker.network.driver.mtu=${host_mtu}" traefik-proxy
+		run_cmd docker.network.ensure docker network create --subnet "$dns_v4" --ipv6 --subnet "$dns_v6" -o "com.docker.network.driver.mtu=${host_mtu}" dns-net
 		return 0
 	fi
-	install_docker_ensure_network traefik-proxy "$traefik_v4" "$traefik_v6"
-	install_docker_ensure_network dns-net "$dns_v4" "$dns_v6"
+	install_docker_ensure_network traefik-proxy "$traefik_v4" "$traefik_v6" "$host_mtu"
+	install_docker_ensure_network dns-net "$dns_v4" "$dns_v6" "$host_mtu"
 }
 
 install_docker_network_subnets_match() {
@@ -374,26 +520,35 @@ install_docker_network_subnets_match() {
 	grep -Fq "$v4" <<<"$seen" && grep -Fq "$v6" <<<"$seen"
 }
 
+install_docker_network_mtu_match() {
+	local name=$1 want=$2 got
+	got=$(docker network inspect "$name" --format '{{index .Options "com.docker.network.driver.mtu"}}' 2>/dev/null || true)
+	[[ -z "$got" && "$want" == "1500" ]] && return 0
+	[[ "$got" == "$want" ]]
+}
+
 install_docker_network_is_unused() {
 	local name=$1
 	[[ "$(docker network inspect "$name" --format '{{len .Containers}}' 2>/dev/null || printf 1)" == "0" ]]
 }
 
 install_docker_ensure_network() {
-	local name=$1 v4=$2 v6=$3
+	local name=$1 v4=$2 v6=$3 mtu=${4:-1500}
 	if docker network inspect "$name" >/dev/null 2>&1; then
-		if install_docker_network_subnets_match "$name" "$v4" "$v6"; then
+		if install_docker_network_subnets_match "$name" "$v4" "$v6" && install_docker_network_mtu_match "$name" "$mtu"; then
 			return 0
 		fi
 		if install_docker_network_is_unused "$name"; then
 			run_cmd docker.network.remove docker network rm "$name"
 		else
-			die "Docker network $name exists without required dual-stack subnets ($v4 + $v6) and has attached containers; run compose down (or destroy), then retry"
+			die "Docker network $name exists without required dual-stack subnets/MTU ($v4 + $v6, mtu $mtu) and has attached containers; run compose down (or destroy), then retry"
 		fi
 	fi
 	if ! run_cmd docker.network.ensure docker network create \
-		--subnet "$v4" --ipv6 --subnet "$v6" "$name"; then
-		die "failed to create Docker network $name with $v4 and $v6"
+		--subnet "$v4" --ipv6 --subnet "$v6" \
+		-o "com.docker.network.driver.mtu=${mtu}" \
+		"$name"; then
+		die "failed to create Docker network $name with $v4 and $v6 (mtu $mtu)"
 	fi
 }
 
@@ -410,13 +565,22 @@ install_compose_command() {
 		install_env_command
 	fi
 	install_docker_networks
+	# Installer up pulls first (CLI `up` stays pull-safe by default via PULL_BEFORE_UP=0).
+	local -a compose_up_env=(
+		"${compose_env_unset[@]}"
+		"COMPOSE_DIR=$compose_dir"
+		"ENV_FILE=$compose_env"
+		"LOCK_FILE=$lock_file"
+		"PULL_BEFORE_UP=1"
+	)
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		run_cmd compose.validate env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
+		run_cmd compose.up env "${compose_up_env[@]}" "$runner" up
 		return 0
 	fi
 	[[ -x "$runner" ]] || die "compose runner not found or not executable: $runner"
 	run_cmd compose.validate env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" validate
-	run_cmd compose.up env "${compose_env_unset[@]}" "COMPOSE_DIR=$compose_dir" "ENV_FILE=$compose_env" "LOCK_FILE=$lock_file" "$runner" up
+	run_cmd compose.up env "${compose_up_env[@]}" "$runner" up
 }
 
 install_docker_maintenance_script() {
@@ -442,7 +606,7 @@ install_docker_maintenance_timer() {
 		run_cmd docker.maintenance.reload systemctl daemon-reload
 		run_cmd docker.maintenance.enable systemctl enable "$(basename "$timer_file")"
 		run_cmd docker.maintenance.start systemctl start "$(basename "$timer_file")"
-		run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")" >/dev/null
+		run_cmd docker.maintenance.active systemctl is-active --quiet "$(basename "$timer_file")"
 		printf 'Docker maintenance timer installed and active\n'
 		return 0
 	fi
@@ -461,7 +625,8 @@ install_docker_maintenance_timer() {
 	run_cmd docker.maintenance.reload systemctl daemon-reload
 	run_cmd docker.maintenance.enable systemctl enable "$(basename "$timer_file")"
 	run_cmd docker.maintenance.start systemctl start "$(basename "$timer_file")"
-	run_cmd docker.maintenance.list systemctl list-timers --all "$(basename "$timer_file")" >/dev/null
+	run_cmd docker.maintenance.active systemctl is-active --quiet "$(basename "$timer_file")" ||
+		die "Docker maintenance timer is not active: $(basename "$timer_file")"
 	printf 'Docker maintenance timer installed and active\n'
 }
 
@@ -521,15 +686,24 @@ TIMER
 
 install_project_files() {
 	local runner="$INSTALL_ROOT/compose.d/run-compose.sh"
-	[[ -x "$runner" ]] && return 0
+	local src="$INSTALL_REPO_ROOT/docker-proxy"
+	# Always refresh tree (except .env). Early return on existing runner skipped
+	# reconfigure/update of compose fragments and maintenance scripts.
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd project.sync rsync -a --exclude compose.d/.env "$INSTALL_REPO_ROOT/docker-proxy/" "$INSTALL_ROOT/"
+		run_cmd project.sync rsync -a --exclude compose.d/.env "$src/" "$INSTALL_ROOT/"
 		return 0
 	fi
 	require_writable_target "$INSTALL_ROOT" "project root"
 	mkdir -p "$INSTALL_ROOT"
-	if [[ -d "$INSTALL_REPO_ROOT/docker-proxy/compose.d" ]]; then
-		run_cmd project.sync rsync -a --exclude compose.d/.env "$INSTALL_REPO_ROOT/docker-proxy/" "$INSTALL_ROOT/"
+	if [[ -d "$src/compose.d" ]]; then
+		local src_real root_real
+		src_real=$(realpath -m "$src" 2>/dev/null || printf '%s\n' "$src")
+		root_real=$(realpath -m "$INSTALL_ROOT" 2>/dev/null || printf '%s\n' "$INSTALL_ROOT")
+		if [[ "$src_real" == "$root_real" ]]; then
+			log INFO "project sync skipped: source equals install root ($INSTALL_ROOT)"
+		else
+			run_cmd project.sync rsync -a --exclude compose.d/.env "$src/" "$INSTALL_ROOT/"
+		fi
 	else
 		install_project_files_from_repo
 	fi

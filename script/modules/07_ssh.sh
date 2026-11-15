@@ -7,6 +7,11 @@ install_ssh_command() {
 	require_apply_confirmation "$@"
 	: "${USER_SSH:=}"
 	: "${PORT_REMOTE_SSH:=}"
+	# Sparse install.env (wizard required-only) lacks auto PORT_REMOTE_SSH until bootstrap/env.
+	if [[ -z "$PORT_REMOTE_SSH" ]] && declare -F install_bootstrap_install_env >/dev/null 2>&1; then
+		install_bootstrap_install_env
+		: "${PORT_REMOTE_SSH:=}"
+	fi
 	[[ -n "$USER_SSH" && -n "$PORT_REMOTE_SSH" ]] || die "USER_SSH and PORT_REMOTE_SSH are required"
 	[[ "$PORT_REMOTE_SSH" =~ ^[0-9]+$ ]] || die "PORT_REMOTE_SSH must be numeric"
 	((PORT_REMOTE_SSH >= 1 && PORT_REMOTE_SSH <= 65535)) || die "PORT_REMOTE_SSH out of range"
@@ -79,11 +84,13 @@ install_ssh_log_context() {
 
 install_render_sshd_config() {
 	local template=$1 target=$2
+	# Restrict envsubst to known template vars (avoid accidental $FOO in comments).
+	local shell_format='${USER_SSH} ${PORT_REMOTE_SSH} ${PUBKEY_AUTH} ${PASSWORD_AUTH} ${SSH_AUTH_METHODS}'
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
-		run_cmd ssh.apply bash -c 'envsubst < "$1" > "$2"' _ "$template" "$target"
+		run_cmd ssh.apply bash -c 'envsubst "$3" < "$1" > "$2"' _ "$template" "$target" "$shell_format"
 		return 0
 	fi
-	envsubst <"$template" >"$target"
+	envsubst "$shell_format" <"$template" >"$target"
 	printf 'SSH config rendered: %s\n' "$target"
 }
 
@@ -134,13 +141,19 @@ install_ssh_backup_config() {
 install_ssh_restore_backup() {
 	local backup=$1 target=$2 unit=$3
 	local socket_unit="${unit}.socket"
+	local override_dir="/etc/systemd/system/${socket_unit}.d"
 
 	[[ -n "$backup" && -f "$backup" ]] || return 0
 
 	run_cmd ssh.rollback cp -a -- "$backup" "$target" || true
 	run_cmd ssh.rollback.validate sshd -t -f "$target" || true
 
-	if systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$socket_unit"; then
+	# Drop our ListenStream override so rollback rebinds the original port, not PORT_REMOTE_SSH.
+	run_cmd ssh.rollback.socket.override.rm rm -f -- "${override_dir}/zz-3xui-port.conf" || true
+	run_cmd ssh.rollback.socket.override.rmdir rmdir --ignore-fail-on-non-empty -- "$override_dir" || true
+	run_cmd ssh.rollback.daemon.reload systemctl daemon-reload || true
+
+	if install_ssh_socket_unit_exists "$unit"; then
 		run_cmd ssh.rollback.socket.unmask systemctl unmask "$socket_unit" || true
 		run_cmd ssh.rollback.socket.enable systemctl enable "$socket_unit" || true
 		run_cmd ssh.rollback.socket.start systemctl start "$socket_unit" || true
@@ -164,10 +177,10 @@ install_ssh_apply_service() {
 			printf 'SSH socket ready on port: %s\n' "$PORT_REMOTE_SSH"
 			return 0
 		fi
-		# One retry after a hard stop — generator drop-ins / stale fds can keep the old port.
+		# One retry after a hard socket stop — generator drop-ins / stale fds can keep the old port.
+		# Do not stop ssh.service: that can kill the active installer SSH session.
 		printf 'SSH socket port %s not listening yet; retrying socket rebind\n' "$PORT_REMOTE_SSH" >&2
 		run_cmd ssh.socket.stop systemctl stop "${unit}.socket" || true
-		run_cmd ssh.service.stop systemctl stop "$unit" || true
 		if install_ssh_configure_socket_activation "$unit" && install_ssh_service_ready "$unit"; then
 			printf 'SSH socket ready on port: %s\n' "$PORT_REMOTE_SSH"
 			return 0
@@ -244,13 +257,12 @@ install_ssh_port_listening() {
 	local port=$1
 
 	if command -v ss >/dev/null 2>&1; then
+		# Match local port as the field after the last ':' (IPv4, IPv6, or *).
 		run_cmd ssh.listener.check sh -c '
-			ss -H -ltn 2>/dev/null | awk -v port=":$1" "
+			ss -H -ltn 2>/dev/null | awk -v p="$1" "
 				{
-					addr = \$4
-					gsub(/^\\[/, \"\", addr)
-					gsub(/\\]$/, \"\", addr)
-					if (addr ~ port \"$\") found = 1
+					n = split(\$4, a, \":\")
+					if (a[n] == p) found = 1
 				}
 				END { exit found ? 0 : 1 }
 			"
@@ -263,38 +275,68 @@ install_ssh_port_listening() {
 	' _ "$port"
 }
 
+# True when the kernel has usable IPv6 (needed before ListenStream=[::]:PORT).
+install_ssh_host_has_ipv6() {
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		[[ "${INSTALL_MOCK_SSH_IPV6:-1}" == "1" ]]
+		return
+	fi
+	[[ -f /proc/net/if_inet6 ]] || return 1
+	[[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 1)" != "1" ]]
+}
+
 install_ssh_configure_socket_activation() {
 	local unit=$1
 	local socket_unit="${unit}.socket"
 	local override_dir="/etc/systemd/system/${socket_unit}.d"
 	# zz- sorts after generator addresses.conf so ListenStream= reset wins.
 	local override_file="${override_dir}/zz-3xui-port.conf"
+	local has_ipv6=0
 
 	install_ssh_socket_unit_exists "$unit" || return 1
 
 	printf 'SSH socket activation found: %s\n' "$socket_unit" >&2
 
+	if install_ssh_host_has_ipv6; then
+		has_ipv6=1
+	fi
+
 	run_cmd ssh.socket.override.dir install -d -m 0755 -o root -g root "$override_dir"
 	# Drop legacy installer override name if present.
 	run_cmd ssh.socket.override.cleanup rm -f "${override_dir}/override.conf" || true
 
-	run_cmd ssh.socket.override.write sh -c '
-		{
-			printf "%s\n" "[Socket]"
-			printf "%s\n" "ListenStream="
-			printf "ListenStream=0.0.0.0:%s\n" "$2"
-			printf "ListenStream=[::]:%s\n" "$2"
-			printf "%s\n" "BindIPv6Only=ipv6-only"
-			printf "%s\n" "FreeBind=yes"
-		} > "$1"
-	' _ "$override_file" "$PORT_REMOTE_SSH"
+	# Emit IPv6 ListenStream only when the kernel supports it (separate scripts so
+	# mock command logs reflect the chosen bind set, not a dead if-branch).
+	if [[ "$has_ipv6" == "1" ]]; then
+		run_cmd ssh.socket.override.write sh -c '
+			{
+				printf "%s\n" "[Socket]"
+				printf "%s\n" "ListenStream="
+				printf "ListenStream=0.0.0.0:%s\n" "$2"
+				printf "ListenStream=[::]:%s\n" "$2"
+				printf "%s\n" "BindIPv6Only=ipv6-only"
+				printf "%s\n" "FreeBind=yes"
+			} > "$1"
+			chmod 0644 -- "$1"
+		' _ "$override_file" "$PORT_REMOTE_SSH"
+	else
+		run_cmd ssh.socket.override.write sh -c '
+			{
+				printf "%s\n" "[Socket]"
+				printf "%s\n" "ListenStream="
+				printf "ListenStream=0.0.0.0:%s\n" "$2"
+				printf "%s\n" "FreeBind=yes"
+			} > "$1"
+			chmod 0644 -- "$1"
+		' _ "$override_file" "$PORT_REMOTE_SSH"
+	fi
 
-	run_cmd ssh.service.stop systemctl stop "$unit" || true
+	# Stop only the socket unit. Stopping ssh.service can kill the active installer session.
 	run_cmd ssh.socket.stop systemctl stop "$socket_unit" || true
 	run_cmd ssh.daemon.reload systemctl daemon-reload
 	run_cmd ssh.socket.start systemctl start "$socket_unit"
-	# Ensure the service is attached to the new socket (idle until first connect is OK).
-	run_cmd ssh.service.start systemctl start "$unit" || true
+	# Apply new sshd_config to future connections without tearing down the current session.
+	run_cmd ssh.reload systemctl reload "$unit" || true
 
 	printf 'SSH socket activation restarted on port: %s\n' "$PORT_REMOTE_SSH" >&2
 	if [[ "$INSTALL_MOCK" != "1" ]]; then

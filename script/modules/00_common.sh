@@ -452,3 +452,5 @@ generate_random_port() {
 
 # shellcheck source=script/modules/lib_ip.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_ip.sh"
+# shellcheck source=script/modules/lib_network.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_network.sh"

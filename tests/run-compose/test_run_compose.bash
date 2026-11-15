@@ -185,6 +185,16 @@ test_up_is_safe_by_default() {
 	assert_not_contains "rm --stop --force" "$tmpdir/docker.log" "safe up must not remove containers"
 }
 
+test_up_with_pull_before_uses_ignore_pull_failures() {
+	make_fixture
+	# Pin base parallel so pull limit (base+2) is hermetic vs host nproc.
+	COMPOSE_PARALLEL_LIMIT=4 COMPOSE_PULL_PARALLEL_LIMIT=6 PULL_BEFORE_UP=1 \
+		run_runner up >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "pull --ignore-pull-failures" "$tmpdir/docker.log" "PULL_BEFORE_UP must soft-pull before up"
+	assert_contains "COMPOSE_PARALLEL_LIMIT=6" "$tmpdir/stderr" "pull must use capped pull parallel limit"
+	assert_contains "up -d --wait --wait-timeout 600" "$tmpdir/docker.log" "PULL_BEFORE_UP up must still wait"
+}
+
 test_compose_invocation_sanitizes_transformed_environment() {
 	make_fixture
 	HT_PASS_ENCODED='admin:$$2y$$05$$bad' \
@@ -399,6 +409,7 @@ test_restart_logs_is_explicit
 test_restart_telemt_geoip_hook_uses_env_file_dir
 test_geoip_background_and_logs_release_compose_lock_fd
 test_up_is_safe_by_default
+test_up_with_pull_before_uses_ignore_pull_failures
 test_compose_invocation_sanitizes_transformed_environment
 test_legacy_docker_compose_is_rejected
 test_lock_file_is_compose_local_and_world_writable

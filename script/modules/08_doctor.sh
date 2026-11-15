@@ -502,10 +502,11 @@ install_doctor_check_user() {
 		return 0
 	fi
 	doctor_record user OK "SSH user exists: $USER_SSH"
-	# Soft WARN only: docker group membership is optional convenience.
+	# Soft WARN: membership in /etc/group (id -nG USER). Active SSH sessions still
+	# need re-login/newgrp before docker.sock works even when this check is OK.
 	if command -v docker >/dev/null 2>&1; then
 		if id -nG "$USER_SSH" 2>/dev/null | grep -qw docker; then
-			doctor_ok_detail "user $USER_SSH is in docker group"
+			doctor_ok_detail "user $USER_SSH is in docker group (re-login if sock still denied)"
 		else
 			doctor_record user WARN "user $USER_SSH is not in docker group" "$next_action"
 		fi
