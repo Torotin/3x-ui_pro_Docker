@@ -463,6 +463,7 @@ wizard_edit_config_text() {
 			;;
 		x | q | quit)
 			if ((dirty == 0)); then
+				WIZARD_LAST_STATUS="SKIPPED config"
 				return 0
 			fi
 			if wizard_confirm "Save changes?"; then
@@ -542,6 +543,8 @@ wizard_edit_config_whiptail() {
 	install_load_state_env
 	backtitle=$(wizard_whiptail_backtitle)
 	while true; do
+		# Cancel/Esc: wizard_ui_menu prints "x" and returns 0 — never use || on the
+		# assignment. SKIPPED / dirty-save live in the x) branch below.
 		choice=$(wizard_ui_menu "$backtitle" "Installer variables" 10 \
 			1 "WEBDOMAIN — $(wizard_config_display_value WEBDOMAIN)" \
 			2 "USER_SSH — $(wizard_config_display_value USER_SSH)" \
@@ -550,16 +553,7 @@ wizard_edit_config_whiptail() {
 			5 "PASS_WEB — $(wizard_config_display_value PASS_WEB)" \
 			6 "SSH_PBK — $(wizard_config_display_value SSH_PBK)" \
 			a "Save + render env" \
-			x "Back") || {
-			if ((dirty == 0)); then
-				WIZARD_LAST_STATUS="SKIPPED config"
-				return 0
-			fi
-			if wizard_confirm "Save changes?"; then
-				wizard_config_persist || true
-			fi
-			return 0
-		}
+			x "Back")
 		case "$choice" in
 		1) var=WEBDOMAIN ;;
 		2) var=USER_SSH ;;
@@ -579,6 +573,7 @@ wizard_edit_config_whiptail() {
 			;;
 		x)
 			if ((dirty == 0)); then
+				WIZARD_LAST_STATUS="SKIPPED config"
 				return 0
 			fi
 			if wizard_confirm "Save changes?"; then
@@ -711,6 +706,7 @@ EOF
 | Text dirty/save/apply + secrets newline | Task 3 |
 | Clearable only WEBDOMAIN/SSH_PBK | Task 3 |
 | Whiptail menu/input/clear/mask | Task 4 |
+| Cancel/Esc → `x` (no `||` on `wizard_ui_menu`); SKIPPED on clean exit | Task 3/4 |
 | Confirm render env; no compose | Task 3/4 |
 | Three named tests | Tasks 1–3 |
 | CHANGELOG | Task 5 |
