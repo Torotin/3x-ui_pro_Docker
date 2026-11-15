@@ -1249,10 +1249,10 @@ test_network_sysctl_dual_preserves_slaac() {
 	export HOST_IP_MODE=dual
 	printf 'HOST_IP_MODE=dual\n' >>"$INSTALL_STATE_DIR/install.env"
 	run_installer run network --apply --yes
-	assert_contains "net.ipv6.conf.all.forwarding = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable ipv6 forwarding"
-	assert_contains "net.ipv6.conf.all.accept_ra = 2" "$INSTALL_COMMAND_LOG" "dual sysctl must use accept_ra=2 with forwarding"
-	assert_contains "net.ipv6.conf.all.autoconf = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable autoconf"
-	assert_not_contains "net.ipv6.conf.all.accept_ra = 0" "$INSTALL_COMMAND_LOG" "dual must not force accept_ra=0"
+	assert_contains "net.ipv6.conf.all.forwarding     = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable ipv6 forwarding"
+	assert_contains "net.ipv6.conf.all.accept_ra      = 2" "$INSTALL_COMMAND_LOG" "dual sysctl must use accept_ra=2 with forwarding"
+	assert_contains "net.ipv6.conf.all.autoconf       = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable autoconf"
+	assert_not_contains "net.ipv6.conf.all.accept_ra      = 0" "$INSTALL_COMMAND_LOG" "dual must not force accept_ra=0"
 }
 
 test_network_sysctl_ipv4_keeps_ra_off() {
@@ -1260,8 +1260,23 @@ test_network_sysctl_ipv4_keeps_ra_off() {
 	export HOST_IP_MODE=ipv4
 	printf 'HOST_IP_MODE=ipv4\n' >>"$INSTALL_STATE_DIR/install.env"
 	run_installer run network --apply --yes
-	assert_contains "net.ipv6.conf.all.accept_ra = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps accept_ra=0"
-	assert_contains "net.ipv6.conf.all.autoconf = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps autoconf=0"
+	assert_contains "net.ipv6.conf.all.accept_ra      = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps accept_ra=0"
+	assert_contains "net.ipv6.conf.all.autoconf       = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps autoconf=0"
+}
+
+test_network_sysctl_hardening_defaults() {
+	make_fixture
+	run_installer run network --apply --yes
+	assert_contains "net.ipv4.icmp_ratelimit              = 1000" "$INSTALL_COMMAND_LOG" "icmp_ratelimit must be ms interval (1000), not 1"
+	assert_contains "net.ipv4.tcp_syn_retries         = 3" "$INSTALL_COMMAND_LOG" "tcp_syn_retries=3 for ~15s connect timeout"
+	assert_contains "net.ipv4.tcp_mtu_probing         = 1" "$INSTALL_COMMAND_LOG" "tcp_mtu_probing=1 (blackhole-triggered)"
+	assert_contains "net.ipv4.conf.all.send_redirects          = 0" "$INSTALL_COMMAND_LOG" "forwarding hosts must not send ICMP redirects"
+	assert_contains "net.ipv6.conf.all.accept_source_route     = 0" "$INSTALL_COMMAND_LOG" "IPv6 source routing must stay disabled"
+	assert_contains "net.ipv4.ip_local_port_range     = 10240 65535" "$INSTALL_COMMAND_LOG" "ephemeral port range must be widened for proxy load"
+	assert_contains "fs.file-max                   = 1048576" "$INSTALL_COMMAND_LOG" "file-max must be raised for high connection counts"
+	assert_not_contains "net.ipv6.route.flush" "$INSTALL_COMMAND_LOG" "route.flush must not be a persistent sysctl"
+	assert_contains "network.modules.load.d" "$INSTALL_COMMAND_LOG" "network apply must persist nf_conntrack modules-load"
+	assert_contains "network.modprobe modprobe nf_conntrack" "$INSTALL_COMMAND_LOG" "network apply must modprobe nf_conntrack before sysctl"
 }
 
 test_network_apply_uses_runner() {
@@ -2251,6 +2266,7 @@ test_ssh_rejects_dual_auth_disabled_lockout
 test_docker_install_handles_missing_docker_binary
 test_network_sysctl_dual_preserves_slaac
 test_network_sysctl_ipv4_keeps_ra_off
+test_network_sysctl_hardening_defaults
 test_network_apply_uses_runner
 test_docker_networks_created_dual_stack
 test_docker_enable_ipv6_zero_dies_on_user_networks

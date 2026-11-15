@@ -40,6 +40,7 @@ install_network_command() {
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		run_cmd network.apply printf '%s\n' "$(cat "$rendered")"
 		cat "$rendered"
+		install_network_ensure_modules
 		run_cmd network.sysctl sysctl -p "$target"
 		rm -f -- "$rendered"
 		return 0
@@ -54,8 +55,7 @@ install_network_command() {
 	backup_file "$target"
 	install -m 0644 "$rendered" "$target"
 	rm -f -- "$rendered"
-	run_cmd network.modprobe modprobe tcp_bbr
-	run_cmd network.modprobe modprobe nf_conntrack
+	install_network_ensure_modules
 	if ! run_cmd network.sysctl sysctl -p "$target"; then
 		if ((had_previous)); then
 			cp -- "$previous" "$target"
@@ -66,4 +66,20 @@ install_network_command() {
 		die "network sysctl apply failed; previous config restored"
 	fi
 	rm -f -- "$previous"
+}
+
+# Persist + load modules that own /proc/sys/net/netfilter/* and BBR before sysctl -p.
+install_network_ensure_modules() {
+	local modules_file=/etc/modules-load.d/nf_conntrack.conf
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd network.modules.load.d printf '%s\n' nf_conntrack
+		run_cmd network.modprobe modprobe tcp_bbr
+		run_cmd network.modprobe modprobe nf_conntrack
+		return 0
+	fi
+	run_cmd network.modules.load.d sh -c '
+		printf "%s\n" "nf_conntrack" >"$1"
+	' _ "$modules_file"
+	run_cmd network.modprobe.tcp_bbr modprobe tcp_bbr || true
+	run_cmd network.modprobe.nf_conntrack modprobe nf_conntrack || true
 }
