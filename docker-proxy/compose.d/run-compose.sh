@@ -421,8 +421,10 @@ maybe_ensure_telemt_geoip() {
 		return 0
 	}
 	# Non-blocking: compose up/restart must not wait on MMDB fetch.
+	# Close lock fd 9 in the child so a long GeoIP run cannot keep flock after
+	# this script returns (or after restart --logs replaces the shell).
 	log "Applying Telemt panel GeoIP sources in background (ensure-geoip.sh → $log_file)"
-	nohup bash "$script" >>"$log_file" 2>&1 </dev/null &
+	nohup bash "$script" >>"$log_file" 2>&1 </dev/null 9>&- &
 	disown $! 2>/dev/null || true
 }
 
@@ -444,6 +446,18 @@ run_restart() {
 	else
 		preflight_container_name_conflicts "${services[@]}"
 	fi
+	# --no-deps skips oneshot healers; telemt bind mounts often arrive as root/1001
+	# while the stack runs as 1000:1000 (geoip mkdir Permission denied).
+	if [[ " ${services[*]} " == *" telemt "* ]]; then
+		log "Healing Telemt bind-mount ownership (telemt-fix-perms)"
+		run_compose up -d --no-deps --force-recreate telemt-fix-perms \
+			|| log "WARN: telemt-fix-perms failed, continuing"
+	fi
+	if [[ " ${services[*]} " == *" lampac "* ]]; then
+		log "Healing Lampac bind-mount ownership (lampac-fix-perms)"
+		run_compose up -d --no-deps --force-recreate lampac-fix-perms \
+			|| log "WARN: lampac-fix-perms failed, continuing"
+	fi
 	for svc in "${services[@]}"; do
 		log "Перезапуск сервиса (rm --stop --force): $svc"
 		run_compose rm --stop --force "$svc" || log "WARN: Не удалось удалить контейнер $svc, продолжаем"
@@ -453,6 +467,8 @@ run_restart() {
 	maybe_ensure_telemt_geoip " ${services[*]} "
 	if ((follow_logs == 1)); then
 		log "Показываем логи сервиса ${services[-1]} (Ctrl+C для выхода)"
+		# Restart work is done; drop flock before replacing the shell with docker logs.
+		release_lock
 		exec docker logs -f "${services[-1]}"
 	fi
 }
@@ -500,6 +516,12 @@ acquire_lock() {
 		log "ERROR: Уже выполняется другой run-compose.sh (lock: $LOCK_FILE)"
 		exit 1
 	fi
+}
+
+# Drop exclusive flock. Safe to call when fd 9 was never opened.
+# The lock *file* may remain on disk (empty marker); only the flock matters.
+release_lock() {
+	exec 9>&- 2>/dev/null || true
 }
 
 main() {

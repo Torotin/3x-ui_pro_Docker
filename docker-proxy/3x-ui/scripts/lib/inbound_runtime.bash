@@ -247,12 +247,22 @@ ensure_xray_tls_certificate() {
 	if [[ -s "$cert_file" && -s "$key_file" ]]; then
 		return 0
 	fi
+	# Traefik PEM is usually RO in-container. Missing LE export (rate-limit /
+	# domain change) must not abort Before Vision — that leaves public :443 dark.
 	if [[ "$cert_file" == /etc/traefik/pem/* || "$key_file" == /etc/traefik/pem/* ]]; then
 		if [[ "$MODE" == "plan" ]]; then
-			record_change "PLAN: Traefik PEM certificate required for Xray TLS backend"
+			record_change "PLAN: Traefik PEM missing; self-signed fallback under /etc/x-ui"
 			return 0
 		fi
-		die "Traefik PEM certificate files are missing: cert=$cert_file key=$key_file"
+		log WARN "Traefik PEM missing (cert=$cert_file key=$key_file); using self-signed /etc/x-ui/xray-managed.{crt,key}"
+		cert_file=/etc/x-ui/xray-managed.crt
+		key_file=/etc/x-ui/xray-managed.key
+		XRAY_TLS_CERT_FILE=$cert_file
+		XRAY_TLS_KEY_FILE=$key_file
+		export XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE
+		if [[ -s "$cert_file" && -s "$key_file" ]]; then
+			return 0
+		fi
 	fi
 	if [[ "$MODE" == "plan" ]]; then
 		record_change "PLAN: Xray TLS certificate generated at configured paths"
