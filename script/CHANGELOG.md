@@ -11,6 +11,7 @@
 - Wizard: sequential menu keys 0–9 by display order; digit hotkeys + colored OK/FAIL badges in whiptail.
 - SSH: rewrite `ssh.socket` ListenStream to `PORT_REMOTE_SSH` (`zz-3xui-port.conf`) so Port= in sshd_config is not ignored under socket activation.
 - SSH: harden `sshd_config.template` (drop deprecated `Protocol 2`, AES-GCM + ETM-only MACs, fixed DH groups, `AuthenticationMethods`, no agent forwarding in Match); refuse dual-auth lockout before apply.
+- User aliases: fix `lfsr`, portable `ping`/`public-ip`, drop fragile `fcat`; add `cdproxy` / installer / compose helpers.
 
 ## 0.7.8 - 2026-11-14
 
