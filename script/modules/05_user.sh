@@ -19,6 +19,7 @@ install_user_command() {
 	install_user_aliases "$home_dir"
 	run_cmd user.home.chown chown -R "$USER_SSH:$USER_SSH" "$home_dir"
 	printf 'user configured: %s (%s)\n' "$USER_SSH" "$home_dir"
+	printf 'Note: docker group applies after re-login (or: newgrp docker) for %s\n' "$USER_SSH"
 }
 
 install_user_home_dir() {
@@ -75,9 +76,15 @@ install_user_authorized_key() {
 
 install_user_groups() {
 	local group groups=()
+	[[ -n "${USER_SSH:-}" ]] || return 0
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd user.groups.docker.ensure groupadd --system docker
 		run_cmd user.groups usermod -aG sudo,docker "$USER_SSH"
 		return 0
+	fi
+	# Ensure docker group exists even when `user` runs before the docker step.
+	if ! getent group docker >/dev/null 2>&1; then
+		run_cmd user.groups.docker.ensure groupadd --system docker
 	fi
 	for group in sudo docker; do
 		if getent group "$group" >/dev/null 2>&1; then

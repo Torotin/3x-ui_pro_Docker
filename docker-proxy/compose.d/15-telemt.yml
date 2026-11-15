@@ -6,12 +6,43 @@ services:
     volumes:
       - ../telemt/traefik-telemt-web-transport.yml:/dynamic/telemt-web-transport.yml:ro
 
+  # Oneshot: telemt-stack runs as uid 1000; host bind mounts often arrive as root
+  # (installer/rsync). Panel then fails mkdir /var/lib/telemt-panel/geoip with
+  # Permission denied. Heal ownership, then exit (restart: "no").
+  telemt-fix-perms:
+    image: alpine:latest
+    container_name: telemt-fix-perms
+    restart: "no"
+    network_mode: none
+    user: "0:0"
+    security_opt:
+      - no-new-privileges=true
+    volumes:
+      - ../telemt/config:/etc/telemt
+      - ../telemt/data:/var/lib/telemt
+      - ../telemt-panel/config:/etc/telemt-panel
+      - ../telemt-panel/data:/var/lib/telemt-panel
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /var/lib/telemt /var/lib/telemt-panel/geoip
+        for d in /etc/telemt /var/lib/telemt /etc/telemt-panel /var/lib/telemt-panel; do
+          if [ -e "$$d" ]; then chown -R 1000:1000 "$$d"; fi
+        done
+        echo "telemt-fix-perms: ownership set to 1000:1000"
+    logging:
+      options:
+        tag: "{{.Name}}"
+
   telemt:
     image: ${TELEMT_STACK_IMAGE:-torotin/telemt-stack:latest}
     container_name: telemt
     restart: unless-stopped
     init: true
     depends_on:
+      telemt-fix-perms:
+        condition: service_completed_successfully
       adguard:
         condition: service_healthy
     env_file:

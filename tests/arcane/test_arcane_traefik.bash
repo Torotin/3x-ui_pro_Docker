@@ -100,6 +100,16 @@ test_compose_uses_arcane_manager_image() {
 	pass "compose uses Arcane manager image"
 }
 
+test_compose_uses_arcane_v3_env_prefix() {
+	grep -Fq 'ARCANE_APP_URL=https://arcane.${WEBDOMAIN}' "$COMPOSE_ARCANE" || fail "ARCANE_APP_URL required (Arcane 3.x)"
+	grep -Fq 'ARCANE_ENCRYPTION_KEY=${ARCANE_ENCRYPTION_KEY}' "$COMPOSE_ARCANE" || fail "ARCANE_ENCRYPTION_KEY required"
+	grep -Fq 'ARCANE_PROJECTS_DIRECTORY=/opt/docker-proxy' "$COMPOSE_ARCANE" || fail "ARCANE_PROJECTS_DIRECTORY required"
+	grep -Fq 'ARCANE_TRUSTED_PROXIES=' "$COMPOSE_ARCANE" || fail "ARCANE_TRUSTED_PROXIES required"
+	! grep -Eq '^[[:space:]]*- (APP_URL|ENCRYPTION_KEY|PROJECTS_DIRECTORY|TRUSTED_PROXIES)=' "$COMPOSE_ARCANE" ||
+		fail "legacy unprefixed Arcane env vars must be removed (startup abort on 3.x)"
+	pass "compose uses Arcane 3.x ARCANE_ env prefix"
+}
+
 test_live_probe_uses_get_for_asset_headers() {
 	grep -q -- '-fsSI' "$ROOT_DIR/tests/arcane/probe-live.sh" && fail "probe must not use HEAD for Arcane JS assets"
 	grep -q -- '-D -' "$ROOT_DIR/tests/arcane/probe-live.sh" || fail "probe should capture headers from a GET request"
@@ -129,6 +139,7 @@ main() {
 	test_arcane_yml_js_rewrites_are_semantic_not_minified_names
 	test_arcane_yml_replacements_avoid_broken_js_regex_lookahead
 	test_compose_uses_arcane_manager_image
+	test_compose_uses_arcane_v3_env_prefix
 	test_live_probe_uses_get_for_asset_headers
 	test_live_probe_crawls_relative_js_chunks
 	printf 'All arcane traefik tests passed\n'

@@ -378,7 +378,12 @@ install_require_required_env() {
 		if [[ -z "${WEBDOMAIN:-}" || -z "${USER_SSH:-}" || -z "${PASS_SSH:-}" || -z "${USER_WEB:-}" || -z "${PASS_WEB:-}" ]]; then
 			printf 'Required installer variables\n'
 		fi
-		install_prompt_required WEBDOMAIN "Web domain"
+		# Empty WEBDOMAIN is allowed; ensure_env_defaults maps it to <ipv4>.sslip.io.
+		if [[ -z "${WEBDOMAIN:-}" ]]; then
+			printf 'Web domain (empty → <ipv4>.sslip.io): '
+			read -r WEBDOMAIN || WEBDOMAIN=
+			export WEBDOMAIN
+		fi
 		install_prompt_required USER_SSH "SSH username"
 		install_prompt_required PASS_SSH "SSH password" 1
 		install_prompt_required USER_WEB "Web username"
@@ -391,7 +396,7 @@ install_require_required_env() {
 		install_persist_required_env
 		return 0
 	fi
-	[[ -n "${WEBDOMAIN:-}" ]] || die "WEBDOMAIN is required (set env or run wizard)"
+	# WEBDOMAIN may be empty/IP here; ensure_env_defaults maps it to <ipv4>.sslip.io.
 	[[ -n "${USER_SSH:-}" ]] || die "USER_SSH is required (set env or run wizard)"
 	[[ -n "${PASS_SSH:-}" ]] || die "PASS_SSH is required (set env or run wizard)"
 	[[ -n "${USER_WEB:-}" ]] || die "USER_WEB is required (set env or run wizard)"
@@ -447,3 +452,5 @@ generate_random_port() {
 
 # shellcheck source=script/modules/lib_ip.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_ip.sh"
+# shellcheck source=script/modules/lib_network.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_network.sh"

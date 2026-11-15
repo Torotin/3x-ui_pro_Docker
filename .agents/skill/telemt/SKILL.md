@@ -47,7 +47,8 @@ Coordinate with `installer` when template rendering changes and with `traefik` f
 
 - Keep `telemt` on `172.18.0.15` / `172.19.0.15` and dual-stack ULA pins unless the live network plan changes.
 - Keep AdGuard as the DNS dependency and resolver (`172.19.0.10`).
-- Keep Telemt config writable at `/etc/telemt`, runtime data at `/var/lib/telemt`, panel config read-only at `/etc/telemt-panel`, and panel data writable.
+- Keep Telemt config writable at `/etc/telemt`, runtime data at `/var/lib/telemt`, panel config read-only at `/etc/telemt-panel`, and panel data writable. Host bind mounts are healed by oneshot `telemt-fix-perms` (`chown 1000:1000`, pre-create `geoip`) before `telemt` starts — same pattern as `lampac-fix-perms`. `run-compose restart telemt` also force-recreates that oneshot even under `--no-deps`.
+- `WEBDOMAIN` must be a DNS hostname (not a bare IP). Telemt rejects IP `web.vhosts[].host`; Let's Encrypt rejects IP identifiers. After an IP change, use a real DNS name or `<ipv4>.sslip.io` (admin subdomains like `telemt.<ipv4>.sslip.io` resolve).
 - Treat `/var/run/docker.sock` access and `DOCKER_SOCKET_GID` as privileged; do not broaden permissions casually. Logs UI needs: real socket GID (not `0`) in `group_add`; bind-mount `/usr/bin/docker` (panel 1.0.0-rc.3 returns `command_missing` without CLI — socket alone is not enough); `[host] log_source=docker` with `telemt_container`/`panel_container` both `telemt` (no separate `telemt-panel` container).
 - **Panel admin:** Traefik `Host(telemt.${WEBDOMAIN})` on entrypoint `admin` → panel `:8080` with `base_path=""`. Middlewares: BasicAuth, rate limit, noindex, compress, `admin-security-headers@file`. **No** `bouncer@file` on admin (parity with homepage / 3x-ui admin).
 - **Subpage:** Traefik `Host(${WEBDOMAIN}) && PathPrefix(/${URI_TELEMT_SUB})` on `websecure` → sub listener `:8081`. Middlewares: `bouncer@file`, rate, noindex. **Do not** strip `base_path` (no Stripprefix).

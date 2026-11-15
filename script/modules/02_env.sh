@@ -143,6 +143,59 @@ assert_uri_telemt_sub_unique() {
 	return 0
 }
 
+install_webdomain_is_ipv4() {
+	[[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+install_webdomain_is_ipv6() {
+	local domain=${1:-}
+	[[ "$domain" == *:* ]] && ! install_webdomain_is_ipv4 "$domain"
+}
+
+# WEBDOMAIN must be a hostname, never a bare IP: Let's Encrypt rejects IP
+# identifiers, Telemt rejects IP web.vhosts hosts, and Traefik Host() rules
+# need a name that can obtain certs (use sslip.io or a real DNS name).
+assert_webdomain_is_hostname() {
+	local domain=${1:-${WEBDOMAIN:-}}
+	[[ -n "$domain" ]] || die "WEBDOMAIN is required"
+	if install_webdomain_is_ipv4 "$domain"; then
+		die "WEBDOMAIN must be a DNS hostname, not an IPv4 address (got: $domain). Use a real domain or <ipv4>.sslip.io"
+	fi
+	if install_webdomain_is_ipv6 "$domain"; then
+		die "WEBDOMAIN must be a DNS hostname, not an IPv6 address (got: $domain)"
+	fi
+	return 0
+}
+
+# When WEBDOMAIN is unset/placeholder/IP, derive <PUBLIC_IPV4>.sslip.io so LE + Telemt
+# still get a resolvable FQDN after an IP-only bootstrap (admin Hosts also resolve).
+ensure_webdomain_or_sslip() {
+	local ipv4=${PUBLIC_IPV4:-}
+	[[ -n "$ipv4" ]] || die "PUBLIC_IPV4 is required before WEBDOMAIN defaulting"
+	if [[ -z "${WEBDOMAIN:-}" || "$WEBDOMAIN" == "example.invalid" ]] \
+		|| install_webdomain_is_ipv4 "$WEBDOMAIN" || install_webdomain_is_ipv6 "$WEBDOMAIN"; then
+		WEBDOMAIN="${ipv4}.sslip.io"
+		export WEBDOMAIN
+		printf 'WEBDOMAIN defaulted to %s (sslip.io)\n' "$WEBDOMAIN"
+	fi
+	assert_webdomain_is_hostname "$WEBDOMAIN"
+}
+
+# Traefik PEM paths must track WEBDOMAIN; stale IP-based paths abort AfterStart
+# before Vision/XHTTP are created (public :443 stays dark).
+sync_xray_traefik_pem_paths() {
+	local domain=${WEBDOMAIN:-localhost}
+	if [[ -z "${XRAY_TLS_CERT_FILE:-}" || "$XRAY_TLS_CERT_FILE" == /etc/traefik/pem/* ]]; then
+		XRAY_TLS_CERT_FILE="/etc/traefik/pem/${domain}-cert.pem"
+	fi
+	if [[ -z "${XRAY_TLS_KEY_FILE:-}" || "$XRAY_TLS_KEY_FILE" == /etc/traefik/pem/* ]]; then
+		XRAY_TLS_KEY_FILE="/etc/traefik/pem/${domain}-key.pem"
+	fi
+	# Stack contract: Hysteria2 masquerade hits Traefik websecure via WEBDOMAIN.
+	HYSTERIA2_MASQ_URL="https://${domain}:4443/"
+	export XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
+}
+
 detect_docker_socket_gid() {
 	if getent group docker >/dev/null 2>&1; then
 		getent group docker | awk -F: '{print $3}'
@@ -154,10 +207,10 @@ detect_docker_socket_gid() {
 }
 
 ensure_env_defaults() {
-	: "${WEBDOMAIN:=example.invalid}"
 	ip_probe_resolve_host_mode
 	# PUBLIC_IPV4 is required for this product; probe already died if missing.
 	: "${PUBLIC_IPV4:?PUBLIC_IPV4 required}"
+	ensure_webdomain_or_sslip
 	# PUBLIC_IPV6 may be empty when HOST_IP_MODE=ipv4 — do not default to PUBLIC_IPV4
 	if [[ "${HOST_IP_MODE}" == "dual" ]]; then
 		TOR_IPV6_AVAILABLE=true
@@ -242,6 +295,11 @@ ensure_env_defaults() {
 	if [[ -z "${DOCKER_SOCKET_GID:-}" || "${DOCKER_SOCKET_GID}" == "0" ]]; then
 		DOCKER_SOCKET_GID=$(detect_docker_socket_gid)
 	fi
+	# Optional: empty DOCKER_MTU = read host iface MTU; mirrors/proxy only if set.
+	: "${DOCKER_MTU:=}"
+	: "${DOCKER_GHCR_MIRROR:=}"
+	: "${DOCKER_HTTP_PROXY:=}"
+	: "${DOCKER_NO_PROXY:=localhost,127.0.0.1,::1}"
 	: "${TELEMT_TUNING_PROFILE:=balanced}"
 	: "${TELEMT_MIDDLE_PROXY_NAT_PROBE:=true}"
 	: "${TELEMT_STUN_NAT_PROBE_CONCURRENCY:=16}"
@@ -295,25 +353,25 @@ ensure_env_defaults() {
 	: "${ENABLE_VLESS_GRPC:=false}"
 	install_normalize_global_bool_env
 	install_normalize_udp443_backend
-	: "${XRAY_TLS_CERT_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}"
-	: "${XRAY_TLS_KEY_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	# Prefer Traefik inside docker-net. https://${WEBDOMAIN}/ self-loops when
 	# the 3x-ui container hostname is WEBDOMAIN (no TCP :443 inside).
-	: "${HYSTERIA2_MASQ_URL:=https://${WEBDOMAIN}:4443/}"
+	sync_xray_traefik_pem_paths
+	# Force-sync derived Xray targets from ENABLE_TELEMT. Bootstrap/env may have
+	# already written traefik defaults into install.env; := would sticky-lock them.
 	if install_telemt_enabled; then
-		: "${VISION_FALLBACK_HOST:=telemt}"
-		: "${VISION_FALLBACK_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
-		: "${VISION_FALLBACK_XVER:=1}"
-		: "${REALITY_TARGET_HOST:=telemt}"
-		: "${REALITY_TARGET_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
-		: "${REALITY_TARGET_XVER:=1}"
+		VISION_FALLBACK_HOST=telemt
+		VISION_FALLBACK_PORT=$PORT_LOCAL_TELEMT_PROXY
+		VISION_FALLBACK_XVER=1
+		REALITY_TARGET_HOST=telemt
+		REALITY_TARGET_PORT=$PORT_LOCAL_TELEMT_PROXY
+		REALITY_TARGET_XVER=1
 	else
-		: "${VISION_FALLBACK_HOST:=traefik}"
-		: "${VISION_FALLBACK_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
-		: "${VISION_FALLBACK_XVER:=1}"
-		: "${REALITY_TARGET_HOST:=traefik}"
-		: "${REALITY_TARGET_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
-		: "${REALITY_TARGET_XVER:=1}"
+		VISION_FALLBACK_HOST=traefik
+		VISION_FALLBACK_PORT=${PORT_LOCAL_TRAEFIK:-4443}
+		VISION_FALLBACK_XVER=1
+		REALITY_TARGET_HOST=traefik
+		REALITY_TARGET_PORT=${PORT_LOCAL_TRAEFIK:-4443}
+		REALITY_TARGET_XVER=1
 	fi
 	export WEBDOMAIN HOST_IP_MODE PUBLIC_IPV4 PUBLIC_IPV6 TOR_IPV6_AVAILABLE USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
@@ -326,6 +384,7 @@ ensure_env_defaults() {
 	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
 	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET LAMPAC_JACRED_APIKEY TELEMT_API_AUTH_HEADER TELEMT_SUBPAGE_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export DOCKER_MTU DOCKER_GHCR_MIRROR DOCKER_HTTP_PROXY DOCKER_NO_PROXY
 	export TELEMT_GEOIP_ENABLED TELEMT_GEOIP_SCHEDULE TELEMT_GEOIP_CITY_URL TELEMT_GEOIP_ASN_URL TELEMT_GEOIP_COUNTRY_URL
 	export TELEMT_WEB_USER TELEMT_WEB_SECRET_HEX TELEMT_WEB_CARRIER TELEMT_WEB_DECOY_UPSTREAM
 	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
@@ -480,6 +539,22 @@ render_mihomo_config() {
 		die "Mihomo config still contains an unsubstituted MIHOMO_SECRET placeholder"
 	fi
 	chmod 0600 "$mihomo_config" 2>/dev/null || true
+}
+
+# Render install.env from template after ensure_env_defaults (PORT_REMOTE_SSH, URIs, …).
+# Does not touch compose.d — safe before docker/compose exist. Idempotent.
+install_bootstrap_install_env() {
+	require_writable_target "$INSTALL_STATE_DIR" "installer state directory"
+	mkdir -p "$INSTALL_STATE_DIR/backups" 2>/dev/null || true
+	install_load_state_env
+	ensure_env_defaults
+	local templates install_env
+	templates=$(template_dir)
+	install_env="$INSTALL_STATE_DIR/install.env"
+	backup_file "$install_env"
+	render_env_template "$templates/install.env.template" "$install_env"
+	run_cmd env.bootstrap printf 'bootstrapped install.env defaults\n'
+	printf 'bootstrapped install.env: %s\n' "$install_env"
 }
 
 install_env_command() {

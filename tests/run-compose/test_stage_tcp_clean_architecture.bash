@@ -220,6 +220,13 @@ assert_true(xui_labels.get("traefik.http.routers.grpc3xui.service") == "grpc3xui
 
 telemt_compose = load_yaml("docker-proxy/compose.d/15-telemt.yml")
 assert_true("telemt-panel" not in telemt_compose["services"], "Telemt panel must run inside the single telemt container")
+telemt_fix_perms = telemt_compose["services"]["telemt-fix-perms"]
+assert_true(telemt_fix_perms.get("restart") == "no", "telemt-fix-perms must exit after chown")
+assert_true(
+    telemt_fix_perms.get("network_mode") == "none",
+    "telemt-fix-perms must not join stack networks",
+)
+assert_true(str(telemt_fix_perms.get("user")) == "0:0", "telemt-fix-perms must run as root to chown bind mounts")
 traefik_from_telemt = telemt_compose["services"].get("traefik") or {}
 traefik_telemt_volumes = [str(volume) for volume in (traefik_from_telemt.get("volumes") or [])]
 assert_true(
@@ -245,6 +252,11 @@ assert_true("build" not in telemt_service, "Telemt stack must not build a local 
 assert_true(telemt_service.get("init") is True, "Telemt stack must use an init process for its bundled children")
 assert_true("${DOCKER_SOCKET_GID:-0}" in [str(group) for group in (telemt_service.get("group_add") or [])], "Telemt stack must join the Docker socket group for panel Logs UI")
 assert_true(
+    (telemt_service.get("depends_on") or {}).get("telemt-fix-perms", {}).get("condition")
+    == "service_completed_successfully",
+    "telemt must wait for telemt-fix-perms oneshot",
+)
+assert_true(
     set(telemt_expose) == {
         "${PORT_LOCAL_TELEMT_PROXY:-9443}",
         "${PORT_LOCAL_TELEMT_WEB:-18080}",
@@ -260,6 +272,12 @@ assert_true("../telemt-panel/config:/etc/telemt-panel:ro" in telemt_volumes, "Bu
 assert_true("../telemt-panel/data:/var/lib/telemt-panel:rw" in telemt_volumes, "Bundled panel must retain persistent data")
 assert_true("/var/run/docker.sock:/var/run/docker.sock:ro" in telemt_volumes, "Bundled panel Logs UI must receive read-only Docker socket access")
 assert_true("/usr/bin/docker:/usr/bin/docker:ro" in telemt_volumes, "Bundled panel Logs UI requires host docker CLI bind-mount (socket alone is not enough)")
+telemt_fix_volumes = [str(volume) for volume in (telemt_fix_perms.get("volumes") or [])]
+assert_true("../telemt/data:/var/lib/telemt" in telemt_fix_volumes, "telemt-fix-perms must cover telemt data")
+assert_true("../telemt-panel/data:/var/lib/telemt-panel" in telemt_fix_volumes, "telemt-fix-perms must cover panel data for geoip mkdir")
+fix_cmd = "\n".join(str(part) for part in (telemt_fix_perms.get("command") or []))
+assert_true("chown -R 1000:1000" in fix_cmd, "telemt-fix-perms must chown bind mounts to uid 1000")
+assert_true("/var/lib/telemt-panel/geoip" in fix_cmd, "telemt-fix-perms must pre-create panel geoip dir")
 telemt_healthcheck = " ".join(str(part) for part in ((telemt_service.get("healthcheck") or {}).get("test") or []))
 assert_true("/usr/local/bin/telemt healthcheck /etc/telemt/config.toml --mode liveness" in telemt_healthcheck, "Telemt stack healthcheck must verify Telemt liveness")
 assert_true(

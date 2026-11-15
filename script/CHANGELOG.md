@@ -1,5 +1,41 @@
 # Журнал изменений установщика
 
+## 0.7.9 - 2026-11-15
+
+- Arcane 3.x: compose env prefix `ARCANE_APP_URL` / `ARCANE_ENCRYPTION_KEY` / `ARCANE_PROJECTS_DIRECTORY` / `ARCANE_TRUSTED_PROXIES` (legacy names abort startup).
+- SSH: Terrapin harden — `Ciphers` AES-GCM only; `MACs` non-ETM `hmac-sha2-512/256` (drop ChaCha20-Poly1305, `*-etm`, CTR).
+- Network sysctl: `tcp_mtu_probing=2` (active Path MTU); `disable_ipv6=__IPV6_DISABLE__` (1 on `HOST_IP_MODE=ipv4`, opt-out `INSTALL_KEEP_IPV6=1`).
+- APT: country detect for mirror pick uses `curl -4` only (avoid IPv6 geo mismatch).
+- APT: flock fallback for dpkg/apt locks when `fuser` is missing; do not create absent lock files.
+- APT: never rewrite `security.ubuntu.com` when applying country/archive mirrors (classic + DEB822).
+- APT: `force-confdef`/`force-confold` on install/upgrade; Release-timed Ubuntu mirror pick with curl timeouts.
+- APT: Debian vs Ubuntu `unattended-upgrades` Allowed-Origins; drop duplicate real-path auto-install.
+- Wizard: dark `NEWT_COLORS` theme for whiptail (honors preset env).
+- Wizard: Quick Action `c` / `config` to edit required `install.env` variables (dirty save like toggles).
+- Network/Docker: Path MTU probe+clamp (`lib_network.sh`, netplan drop-in); daemon/network host MTU; optional `DOCKER_GHCR_MIRROR`/`DOCKER_HTTP_PROXY`; `pigz`; Hub `mirror.gcr.io`; downloads=8; compose parallel from `nproc` (cap 6/8); soft pull; installer `PULL_BEFORE_UP=1`.
+- Tests: ASCII hygiene gate (reject NBSP/CRLF) in `tests/install-scripts/run.sh`.
+- Docker: `gpg --batch --yes --dearmor` for repo key; maintenance timer verified via `systemctl is-active`; `install_project_files` always rsyncs (skip only when src==root).
+- User/Docker: ensure `docker` group exists; re-add `USER_SSH` to it after Docker install; note re-login/`newgrp docker` for socket access.
+- Wizard: compose output filter — unified `[+]`/`[!]` statuses, collapse network/volume/container chatter, `\r`→`\n`, `fflush`, keep ERROR/WARN/Unhealthy.
+- Wizard: toggles/UDP443 save path renders env only and returns to menu (no compose prompt/apply).
+- Wizard: after required prompts, bootstrap full `install.env` from template (`PORT_REMOTE_SSH`, URIs, …) so ssh/firewall work before `env`.
+- Env: force-sync `VISION_FALLBACK_*` / `REALITY_TARGET_*` from `ENABLE_TELEMT` (no sticky traefik defaults after bootstrap).
+- Wizard: sequential menu 0–9 in text UI; whiptail uses letter tags (`n/p/u/s/f/w/e/o/m/l`) because newt ignores digit hotkeys.
+- Wizard: plain `[OK]`/`[FAIL]` badges + CSI strip for whiptail; `--notags` + key-prefixed items.
+- SSH: rewrite `ssh.socket` ListenStream to `PORT_REMOTE_SSH` (`zz-3xui-port.conf`) so Port= in sshd_config is not ignored under socket activation.
+- SSH: rollback removes `zz-3xui-port.conf` + `daemon-reload`; gate `[::]` ListenStream on usable IPv6; rebind socket without `systemctl stop ssh` (reload instead); whitelist `envsubst` vars; simplify `ss` port match.
+- SSH: harden `sshd_config.template` (drop deprecated `Protocol 2`, Terrapin-safe AES-GCM ciphers + non-ETM hmac-sha2 MACs, fixed DH groups, `AuthenticationMethods`, no agent forwarding in Match); refuse dual-auth lockout before apply.
+- User aliases: fix `lfsr`, portable `ping`/`public-ip`, drop fragile `fcat`; add `cdproxy` / installer / compose helpers.
+- Network sysctl: fix `icmp_ratelimit`, soften SYN/MTU probing, add send_redirects/IPv6 harden + ephemeral ports; ensure `nf_conntrack` via modules-load before apply.
+- DNSCrypt: EXIT-safe temp cleanup, shared loopback hosts helper (ensure + doctor), soft `chattr +i`, `systemctl cat` for resolved, netprobe/bootstrap align, summary dig `example.com`.
+- IP probe: validate PUBLIC_IPV4/6 presets, stricter IPv6 fetch chars, prefer `up -deprecated` global addrs; keep valid preset v6 across probe timeouts.
+
+## 0.7.8 - 2026-11-14
+
+- Wizard: hybrid whiptail + ANSI text UI, step badges, Quick Actions (`auto`/`toggles`/`doctor`).
+- Wizard: `install.sh wizard --yes|-y` skips non-destructive confirms; docker wipe always prompts.
+- Wizard: feature toggles dirty-exit save-only; `WIZARD_UI=auto|whiptail|text`.
+
 ## 0.7.7 - 2026-11-13
 
 - `dnscrypt`: после установки/reconfigure пишет `127.0.1.1 <hostname>` в `/etc/hosts`, если short-hostname отсутствует.

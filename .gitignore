@@ -17,6 +17,8 @@ docker-proxy/lampac/plugins/override/jacred-apikey.local.js
 /tmp/
 /New/
 /ideas*
+# Live canary notes — never commit (ops-only, may hold host specifics)
+/udp443-evidence/
 sync-lampac.sh
 sync-lampac-docker.sh
 /.project_context*
@@ -55,5 +57,4 @@ __pycache__/
 # ==== Installer local state ====
 script/install-state/
 
-# Live canary notes — never commit (ops-only)
-/udp443-evidence/
+.worktrees/

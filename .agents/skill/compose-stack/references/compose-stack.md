@@ -33,7 +33,8 @@ Active means the file exists as `*.yml` in `docker-proxy/compose.d`, not as `*.y
 | `13-homepage.yml` | `homepage` | `ghcr.io/gethomepage/homepage:latest` | `172.18.0.13` / `fd00:dead:beef:12::13`; `172.19.0.13` / `fd00:dead:beef:13::13` | Dashboard; Traefik healthcheck forces `Host` to `${WEBDOMAIN}`. |
 | `14-lampac.yml` | `lampac-fix-perms` | `alpine:latest` | `network_mode: none` | Oneshot `chown 1000:1000` on Lampac bind mounts; `restart: "no"` (exits after run). |
 | `14-lampac.yml` | `lampac` | `ghcr.io/lampac-nextgen/lampac` | `172.18.0.14` / `fd00:dead:beef:12::14`; `172.19.0.14` / `fd00:dead:beef:13::14` | Optional by `ENABLE_LAMPAC`; waits for `lampac-fix-perms` (`service_completed_successfully`). |
-| `15-telemt.yml` | `telemt` | `${TELEMT_STACK_IMAGE:-torotin/telemt-stack:latest}` | `172.18.0.15` / `fd00:dead:beef:12::15`; `172.19.0.15` / `fd00:dead:beef:13::15`; DNS `172.19.0.10` | Optional by `ENABLE_TELEMT`; exposes proxy/API/metrics/panel internally and routes panel via Traefik. |
+| `15-telemt.yml` | `telemt-fix-perms` | `alpine:latest` | `network_mode: none` | Oneshot `chown 1000:1000` + `mkdir geoip` on Telemt/panel bind mounts; `restart: "no"`. |
+| `15-telemt.yml` | `telemt` | `${TELEMT_STACK_IMAGE:-torotin/telemt-stack:latest}` | `172.18.0.15` / `fd00:dead:beef:12::15`; `172.19.0.15` / `fd00:dead:beef:13::15`; DNS `172.19.0.10` | Optional by `ENABLE_TELEMT`; waits for `telemt-fix-perms`; exposes proxy/API/metrics/panel internally and routes panel via Traefik. |
 | `16-mihomo.yml` | `mihomo` | `metacubex/mihomo:latest` | `traefik-proxy` without static IP | Optional by `ENABLE_MIHOMO`; routes dashboard/UI under `${URI_MIHOMO}`. |
 
 ## Runtime File Selection

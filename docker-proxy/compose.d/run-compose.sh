@@ -23,6 +23,7 @@ if [[ -n "${LOCK_FILE+set}" ]]; then
 fi
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-docker-proxy}"
+# Keep default 0 for safe CLI up (no surprise image churn). Installer sets PULL_BEFORE_UP=1.
 PULL_BEFORE_UP="${PULL_BEFORE_UP:-0}"
 PULL_ON_REBUILD="${PULL_ON_REBUILD:-1}"
 RETRY_COUNT="${RETRY_COUNT:-5}"
@@ -30,6 +31,24 @@ RETRY_DELAY="${RETRY_DELAY:-30}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-600}"
 RESTART_WITH_DEPS="${RESTART_WITH_DEPS:-0}"
 CLEAN_UNHEALTHY="${CLEAN_UNHEALTHY:-0}"
+# Parallelism scales with nproc (capped) so 2 vCPU hosts avoid Extracting/I/O thrash.
+compose_default_parallel_limit() {
+	local cpus limit
+	cpus=$(nproc 2>/dev/null || echo 2)
+	[[ "$cpus" =~ ^[0-9]+$ ]] || cpus=2
+	((cpus < 1)) && cpus=1
+	limit=$cpus
+	((limit < 2)) && limit=2
+	((limit > 6)) && limit=6
+	printf '%s\n' "$limit"
+}
+COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-$(compose_default_parallel_limit)}"
+# Pull can be slightly higher than up; hard cap 8.
+if [[ -z "${COMPOSE_PULL_PARALLEL_LIMIT:-}" ]]; then
+	COMPOSE_PULL_PARALLEL_LIMIT=$((COMPOSE_PARALLEL_LIMIT + 2))
+	((COMPOSE_PULL_PARALLEL_LIMIT > 8)) && COMPOSE_PULL_PARALLEL_LIMIT=8
+fi
+export COMPOSE_PARALLEL_LIMIT
 PROJECT_ROOT=
 
 ENV_ARGS=()
@@ -325,9 +344,14 @@ snapshot_images_state() {
 
 pull_images() {
 	local before after updated
-	log "Проверяем и скачиваем обновления образов"
+	local pull_limit="${COMPOSE_PULL_PARALLEL_LIMIT:-6}"
+	log "Проверяем и скачиваем обновления образов (COMPOSE_PARALLEL_LIMIT=${pull_limit})"
 	before="$(snapshot_images_state)"
-	run_compose pull
+	# Soft pull with capped parallelism so Extracting does not starve the later up/healthchecks.
+	# One slow/failed registry must not burn the whole up retry budget.
+	if ! COMPOSE_PARALLEL_LIMIT="$pull_limit" run_compose pull --ignore-pull-failures; then
+		log "WARN: compose pull reported failures; continuing with images already present"
+	fi
 	after="$(snapshot_images_state)"
 	updated=$(join -j1 <(printf '%s\n' "$before" | sort) <(printf '%s\n' "$after" | sort) | awk '$2 != $3 {print $1, $2, "→", $3}')
 	if [[ -n "$updated" ]]; then
@@ -421,8 +445,10 @@ maybe_ensure_telemt_geoip() {
 		return 0
 	}
 	# Non-blocking: compose up/restart must not wait on MMDB fetch.
+	# Close lock fd 9 in the child so a long GeoIP run cannot keep flock after
+	# this script returns (or after restart --logs replaces the shell).
 	log "Applying Telemt panel GeoIP sources in background (ensure-geoip.sh → $log_file)"
-	nohup bash "$script" >>"$log_file" 2>&1 </dev/null &
+	nohup bash "$script" >>"$log_file" 2>&1 </dev/null 9>&- &
 	disown $! 2>/dev/null || true
 }
 
@@ -444,6 +470,18 @@ run_restart() {
 	else
 		preflight_container_name_conflicts "${services[@]}"
 	fi
+	# --no-deps skips oneshot healers; telemt bind mounts often arrive as root/1001
+	# while the stack runs as 1000:1000 (geoip mkdir Permission denied).
+	if [[ " ${services[*]} " == *" telemt "* ]]; then
+		log "Healing Telemt bind-mount ownership (telemt-fix-perms)"
+		run_compose up -d --no-deps --force-recreate telemt-fix-perms \
+			|| log "WARN: telemt-fix-perms failed, continuing"
+	fi
+	if [[ " ${services[*]} " == *" lampac "* ]]; then
+		log "Healing Lampac bind-mount ownership (lampac-fix-perms)"
+		run_compose up -d --no-deps --force-recreate lampac-fix-perms \
+			|| log "WARN: lampac-fix-perms failed, continuing"
+	fi
 	for svc in "${services[@]}"; do
 		log "Перезапуск сервиса (rm --stop --force): $svc"
 		run_compose rm --stop --force "$svc" || log "WARN: Не удалось удалить контейнер $svc, продолжаем"
@@ -453,6 +491,8 @@ run_restart() {
 	maybe_ensure_telemt_geoip " ${services[*]} "
 	if ((follow_logs == 1)); then
 		log "Показываем логи сервиса ${services[-1]} (Ctrl+C для выхода)"
+		# Restart work is done; drop flock before replacing the shell with docker logs.
+		release_lock
 		exec docker logs -f "${services[-1]}"
 	fi
 }
@@ -500,6 +540,12 @@ acquire_lock() {
 		log "ERROR: Уже выполняется другой run-compose.sh (lock: $LOCK_FILE)"
 		exit 1
 	fi
+}
+
+# Drop exclusive flock. Safe to call when fd 9 was never opened.
+# The lock *file* may remain on disk (empty marker); only the flock matters.
+release_lock() {
+	exec 9>&- 2>/dev/null || true
 }
 
 main() {

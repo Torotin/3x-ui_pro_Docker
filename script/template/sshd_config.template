@@ -1,123 +1,60 @@
 # === Global SSH configuration ===
 
-# Disable printing the message of the day (motd) / Отключает отображение сообщения дня при входе
-PrintMotd no
-
-# Enable delayed compression (after authentication) / Включает сжатие трафика после успешной аутентификации
-Compression delayed
-
-# Use AUTH facility for syslog logging / Журналирование через системный лог AUTH
-SyslogFacility AUTH
-
-# Enforce strict file permissions for user SSH files / Строгая проверка прав доступа
-StrictModes yes
-
-# Limit authentication attempts / Ограничение попыток входа
-MaxAuthTries 3
-
-# Disable root login / Запрет входа под root
-PermitRootLogin no
-
-# Forbid logins with empty passwords / Запрет входа с пустыми паролями
-PermitEmptyPasswords no
-
-# Max keepalive count before disconnecting idle client / Кол-во keep-alive перед отключением
-ClientAliveCountMax 3
-
-# Keep-alive packet interval / Период keep-alive (сек)
-ClientAliveInterval 60
-
-# Use SSH protocol version 2 only / Только SSHv2
-Protocol 2
-
-# Skip reverse DNS lookups to speed up auth / Не выполняем rDNS для ускорения входа
-UseDNS no
-
-# Allow only specific user to log in / Разрешённый пользователь
-AllowUsers $USER_SSH
-
-# Set SFTP subsystem path / Подсистема SFTP
-Subsystem sftp internal-sftp
-
-# Explicit path to authorized keys / Явный путь к ключам
-AuthorizedKeysFile %h/.ssh/authorized_keys
-
-# Ignore rhosts files / Игнорировать rhosts
-IgnoreRhosts yes
-
-# Disable X11 forwarding / Запрет графического интерфейса
-X11Forwarding no
-
-# Limit data or time before rekeying session / Перегенерация ключей
-RekeyLimit 100M 1h
-
-# Disable host-based authentication / Запрет хостовой аутентификации
-HostbasedAuthentication no
-
-# Disable interactive keyboard authentication / Отключить клавиатурную аутентификацию
-KbdInteractiveAuthentication no
-
-# Enable/disable public key authentication / Публичный ключ
-PubkeyAuthentication $PUBKEY_AUTH
-
-# Disable TCP port forwarding globally / Запрет TCP перенаправления
-AllowTcpForwarding no
-
-# Disable Unix socket forwarding globally / Запрет UNIX-сокет перенаправления
-AllowStreamLocalForwarding no
-
-# Set login grace time before disconnect / Время ожидания аутентификации
-LoginGraceTime 15
-
-# SSH listening port / Порт SSH
 Port $PORT_REMOTE_SSH
+AddressFamily any
 
-# Disable creation of tunnels / Запрет туннелей
-PermitTunnel no
-
-# Enable PAM for authentication/session / Поддержка PAM
-UsePAM yes
-
-# Disallow gateway ports / Запрет удалённого bind
-GatewayPorts no
-
-# Limit simultaneous connections / Ограничение подключений
-MaxStartups 5:40:15
-
-# Limit session channels per connection / Ограничение сессий на подключение
-MaxSessions 10
-
-# Key exchange algorithms / Алгоритмы обмена ключами
-KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
-
-# Disable agent forwarding globally / Запрет ssh-agent
-AllowAgentForwarding no
-
-# Message Authentication Code algorithms / MAC
-MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha2-512
-
-# Accepted encryption ciphers / Шифры
-Ciphers chacha20-poly1305@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
-
-# Log level for SSH server / Уровень логов
+# Logging & Banner
+SyslogFacility AUTH
 LogLevel VERBOSE
-
-# Hide OS info in banner / Скрыть информацию об ОС в баннере
+PrintMotd no
 DebianBanner no
 
-# Accept environment variables / Переменные окружения
-AcceptEnv LANG LC_*
+# Authentication & Access Control
+PermitRootLogin no
+PermitEmptyPasswords no
+StrictModes yes
+MaxAuthTries 3
+MaxSessions 10
+LoginGraceTime 15
+UseDNS no
+UsePAM yes
 
-# Enable/disable password authentication / Разрешение пароля
+AllowUsers $USER_SSH
+AuthorizedKeysFile %h/.ssh/authorized_keys
+PubkeyAuthentication $PUBKEY_AUTH
 PasswordAuthentication $PASSWORD_AUTH
+AuthenticationMethods $SSH_AUTH_METHODS
+KbdInteractiveAuthentication no
+HostbasedAuthentication no
+IgnoreRhosts yes
+
+# Cryptography (Terrapin-safe AEAD only: no ChaCha20-Poly1305, no *-etm MACs)
+KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512,hmac-sha2-256
+RekeyLimit 100M 1h
+
+# Session & Network Restrictions
+ClientAliveInterval 60
+ClientAliveCountMax 3
+MaxStartups 5:40:15
+Compression delayed
+X11Forwarding no
+PermitTunnel no
+GatewayPorts no
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+AllowAgentForwarding no
+
+# Environment & Subsystems
+AcceptEnv LANG LC_*
+Subsystem sftp internal-sftp
 
 # Include additional config files after primary policy so first-value-wins directives above keep precedence.
-# Подключение доп. конфигураций после основной политики, чтобы параметры выше имели приоритет.
 Include /etc/ssh/sshd_config.d/*.conf
 
 # === Per-user overrides ===
+# TCP forwarding for the installer service user only (panel tunnels). Agent forwarding stays off.
 
-# Allow TCP forwarding only for $USER_SSH / Разрешить TCP перенаправление только $USER_SSH
 Match User $USER_SSH
-    AllowTcpForwarding yes
-    AllowAgentForwarding yes
+	AllowTcpForwarding yes
