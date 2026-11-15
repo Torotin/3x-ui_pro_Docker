@@ -228,6 +228,7 @@ wizard_whiptail_main_menu() {
 	wizard_ui_menu "$backtitle" "Choose an action" 18 \
 		a "auto — Full install (recommended)" \
 		t "toggles — Optional stack features" \
+		c "config — Edit installer variables" \
 		d "doctor — System / stack diagnostics" \
 		0 "${b0} dnscrypt — DNSCrypt system DNS" \
 		1 "${b1} apt — APT mirror and OS packages" \
@@ -382,6 +383,7 @@ install_wizard_print_menu() {
 	cat <<'MENU'
   a. auto      Full install (recommended path)
   t. toggles   Optional stack features
+  c. config    Edit installer variables
   d. doctor    System / stack diagnostics
 MENU
 	printf '\n── 1. Host & Security Preparation ────────\n'
@@ -397,7 +399,7 @@ MENU
 	wizard_print_menu_step compose '8. compose    Validate/start compose stack'
 	wizard_print_menu_step final '9. final      Render final summary'
 	printf '\n  x. Exit\n'
-	printf 'Keys: 0-9 step · a/t/d · names (apt, compose) · q quit\n'
+	printf 'Keys: 0-9 step · a/t/c/d · names (apt, compose) · q quit\n'
 }
 
 install_wizard_print_status() {
@@ -418,6 +420,7 @@ wizard_normalize_step() {
 	8) printf 'compose\n' ;;
 	9) printf 'final\n' ;;
 	t) printf 'toggles\n' ;;
+	c) printf 'config\n' ;;
 	a) printf 'auto\n' ;;
 	d) printf 'doctor\n' ;;
 	*) printf '%s\n' "$1" ;;
@@ -769,6 +772,10 @@ wizard_auto_install() {
 	WIZARD_LAST_STATUS="OK auto"
 }
 
+wizard_edit_config() {
+	WIZARD_LAST_STATUS="SKIPPED config"
+}
+
 wizard_dispatch_step() {
 	local input=$1
 	case "$input" in
@@ -827,6 +834,9 @@ wizard_dispatch_step() {
 		;;
 	toggles)
 		wizard_feature_toggles
+		;;
+	config)
+		wizard_edit_config
 		;;
 	auto)
 		wizard_auto_install

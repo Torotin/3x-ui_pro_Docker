@@ -1848,6 +1848,13 @@ test_wizard_doctor_from_menu() {
 	assert_contains "Last operation: OK doctor" "$tmpdir/stdout" "doctor success status"
 }
 
+test_wizard_config_menu_entry_exposed() {
+	make_fixture
+	printf 'x\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "c. config" "$tmpdir/stdout" "wizard must expose config quick action"
+	assert_contains "a/t/c/d" "$tmpdir/stdout" "keys hint must include c"
+}
+
 test_wizard_prompts_for_missing_user() {
 	make_fixture
 	unset USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
@@ -2137,6 +2144,7 @@ test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines
 test_wizard_confirms_apply_steps
 test_wizard_doctor_from_menu
+test_wizard_config_menu_entry_exposed
 test_wizard_prompts_for_missing_user
 test_wizard_auto_runs_chain_with_docker_force_prompt
 test_wizard_auto_yes_skips_start_but_asks_docker
