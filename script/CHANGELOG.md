@@ -1,5 +1,11 @@
 # Журнал изменений установщика
 
+## 0.7.9 - 2026-11-15
+
+### Added
+- Wizard: dark `NEWT_COLORS` theme for whiptail (honors preset env).
+- Wizard: Quick Action `c` / `config` to edit required `install.env` variables (dirty save like toggles).
+
 ## 0.7.8 - 2026-11-14
 
 - Wizard: hybrid whiptail + ANSI text UI, step badges, Quick Actions (`auto`/`toggles`/`doctor`).
