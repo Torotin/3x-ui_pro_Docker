@@ -1,5 +1,12 @@
 # Журнал изменений установщика
 
+## 0.7.9 - 2026-11-15
+
+- APT: flock fallback for dpkg/apt locks when `fuser` is missing; do not create absent lock files.
+- APT: never rewrite `security.ubuntu.com` when applying country/archive mirrors (classic + DEB822).
+- APT: `force-confdef`/`force-confold` on install/upgrade; Release-timed Ubuntu mirror pick with curl timeouts.
+- APT: Debian vs Ubuntu `unattended-upgrades` Allowed-Origins; drop duplicate real-path auto-install.
+
 ## 0.7.8 - 2026-11-14
 
 - Wizard: hybrid whiptail + ANSI text UI, step badges, Quick Actions (`auto`/`toggles`/`doctor`).

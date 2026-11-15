@@ -22,6 +22,28 @@ apt_os_id() {
 	printf '%s\n' "$id"
 }
 
+install_apt_lock_is_busy() {
+	local path=$1
+	if command -v fuser >/dev/null 2>&1; then
+		fuser "$path" >/dev/null 2>&1
+		return $?
+	fi
+	if command -v flock >/dev/null 2>&1; then
+		[[ -e "$path" ]] || return 1
+		if flock -n "$path" true; then
+			return 1
+		else
+			return 0
+		fi
+	fi
+	die "APT lock check needs fuser or flock"
+}
+
+install_apt_dpkg_force_opts() {
+	local -n _opts=$1
+	_opts+=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+}
+
 install_apt_required_packages() {
 	printf '%s\n' \
 		ca-certificates \
@@ -68,9 +90,11 @@ install_apt_command() {
 		run_cmd apt.mirror.check curl -fsSL "http://mirrors.ubuntu.com/$country.txt"
 		run_cmd apt.sources.backup cp /etc/apt/sources.list "$INSTALL_STATE_DIR/backups/sources.list"
 		install_apt_update_with_fallback ubuntu noble
-		run_cmd apt.install.deps apt-get install -y "${required_packages[@]}"
+		local -a dpkg_opts=()
+		install_apt_dpkg_force_opts dpkg_opts
+		run_cmd apt.install.deps apt-get install -y "${dpkg_opts[@]}" "${required_packages[@]}"
 		run_cmd apt.list.upgradable apt list --upgradable
-		run_cmd apt.upgrade apt-get upgrade -y -V
+		run_cmd apt.upgrade apt-get upgrade -y -V "${dpkg_opts[@]}"
 		run_cmd apt.autoremove apt-get autoremove -y
 		install_apt_enable_auto_updates
 		printf 'APT mirror check completed\nAPT package list updated\nAPT upgrade completed\n'
@@ -86,12 +110,14 @@ install_apt_command() {
 		printf 'APT mirror selection skipped for OS: %s\n' "$os_id"
 	fi
 	install_apt_update_with_fallback "$os_id" "$codename"
-	run_cmd apt.install.deps env DEBIAN_FRONTEND=noninteractive apt-get install -y "${required_packages[@]}" || die "failed to install required APT packages"
+	local -a dpkg_opts=()
+	install_apt_dpkg_force_opts dpkg_opts
+	run_cmd apt.install.deps env DEBIAN_FRONTEND=noninteractive apt-get install -y "${dpkg_opts[@]}" "${required_packages[@]}" || die "failed to install required APT packages"
 	local updates
 	updates=$(apt list --upgradable 2>/dev/null | grep -c "upgradable" || true)
 	printf 'Upgradable packages: %s\n' "$updates"
 	if ((updates > 0)); then
-		run_cmd apt.upgrade env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -V || die "APT upgrade failed"
+		run_cmd apt.upgrade env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -V "${dpkg_opts[@]}" || die "APT upgrade failed"
 		run_cmd apt.autoremove apt-get autoremove -y || die "APT autoremove failed"
 	else
 		printf 'No upgrades available; system is up to date\n'
@@ -142,7 +168,7 @@ install_apt_wait_for_locks() {
 	for ((i = 1; i <= attempts; i++)); do
 		local busy=0
 		for lock in "${locks[@]}"; do
-			if fuser "$lock" >/dev/null 2>&1; then
+			if install_apt_lock_is_busy "$lock"; then
 				busy=1
 				break
 			fi
@@ -155,9 +181,9 @@ install_apt_wait_for_locks() {
 }
 
 install_apt_pick_ubuntu_mirror() {
-	local codename=$1 limit="${APT_MIRROR_LIMIT:-8}" list_url="${APT_MIRROR_LIST_URL:-}"
+	local codename=$1 limit="${APT_MIRROR_LIMIT:-6}" list_url="${APT_MIRROR_LIST_URL:-}"
 	local sources="/etc/apt/sources.list" deb822="/etc/apt/sources.list.d/ubuntu.sources"
-	local best="" mirror release_url country
+	local best="" best_time="" mirror release_url country elapsed
 	country="${APT_COUNTRY:-$(install_apt_detect_country || true)}"
 	if [[ -z "$list_url" ]]; then
 		list_url=$(install_apt_country_mirror_list_url "$country")
@@ -166,36 +192,45 @@ install_apt_pick_ubuntu_mirror() {
 	while IFS= read -r mirror; do
 		[[ "$mirror" =~ ^https?:// ]] || continue
 		release_url="${mirror%/}/dists/$codename/Release"
-		if curl -ILfs --max-time 4 "$release_url" >/dev/null 2>&1; then
-			best="${mirror%/}/"
-			break
+		elapsed=$(curl -fsSL --connect-timeout 2 --max-time 4 \
+			-o /dev/null -w '%{time_total}' "$release_url" 2>/dev/null || true)
+		if [[ -n "$elapsed" && "$elapsed" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+			if [[ -z "$best" ]] || awk -v a="$elapsed" -v b="$best_time" 'BEGIN { exit (a < b) ? 0 : 1 }'; then
+				best="${mirror%/}/"
+				best_time="$elapsed"
+			fi
 		fi
 		((--limit <= 0)) && break
-	done < <(curl -fsSL "$list_url")
+	done < <(curl -fsSL --connect-timeout 3 --max-time 5 "$list_url" 2>/dev/null || true)
 	[[ -n "$best" ]] || {
 		printf 'No faster Ubuntu mirror selected; keeping current APT sources\n'
 		return 0
 	}
-	printf 'Selected Ubuntu mirror: %s\n' "$best"
+	printf 'Selected Ubuntu mirror: %s (%.3fs)\n' "$best" "$best_time"
 	install_apt_apply_ubuntu_mirror "$codename" "$best"
 }
 
 install_apt_apply_ubuntu_mirror() {
 	local codename=$1 mirror=$2
-	local sources="/etc/apt/sources.list" deb822="/etc/apt/sources.list.d/ubuntu.sources"
+	local sources="${APT_SOURCES_LIST:-/etc/apt/sources.list}"
+	local deb822="${APT_UBUNTU_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources}"
 	if [[ -f "$deb822" ]]; then
 		backup_file "$deb822"
 		local tmp
 		tmp=$(mktemp)
 		awk -v mirror="$mirror" '
-			/^URIs:/ {$0="URIs: " mirror}
-			{print}
+			/^URIs:/ {
+				if ($0 !~ /security\.ubuntu\.com/) {
+					$0 = "URIs: " mirror
+				}
+			}
+			{ print }
 		' "$deb822" >"$tmp"
 		run_cmd apt.sources.apply install -m 0644 "$tmp" "$deb822"
 		rm -f "$tmp"
 	elif [[ -f "$sources" ]]; then
 		backup_file "$sources"
-		run_cmd apt.sources.apply sed -i -E "s|https?://[^ ]*/ubuntu/?|$mirror|g" "$sources"
+		run_cmd apt.sources.apply sed -i -E "/security\\.ubuntu\\.com/! s|https?://[^ ]*/ubuntu/?|${mirror}|g" "$sources"
 	else
 		local tmp
 		tmp=$(mktemp)
@@ -203,7 +238,7 @@ install_apt_apply_ubuntu_mirror() {
 deb ${mirror} ${codename} main restricted universe multiverse
 deb ${mirror} ${codename}-updates main restricted universe multiverse
 deb ${mirror} ${codename}-backports main restricted universe multiverse
-deb ${mirror} ${codename}-security main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu ${codename}-security main restricted universe multiverse
 EOF
 		run_cmd apt.sources.apply install -m 0644 "$tmp" "$sources"
 		rm -f "$tmp"
@@ -243,12 +278,10 @@ install_apt_enable_auto_updates() {
 		install_apt_unattended_dry_run
 		return 0
 	fi
-	run_cmd apt.auto.install env DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades
 	install_apt_write_auto_upgrades "$mode"
 	run_cmd apt.timer.enable systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
-	if install_apt_wait_for_locks; then
-		install_apt_unattended_dry_run
-	fi
+	install_apt_wait_for_locks
+	install_apt_unattended_dry_run
 }
 
 install_apt_unattended_dry_run() {
@@ -265,7 +298,29 @@ install_apt_unattended_dry_run() {
 }
 
 install_apt_write_auto_upgrades() {
-	local mode=$1 auto_file=/etc/apt/apt.conf.d/20auto-upgrades unattended_file=/etc/apt/apt.conf.d/50unattended-upgrades tmp
+	local mode=$1
+	local auto_file=${APT_AUTO_UPGRADES_FILE:-/etc/apt/apt.conf.d/20auto-upgrades}
+	local unattended_file=${APT_UNATTENDED_FILE:-/etc/apt/apt.conf.d/50unattended-upgrades}
+	local os_id origins tmp
+	os_id=$(apt_os_id)
+	origins=
+	if [[ "$os_id" == "debian" ]]; then
+		origins+='    "origin=Debian,codename=${distro_codename},label=Debian";'
+		origins+=$'\n'
+		origins+='    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";'
+		origins+=$'\n'
+		if [[ "$mode" == "all" ]]; then
+			origins+='    "origin=Debian,codename=${distro_codename}-updates,label=Debian";'
+			origins+=$'\n'
+		fi
+	else
+		origins+='    "${distro_id}:${distro_codename}-security";'
+		origins+=$'\n'
+		if [[ "$mode" == "all" ]]; then
+			origins+='    "${distro_id}:${distro_codename}-updates";'
+			origins+=$'\n'
+		fi
+	fi
 	backup_file "$auto_file"
 	tmp=$(mktemp)
 	cat >"$tmp" <<'EOF'
@@ -280,9 +335,7 @@ EOF
 	cat >"$tmp" <<EOF
 // Managed by install.sh
 Unattended-Upgrade::Allowed-Origins {
-    "\${distro_id}:\${distro_codename}-security";
-$([[ "$mode" == "all" ]] && printf '    "${distro_id}:${distro_codename}-updates";\n')
-};
+${origins}};
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 Unattended-Upgrade::Automatic-Reboot "false";
