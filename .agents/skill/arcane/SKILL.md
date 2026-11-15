@@ -30,7 +30,7 @@ Own:
 - `docker-proxy/compose.d/07-arcane.yml`
 - `docker-proxy/traefik/dynamic/arcane.yml`
 - Arcane router priorities, root-path exceptions, and response-body rewrite middleware
-- `arcane-data` volume expectations and `PROJECTS_DIRECTORY=/opt/docker-proxy`
+- `arcane-data` volume expectations and `ARCANE_PROJECTS_DIRECTORY=/opt/docker-proxy`
 
 Coordinate with `traefik` for shared file-provider/plugin behavior and with `compose-stack` for startup ordering.
 
@@ -53,7 +53,7 @@ Root `/api` is a conflict zone: Homepage selected widget/NextAuth APIs run at pr
 
 ## Product Routing
 
-- `APP_URL=https://${WEBDOMAIN}/${URI_ARCANE}` and `TRUSTED_PROXIES` make Arcane generate external links and trust Traefik/Docker proxy headers.
+- `ARCANE_APP_URL=https://arcane.${WEBDOMAIN}` and `ARCANE_TRUSTED_PROXIES` make Arcane generate external links and trust Traefik/Docker proxy headers (Arcane 3.x `ARCANE_` prefix required).
 - Arcane manages Docker through `/var/run/docker.sock` and may manage project files through `/opt/docker-proxy`; treat both mounts as privileged.
 - Upstream is not subpath-native: keep prefixed UI, root asset/API exceptions, and file-provider body/JS rewrites together.
 - `docker-proxy/traefik/dynamic/arcane.yml` rewrites manifest scope/start URL, SvelteKit base assumptions, login redirects, and SPA root navigations.
@@ -63,7 +63,7 @@ Root `/api` is a conflict zone: Homepage selected widget/NextAuth APIs run at pr
 ## Core Rules
 
 - Keep Arcane on `172.18.0.7` and `172.19.0.7`.
-- Keep `APP_URL=https://${WEBDOMAIN}/${URI_ARCANE}` and `TRUSTED_PROXIES` aligned with the project Docker networks.
+- Keep `ARCANE_APP_URL` / `ARCANE_TRUSTED_PROXIES` / `ARCANE_ENCRYPTION_KEY` / `ARCANE_PROJECTS_DIRECTORY` aligned with admin Host and Docker networks. Legacy unprefixed names abort startup on 3.x.
 - Arcane needs `/var/run/docker.sock` and `/opt/docker-proxy` mounts; treat changes here as privileged operations.
 - Arcane upstream has no true subpath support. The project uses a prefixed UI route plus root exceptions for `/_app`, `/api`, PWA helpers, images, passkey, and SPA redirects.
 - Historical path-prefix notes under `docs/superpowers/` are context only if present; day-to-day ops must follow the live compose and dynamic Traefik files.

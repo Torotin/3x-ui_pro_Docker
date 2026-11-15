@@ -398,7 +398,9 @@ BASH
 }
 
 test_compose_fragments_do_not_hardcode_project_root() {
-	if grep -R --line-number --fixed-strings "/opt/docker-proxy" "$ROOT_DIR/docker-proxy/compose.d"; then
+	# Arcane Projects needs the same absolute host path inside the container (07-arcane.yml).
+	if grep -R --line-number --fixed-strings "/opt/docker-proxy" "$ROOT_DIR/docker-proxy/compose.d" \
+		| grep -v '07-arcane\.yml:'; then
 		fail "compose fragments must use paths relative to compose.d instead of /opt/docker-proxy"
 	fi
 }

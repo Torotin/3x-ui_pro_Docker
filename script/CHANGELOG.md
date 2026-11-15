@@ -2,6 +2,7 @@
 
 ## 0.7.9 - 2026-11-15
 
+- Arcane 3.x: compose env prefix `ARCANE_APP_URL` / `ARCANE_ENCRYPTION_KEY` / `ARCANE_PROJECTS_DIRECTORY` / `ARCANE_TRUSTED_PROXIES` (legacy names abort startup).
 - SSH: Terrapin harden — `Ciphers` AES-GCM only; `MACs` non-ETM `hmac-sha2-512/256` (drop ChaCha20-Poly1305, `*-etm`, CTR).
 - Network sysctl: `tcp_mtu_probing=2` (active Path MTU); `disable_ipv6=__IPV6_DISABLE__` (1 on `HOST_IP_MODE=ipv4`, opt-out `INSTALL_KEEP_IPV6=1`).
 - APT: country detect for mirror pick uses `curl -4` only (avoid IPv6 geo mismatch).

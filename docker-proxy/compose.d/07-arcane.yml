@@ -11,12 +11,14 @@ services:
     env_file:
       - ./.env
     environment:
-      - APP_URL=https://arcane.${WEBDOMAIN}
+      # Arcane 3.x: all product env vars need the ARCANE_ prefix (legacy names abort startup).
+      - ARCANE_APP_URL=https://arcane.${WEBDOMAIN}
       - PUID=1000
       - PGID=1000
-      - ENCRYPTION_KEY=${ARCANE_ENCRYPTION_KEY}
-      - PROJECTS_DIRECTORY=/opt/docker-proxy
-      - TRUSTED_PROXIES=172.18.0.0/16,fd00:dead:beef:12::/64,fd00:dead:beef:13::/64
+      - ARCANE_ENCRYPTION_KEY=${ARCANE_ENCRYPTION_KEY}
+      # Same absolute path host↔container so Compose relative mounts resolve for Projects.
+      - ARCANE_PROJECTS_DIRECTORY=/opt/docker-proxy
+      - ARCANE_TRUSTED_PROXIES=172.18.0.0/16,fd00:dead:beef:12::/64,fd00:dead:beef:13::/64
     healthcheck:
       test: ["CMD", "./arcane", "health", "--timeout", "2s"]
       interval: 10s
