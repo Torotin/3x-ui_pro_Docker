@@ -805,6 +805,75 @@ wizard_config_prompt_text() {
 	wizard_config_assign "$var" "$value"
 }
 
+wizard_edit_config_whiptail() {
+	local backtitle choice var prompt default raw dirty=0
+	install_load_state_env
+	backtitle=$(wizard_whiptail_backtitle)
+	while true; do
+		choice=$(wizard_ui_menu "$backtitle" "Installer variables" 10 \
+			1 "WEBDOMAIN — $(wizard_config_display_value WEBDOMAIN)" \
+			2 "USER_SSH — $(wizard_config_display_value USER_SSH)" \
+			3 "PASS_SSH — $(wizard_config_display_value PASS_SSH)" \
+			4 "USER_WEB — $(wizard_config_display_value USER_WEB)" \
+			5 "PASS_WEB — $(wizard_config_display_value PASS_WEB)" \
+			6 "SSH_PBK — $(wizard_config_display_value SSH_PBK)" \
+			a "Save + render env" \
+			x "Back")
+		case "$choice" in
+		1) var=WEBDOMAIN ;;
+		2) var=USER_SSH ;;
+		3) var=PASS_SSH ;;
+		4) var=USER_WEB ;;
+		5) var=PASS_WEB ;;
+		6) var=SSH_PBK ;;
+		a)
+			if ! wizard_config_persist; then
+				continue
+			fi
+			dirty=0
+			if wizard_confirm "Render env files now?"; then
+				wizard_execute_step env dispatch_step env
+			fi
+			return 0
+			;;
+		x)
+			if ((dirty == 0)); then
+				WIZARD_LAST_STATUS="SKIPPED config"
+				return 0
+			fi
+			if wizard_confirm "Save changes?"; then
+				wizard_config_persist || true
+			fi
+			return 0
+			;;
+		*)
+			continue
+			;;
+		esac
+
+		prompt="$var (empty=keep"
+		wizard_config_is_clearable "$var" && prompt+=", -=clear"
+		prompt+="):"
+		if wizard_config_is_secret "$var"; then
+			default=
+		else
+			default=${!var-}
+		fi
+		if ! raw=$(wizard_ui_input "$prompt" "$default"); then
+			continue
+		fi
+		if [[ -z "$raw" ]]; then
+			continue
+		fi
+		if [[ "$raw" == "${!var-}" ]] && ! wizard_config_is_secret "$var"; then
+			continue
+		fi
+		if wizard_config_assign "$var" "$raw"; then
+			dirty=1
+		fi
+	done
+}
+
 wizard_edit_config_text() {
 	local input dirty=0
 	install_load_state_env
@@ -915,6 +984,10 @@ wizard_auto_install() {
 }
 
 wizard_edit_config() {
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_edit_config_whiptail
+		return 0
+	fi
 	wizard_edit_config_text
 }
 
