@@ -357,12 +357,21 @@ dnscrypt_fetch_archive() {
 	fi
 }
 
+# Idempotent temp-dir cleanup for dnscrypt_install_binary (safe on EXIT + success).
+dnscrypt_cleanup_tmpdir() {
+	if [[ -n "${DNSCRYPT_TMP_WORKDIR:-}" ]]; then
+		rm -rf -- "$DNSCRYPT_TMP_WORKDIR"
+	fi
+	DNSCRYPT_TMP_WORKDIR=""
+}
+
 dnscrypt_install_binary() {
 	local workdir
 	printf '[+] Fetching dnscrypt-proxy %s (%s)\n' "$DNSCRYPT_VERSION" "$DNSCRYPT_ARCHIVE_ARCH"
 	workdir="$(mktemp -d /tmp/dnscrypt-proxy-install.XXXXXX)"
-	# shellcheck disable=SC2064
-	trap "rm -rf -- '$workdir'" RETURN
+	DNSCRYPT_TMP_WORKDIR=$workdir
+	# die()/exit skip RETURN traps; chain EXIT so workdir is removed then installer cleanup runs.
+	trap 'dnscrypt_cleanup_tmpdir; install_exit_cleanup' EXIT
 
 	dnscrypt_fetch_archive "$workdir/$DNSCRYPT_ARCHIVE"
 	tar -xzf "$workdir/$DNSCRYPT_ARCHIVE" -C "$workdir" || die "Failed to extract $DNSCRYPT_ARCHIVE (corrupt download?)"
@@ -386,8 +395,8 @@ dnscrypt_install_binary() {
 		"$DNSCRYPT_INSTALL_DIR"/example-* \
 		"$DNSCRYPT_INSTALL_DIR/localhost.pem" \
 		"$DNSCRYPT_INSTALL_DIR/LICENSE"
-	trap - RETURN
-	rm -rf -- "$workdir"
+	dnscrypt_cleanup_tmpdir
+	trap install_exit_cleanup EXIT
 }
 
 dnscrypt_detect_connectivity() {
@@ -849,7 +858,7 @@ netprobe_timeout = 60
 ## On other operating systems, the connection will be initialized
 ## but nothing will be sent at all.
 
-netprobe_address = '9.9.9.9:53'
+netprobe_address = '9.9.9.11:53'
 
 
 ## Offline mode - Do not use any remote encrypted servers.
@@ -1555,7 +1564,7 @@ EOF
 	rm -f -- "$resolv"
 	printf '%s\n' "$DNSCRYPT_TEMP_RESOLV_CONF_CONTENT" >"$resolv"
 
-	if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+	if systemctl cat systemd-resolved.service >/dev/null 2>&1; then
 		systemctl restart systemd-resolved || true
 	fi
 }
@@ -1624,7 +1633,21 @@ dnscrypt_lock_resolv() {
 	chattr -i "$resolv" 2>/dev/null || true
 	rm -f -- "$resolv"
 	printf '%s\n' "$DNSCRYPT_RESOLV_CONF_CONTENT" >"$resolv"
-	chattr +i "$resolv"
+	# CAP_LINUX_IMMUTABLE / some FS (LXC, OpenVZ, tmpfs) may reject immutable; do not abort install.
+	chattr +i "$resolv" 2>/dev/null || printf '[!] Warning: could not set immutable flag on %s\n' "$resolv" >&2
+}
+
+# True when short hostname is mapped on loopback in hosts (comments ignored).
+dnscrypt_hosts_has_local_entry() {
+	local hosts=$1 short=$2
+	[[ -r "$hosts" ]] && awk -v host="$short" '
+		BEGIN { found=0 }
+		/^[[:space:]]*#/ { next }
+		$1 == "127.0.0.1" || $1 == "127.0.1.1" {
+			for (i = 2; i <= NF; i++) if ($i == host) { found=1; exit }
+		}
+		END { exit !found }
+	' "$hosts"
 }
 
 # With block_unqualified=true, short hostnames never resolve via DNS.
@@ -1642,7 +1665,7 @@ dnscrypt_ensure_local_hostname() {
 		fqdn=""
 	fi
 
-	if [[ -r "$hosts" ]] && grep -Eq "[[:space:]]${short}([[:space:]]|$)" "$hosts"; then
+	if dnscrypt_hosts_has_local_entry "$hosts" "$short"; then
 		printf '[+] Local hostname already present in %s (%s)\n' "$hosts" "$short"
 		return 0
 	fi
@@ -1718,15 +1741,15 @@ dnscrypt_print_summary() {
 
 	if ((DNSCRYPT_HAS_IPV4 == 1)); then
 		printf '\n[+] DIG test (direct @127.0.0.1)\n'
-		dig +time=5 +tries=2 google.com @127.0.0.1 || true
+		dig +time=5 +tries=2 example.com @127.0.0.1 || true
 	fi
 	if ((DNSCRYPT_HAS_IPV6 == 1)); then
 		printf '\n[+] DIG test (direct @::1)\n'
-		dig +time=5 +tries=2 google.com @::1 || true
+		dig +time=5 +tries=2 example.com @::1 || true
 	fi
 
 	printf '\n[+] DIG test (system resolver)\n'
-	dig +time=5 +tries=2 google.com || true
+	dig +time=5 +tries=2 example.com || true
 
 	printf '\n[+] Current DNS\n'
 	ls -la "$DNSCRYPT_RESOLV_CONF" || true
@@ -1782,7 +1805,7 @@ dnscrypt_run_install() {
 		systemctl disable dnscrypt-proxy 2>/dev/null || true
 		rm -f -- "$DNSCRYPT_SERVICE_FILE"
 		pkill -x dnscrypt-proxy 2>/dev/null || true
-		systemctl daemon-reload || true
+		systemctl daemon-reload 2>/dev/null || true
 		dnscrypt_install_binary
 		;;
 	upgrade)
@@ -1906,7 +1929,7 @@ install_doctor_check_dnscrypt() {
 		short_host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
 		short_host="${short_host%%.*}"
 		if [[ -n "$short_host" && "$short_host" != "localhost" ]]; then
-			if [[ -r "$hosts_file" ]] && grep -Eq "[[:space:]]${short_host}([[:space:]]|$)" "$hosts_file"; then
+			if dnscrypt_hosts_has_local_entry "$hosts_file" "$short_host"; then
 				doctor_ok_detail "local hostname mapped in hosts ($short_host)"
 			elif getent hosts "$short_host" >/dev/null 2>&1; then
 				doctor_ok_detail "local hostname resolves ($short_host)"
@@ -1948,7 +1971,7 @@ uninstall_purge_dnscrypt() {
 	run_cmd dnscrypt.purge.resolv bash -c "printf '%s\\n' 'nameserver 9.9.9.9' 'nameserver 1.1.1.1' 'nameserver 2620:fe::fe' 'nameserver 2606:4700:4700::1111' 'options edns0' >'$resolv_file'"
 	run_cmd dnscrypt.purge.dir rm -rf -- "$DNSCRYPT_INSTALL_DIR"
 	run_cmd dnscrypt.purge.reload systemctl daemon-reload || true
-	if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+	if systemctl cat systemd-resolved.service >/dev/null 2>&1; then
 		run_cmd dnscrypt.purge.resolved systemctl restart systemd-resolved || true
 	fi
 }

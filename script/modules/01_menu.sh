@@ -145,10 +145,18 @@ wizard_ui_input() {
 
 wizard_ui_menu() {
 	local result rc
+	local -a opts=()
+	local -a items=("${@:4}")
+	# Optional --notags after list-height: hide tag column when the hotkey
+	# character is already the first glyph of each item (avoids "0 0 …").
+	if [[ "${items[0]:-}" == "--notags" ]]; then
+		opts+=(--notags)
+		items=("${items[@]:1}")
+	fi
 	wizard_ui_size
 	set +e
-	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" --menu "$2" \
-		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${@:4}" \
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" "${opts[@]}" --menu "$2" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${items[@]}" \
 		3>&1 1>&2 2>&3)
 	rc=$?
 	set -e
@@ -226,9 +234,9 @@ wizard_whiptail_backtitle() {
 }
 
 wizard_whiptail_main_menu() {
-	# Display order is sequential 0-9 (keys match on-screen position). Digits are
-	# repeated at the start of each item so newt/whiptail hotkeys react to 0-9
-	# (item text hotkey is the first character; tags alone do not bind digits).
+	# Sequential 0-9 keys match on-screen order. Newt binds the first character
+	# of the *item* text (tags alone do not bind digits), so each item starts
+	# with its key. --notags hides the tag column to avoid "0 0 …" duplication.
 	local backtitle b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
 	backtitle=$(wizard_whiptail_backtitle)
 	b0=$(wizard_step_badge_whiptail dnscrypt)
@@ -241,22 +249,22 @@ wizard_whiptail_main_menu() {
 	b7=$(wizard_step_badge_whiptail docker)
 	b8=$(wizard_step_badge_whiptail compose)
 	b9=$(wizard_step_badge_whiptail final)
-	wizard_ui_menu "$backtitle" "Choose an action" 18 \
-		a "auto — Full install (recommended)" \
-		t "toggles — Optional stack features" \
-		c "config — Edit installer variables" \
-		d "doctor — System / stack diagnostics" \
-		0 "0 ${b0} dnscrypt — DNSCrypt system DNS" \
-		1 "1 ${b1} apt — APT mirror and OS packages" \
-		2 "2 ${b2} user — Service user" \
-		3 "3 ${b3} ssh — SSH policy" \
-		4 "4 ${b4} firewall — Firewall policy" \
-		5 "5 ${b5} network — Network tuning" \
-		6 "6 ${b6} env — Render env files" \
-		7 "7 ${b7} docker — Docker (destructive)" \
-		8 "8 ${b8} compose — Validate/start stack" \
-		9 "9 ${b9} final — Final summary" \
-		x "Exit"
+	wizard_ui_menu "$backtitle" "Choose an action" 18 --notags \
+		a "a  auto — Full install (recommended)" \
+		t "t  toggles — Optional stack features" \
+		c "c  config — Edit installer variables" \
+		d "d  doctor — System / stack diagnostics" \
+		0 "0  ${b0} dnscrypt — DNSCrypt system DNS" \
+		1 "1  ${b1} apt — APT mirror and OS packages" \
+		2 "2  ${b2} user — Service user" \
+		3 "3  ${b3} ssh — SSH policy" \
+		4 "4  ${b4} firewall — Firewall policy" \
+		5 "5  ${b5} network — Network tuning" \
+		6 "6  ${b6} env — Render env files" \
+		7 "7  ${b7} docker — Docker (destructive)" \
+		8 "8  ${b8} compose — Validate/start stack" \
+		9 "9  ${b9} final — Final summary" \
+		x "x  Exit"
 }
 
 wizard_feature_toggles_whiptail() {

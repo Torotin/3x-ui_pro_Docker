@@ -850,7 +850,7 @@ test_ip_probe_ipv4_only_leaves_ipv6_empty() {
 	[[ "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] || fail "PUBLIC_IPV6 must not equal PUBLIC_IPV4"
 }
 
-test_ip_probe_clears_stale_ipv6_when_unreachable() {
+test_ip_probe_keeps_valid_preset_ipv6_when_probe_fails() {
 	make_fixture
 	export PUBLIC_IPV4=198.51.100.10
 	export PUBLIC_IPV6=2001:db8:dead:beef::1
@@ -863,8 +863,61 @@ test_ip_probe_clears_stale_ipv6_when_unreachable() {
 	# shellcheck source=/dev/null
 	source "$ROOT_DIR/script/modules/lib_ip.sh"
 	ip_probe_resolve_host_mode
-	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "stale PUBLIC_IPV6 must downgrade to ipv4, got $HOST_IP_MODE"
-	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "stale PUBLIC_IPV6 must be cleared, got $PUBLIC_IPV6"
+	[[ "$HOST_IP_MODE" == "dual" ]] || fail "valid preset PUBLIC_IPV6 must keep dual when probe fails, got $HOST_IP_MODE"
+	[[ "$PUBLIC_IPV6" == "2001:db8:dead:beef::1" ]] || fail "valid preset PUBLIC_IPV6 must be kept, got $PUBLIC_IPV6"
+}
+
+test_ip_probe_clears_invalid_or_poisoned_preset_ipv6() {
+	make_fixture
+	export PUBLIC_IPV4=198.51.100.10
+	export PUBLIC_IPV6=198.51.100.10
+	unset HOST_IP_MODE
+	export INSTALL_MOCK=1
+	export INSTALL_MOCK_IP_PROBE_IPV4=1
+	export INSTALL_MOCK_IP_PROBE_IPV6=0
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_resolve_host_mode
+	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "poisoned PUBLIC_IPV6 must downgrade to ipv4, got $HOST_IP_MODE"
+	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "poisoned PUBLIC_IPV6 must be cleared, got $PUBLIC_IPV6"
+
+	export PUBLIC_IPV6='{"error":"rate limit"}'
+	unset HOST_IP_MODE
+	ip_probe_resolve_host_mode
+	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "junk PUBLIC_IPV6 must downgrade to ipv4, got $HOST_IP_MODE"
+	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "junk PUBLIC_IPV6 must be cleared, got $PUBLIC_IPV6"
+}
+
+test_ip_probe_rejects_invalid_preset_ipv4_and_reprobes() {
+	make_fixture
+	export PUBLIC_IPV4='not-an-ip'
+	unset PUBLIC_IPV6 HOST_IP_MODE
+	export INSTALL_MOCK=1
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_resolve_host_mode
+	[[ "$PUBLIC_IPV4" == "198.51.100.10" ]] || fail "invalid PUBLIC_IPV4 must be replaced by probe, got $PUBLIC_IPV4"
+	[[ "$HOST_IP_MODE" == "dual" ]] || fail "expected dual after re-probe, got $HOST_IP_MODE"
+}
+
+test_ip_probe_validators_reject_html_and_accept_hex_v6() {
+	make_fixture
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_is_valid_ipv4 198.51.100.10 || fail "valid ipv4 rejected"
+	if ip_probe_is_valid_ipv4 '198.51.100'; then fail "incomplete ipv4 accepted"; fi
+	ip_probe_is_valid_ipv6 '2001:db8::10' || fail "valid ipv6 rejected"
+	if ip_probe_is_valid_ipv6 '{"error":"rate limit"}'; then fail "JSON with colon accepted as ipv6"; fi
+	if ip_probe_is_valid_ipv6 'deadbeef'; then fail "hex without colon accepted as ipv6"; fi
+	if ip_probe_is_valid_ipv6 '2001:db8::10' && ! ip_probe_is_valid_ipv4 'not-an-ip'; then
+		:
+	else
+		fail "validators smoke combination failed"
+	fi
 }
 
 test_env_detects_public_ips_when_missing() {
@@ -1560,6 +1613,32 @@ test_wizard_whiptail_sets_dark_newt_colors_when_unset() {
 	[[ "$NEWT_COLORS" == "custom=white,red" ]] || fail "preset NEWT_COLORS must not be overwritten"
 }
 
+test_wizard_whiptail_main_menu_uses_notags_and_key_prefixes() {
+	make_fixture
+	# shellcheck source=script/modules/01_menu.sh
+	source "$ROOT_DIR/script/modules/01_menu.sh"
+	wizard_step_state_get() { printf 'PENDING\n'; }
+	local captured=$tmpdir/whiptail.args
+	whiptail() {
+		printf '%s\n' "$@" >"$captured"
+		# Emit selected tag on the redirected stdout path used by wizard_ui_menu.
+		printf 'x\n' >&2
+		return 1
+	}
+	export -f whiptail
+	WIZARD_UI_RESOLVED=whiptail
+	WIZARD_LAST_STATUS="No operation yet"
+	wizard_whiptail_main_menu >/dev/null || true
+	[[ -s "$captured" ]] || fail "whiptail must be invoked for main menu"
+	assert_contains "--notags" "$captured" "main menu must hide tag column to avoid duplicated keys"
+	grep -Fq -- '0  [ ] dnscrypt — DNSCrypt system DNS' "$captured" \
+		|| fail "digit items must start with key+badge once (not '0 0 …')"
+	grep -Fq -- 'a  auto — Full install (recommended)' "$captured" \
+		|| fail "letter items must carry their hotkey prefix when --notags is set"
+	# Tag tokens remain for return values, but item text must not repeat as "0 0".
+	! grep -Fq -- '0 0 ' "$captured" || fail "item text must not duplicate the digit tag"
+}
+
 test_wizard_removes_html_and_shows_last_status() {
 	make_fixture
 	printf '6\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
@@ -1738,7 +1817,8 @@ test_dnscrypt_mock_install_logs_intent_without_host_mutation() {
 test_dnscrypt_ensure_local_hostname_writes_debian_hosts_line() {
 	make_fixture
 	local hosts="$tmpdir/hosts"
-	printf '127.0.0.1\tlocalhost\n' >"$hosts"
+	# Comment mentioning the short name must NOT count as a mapping.
+	printf '# Hostname: cyberdock-doarc\n127.0.0.1\tlocalhost\n' >"$hosts"
 	export INSTALL_MOCK=1
 	export DNSCRYPT_HOSTS_FILE="$hosts"
 	# shellcheck source=/dev/null
@@ -1753,14 +1833,18 @@ test_dnscrypt_ensure_local_hostname_writes_debian_hosts_line() {
 		*) printf 'cyberdock-doarc\n' ;;
 		esac
 	}
+	dnscrypt_hosts_has_local_entry "$hosts" cyberdock-doarc \
+		&& fail "helper must ignore comment-only hostname mentions"
 	dnscrypt_ensure_local_hostname >/dev/null
 	grep -Eq '^127\.0\.1\.1[[:space:]]+cyberdock-doarc([[:space:]]|$)' "$hosts" \
-		|| fail "ensure_local_hostname must append 127.0.1.1 cyberdock-doarc"
+		|| fail "ensure_local_hostname must append 127.0.1.1 cyberdock-doarc despite comment"
+	dnscrypt_hosts_has_local_entry "$hosts" cyberdock-doarc \
+		|| fail "helper must see loopback mapping after ensure"
 	# Idempotent: second call must not duplicate.
 	dnscrypt_ensure_local_hostname >/dev/null
 	local count
-	count="$(grep -cE '[[:space:]]cyberdock-doarc([[:space:]]|$)' "$hosts" || true)"
-	[[ "$count" == "1" ]] || fail "ensure_local_hostname must be idempotent (got $count entries)"
+	count="$(grep -cE '^127\.0\.[01]\.1[[:space:]]+.*[[:space:]]cyberdock-doarc([[:space:]]|$)|^127\.0\.[01]\.1[[:space:]]+cyberdock-doarc([[:space:]]|$)' "$hosts" || true)"
+	[[ "$count" == "1" ]] || fail "ensure_local_hostname must be idempotent (got $count loopback entries)"
 }
 
 test_dnscrypt_forwards_force_flag() {
@@ -2240,7 +2324,10 @@ test_env_writes_host_ip_mode_dual
 test_env_ipv4_only_does_not_copy_v4_into_v6
 test_ip_probe_sets_dual_mode_in_mock
 test_ip_probe_ipv4_only_leaves_ipv6_empty
-test_ip_probe_clears_stale_ipv6_when_unreachable
+test_ip_probe_keeps_valid_preset_ipv6_when_probe_fails
+test_ip_probe_clears_invalid_or_poisoned_preset_ipv6
+test_ip_probe_rejects_invalid_preset_ipv4_and_reprobes
+test_ip_probe_validators_reject_html_and_accept_hex_v6
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels
@@ -2287,6 +2374,7 @@ test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_toggles_optional_feature_flags_and_renders_env
 test_wizard_whiptail_sets_dark_newt_colors_when_unset
+test_wizard_whiptail_main_menu_uses_notags_and_key_prefixes
 test_wizard_toggle_exit_does_not_persist_changes
 test_wizard_toggle_dirty_exit_yes_saves_without_env
 test_wizard_removes_html_and_shows_last_status

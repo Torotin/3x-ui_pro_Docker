@@ -9,10 +9,13 @@
 - Wizard: dark `NEWT_COLORS` theme for whiptail (honors preset env).
 - Wizard: Quick Action `c` / `config` to edit required `install.env` variables (dirty save like toggles).
 - Wizard: sequential menu keys 0–9 by display order; digit hotkeys + colored OK/FAIL badges in whiptail.
+- Wizard: whiptail main menu uses `--notags` + key-prefixed items (fixes duplicated `0 0` / `1 1` labels).
 - SSH: rewrite `ssh.socket` ListenStream to `PORT_REMOTE_SSH` (`zz-3xui-port.conf`) so Port= in sshd_config is not ignored under socket activation.
 - SSH: harden `sshd_config.template` (drop deprecated `Protocol 2`, AES-GCM + ETM-only MACs, fixed DH groups, `AuthenticationMethods`, no agent forwarding in Match); refuse dual-auth lockout before apply.
 - User aliases: fix `lfsr`, portable `ping`/`public-ip`, drop fragile `fcat`; add `cdproxy` / installer / compose helpers.
 - Network sysctl: fix `icmp_ratelimit`, soften SYN/MTU probing, add send_redirects/IPv6 harden + ephemeral ports; ensure `nf_conntrack` via modules-load before apply.
+- DNSCrypt: EXIT-safe temp cleanup, shared loopback hosts helper (ensure + doctor), soft `chattr +i`, `systemctl cat` for resolved, netprobe/bootstrap align, summary dig `example.com`.
+- IP probe: validate PUBLIC_IPV4/6 presets, stricter IPv6 fetch chars, prefer `up -deprecated` global addrs; keep valid preset v6 across probe timeouts.
 
 ## 0.7.8 - 2026-11-14
 
