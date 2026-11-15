@@ -6,6 +6,8 @@
 - APT: never rewrite `security.ubuntu.com` when applying country/archive mirrors (classic + DEB822).
 - APT: `force-confdef`/`force-confold` on install/upgrade; Release-timed Ubuntu mirror pick with curl timeouts.
 - APT: Debian vs Ubuntu `unattended-upgrades` Allowed-Origins; drop duplicate real-path auto-install.
+- Wizard: dark `NEWT_COLORS` theme for whiptail (honors preset env).
+- Wizard: Quick Action `c` / `config` to edit required `install.env` variables (dirty save like toggles).
 
 ## 0.7.8 - 2026-11-14
 

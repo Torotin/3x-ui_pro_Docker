@@ -1472,6 +1472,27 @@ test_wizard_toggle_dirty_exit_yes_saves_without_env() {
 	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "dirty-exit Yes is save-only"
 }
 
+test_wizard_whiptail_sets_dark_newt_colors_when_unset() {
+	make_fixture
+	unset NEWT_COLORS
+	# shellcheck source=script/modules/01_menu.sh
+	source "$ROOT_DIR/script/modules/01_menu.sh"
+	wizard_apply_whiptail_theme
+	[[ -n "${NEWT_COLORS:-}" ]] || fail "NEWT_COLORS must be set by theme helper"
+	case "$NEWT_COLORS" in
+	*root=,black*) ;;
+	*) fail "dark theme must use root=,black; got: $NEWT_COLORS" ;;
+	esac
+	case "$NEWT_COLORS" in
+	*actbutton=black,brightcyan*) ;;
+	*) fail "dark theme must include actbutton=black,brightcyan" ;;
+	esac
+
+	export NEWT_COLORS='custom=white,red'
+	wizard_apply_whiptail_theme
+	[[ "$NEWT_COLORS" == "custom=white,red" ]] || fail "preset NEWT_COLORS must not be overwritten"
+}
+
 test_wizard_removes_html_and_shows_last_status() {
 	make_fixture
 	printf '2\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
@@ -1904,6 +1925,37 @@ test_wizard_doctor_from_menu() {
 	assert_contains "Last operation: OK doctor" "$tmpdir/stdout" "doctor success status"
 }
 
+test_wizard_config_menu_entry_exposed() {
+	make_fixture
+	printf 'x\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "c. config" "$tmpdir/stdout" "wizard must expose config quick action"
+	assert_contains "a/t/c/d" "$tmpdir/stdout" "keys hint must include c"
+}
+
+test_wizard_config_edits_and_persists_variables() {
+	make_fixture
+	# c → edit USER_SSH (item 2) → apply a → Enter after env stream → exit
+	printf 'c\n2\ndeployer2\na\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Installer variables" "$tmpdir/stdout" "config screen heading"
+	assert_contains "1. WEBDOMAIN" "$tmpdir/stdout" "must list WEBDOMAIN"
+	assert_contains "3. PASS_SSH" "$tmpdir/stdout" "must list PASS_SSH"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "apply must render env through dispatcher"
+	assert_contains 'USER_SSH="deployer2"' "$INSTALL_STATE_DIR/install.env" "edited USER_SSH must persist"
+}
+
+test_wizard_config_dirty_exit_save_only_and_discard() {
+	make_fixture
+	printf 'c\n2\ndeployer-discard\nx\nn\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Installer variables" "$tmpdir/stdout" "config screen must render"
+	assert_not_contains 'USER_SSH="deployer-discard"' "$INSTALL_STATE_DIR/install.env" "discard dirty exit must not persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "discard dirty exit must not render env"
+
+	make_fixture
+	printf 'c\n2\ndeployer-save\nx\ny\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains 'USER_SSH="deployer-save"' "$INSTALL_STATE_DIR/install.env" "dirty-exit Yes must persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "dirty-exit Yes is save-only"
+}
+
 test_wizard_prompts_for_missing_user() {
 	make_fixture
 	unset USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
@@ -2162,6 +2214,7 @@ test_wizard_skips_self_update_check_when_git_missing
 test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_toggles_optional_feature_flags_and_renders_env
+test_wizard_whiptail_sets_dark_newt_colors_when_unset
 test_wizard_toggle_exit_does_not_persist_changes
 test_wizard_toggle_dirty_exit_yes_saves_without_env
 test_wizard_removes_html_and_shows_last_status
@@ -2194,6 +2247,9 @@ test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines
 test_wizard_confirms_apply_steps
 test_wizard_doctor_from_menu
+test_wizard_config_menu_entry_exposed
+test_wizard_config_edits_and_persists_variables
+test_wizard_config_dirty_exit_save_only_and_discard
 test_wizard_prompts_for_missing_user
 test_wizard_auto_runs_chain_with_docker_force_prompt
 test_wizard_auto_yes_skips_start_but_asks_docker
