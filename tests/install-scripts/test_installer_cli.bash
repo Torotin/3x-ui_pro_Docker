@@ -466,13 +466,15 @@ test_env_defaults_missing_or_ip_webdomain_to_sslip() {
 	make_fixture
 	export WEBDOMAIN=31.59.155.170
 	export INSTALL_MOCK_PUBLIC_IPV4=31.59.155.170
-	run_installer run env >/tmp/install-webdomain-sslip.out 2>/tmp/install-webdomain-sslip.err
+	run_installer run env
 	assert_contains "WEBDOMAIN=31.59.155.170.sslip.io" "$INSTALL_STATE_DIR/install.env" "bare IPv4 WEBDOMAIN must become <ipv4>.sslip.io"
 	assert_contains "XRAY_TLS_CERT_FILE=/etc/traefik/pem/31.59.155.170.sslip.io-cert.pem" "$INSTALL_ROOT/compose.d/.env" "PEM cert path must track sslip WEBDOMAIN"
-	assert_contains "WEBDOMAIN defaulted to 31.59.155.170.sslip.io" /tmp/install-webdomain-sslip.out "env must log sslip defaulting"
+	assert_contains "WEBDOMAIN defaulted to 31.59.155.170.sslip.io" "$tmpdir/stdout" "env must log sslip defaulting"
+
+	make_fixture
 	unset WEBDOMAIN
 	export INSTALL_MOCK_PUBLIC_IPV4=198.51.100.10
-	run_installer run env >/tmp/install-webdomain-empty.out 2>/tmp/install-webdomain-empty.err
+	run_installer run env
 	assert_contains "WEBDOMAIN=198.51.100.10.sslip.io" "$INSTALL_STATE_DIR/install.env" "empty WEBDOMAIN must become <ipv4>.sslip.io"
 }
 
