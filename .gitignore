@@ -54,3 +54,6 @@ __pycache__/
 
 # ==== Installer local state ====
 script/install-state/
+
+# Live canary notes — never commit (ops-only)
+/udp443-evidence/
