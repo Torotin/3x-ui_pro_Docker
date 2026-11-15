@@ -191,12 +191,25 @@ wizard_ui_radiolist() {
 	return 0
 }
 
-wizard_step_badge_ascii() {
+wizard_step_badge_whiptail() {
+	# Prefer ANSI so OK/FAIL read as green/red in whiptail; fall back to plain tags.
 	local st
 	st=$(wizard_step_state_get "$1")
 	case "$st" in
-	OK) printf '[OK]' ;;
-	FAIL) printf '[FAIL]' ;;
+	OK)
+		if [[ -n "${NO_COLOR:-}" ]]; then
+			printf '[OK]'
+		else
+			printf '\033[32m[OK]\033[0m'
+		fi
+		;;
+	FAIL)
+		if [[ -n "${NO_COLOR:-}" ]]; then
+			printf '[FAIL]'
+		else
+			printf '\033[31m[FAIL]\033[0m'
+		fi
+		;;
 	*) printf '[ ]' ;;
 	esac
 }
@@ -213,33 +226,36 @@ wizard_whiptail_backtitle() {
 }
 
 wizard_whiptail_main_menu() {
+	# Display order is sequential 0-9 (keys match on-screen position). Digits are
+	# repeated at the start of each item so newt/whiptail hotkeys react to 0-9
+	# (item text hotkey is the first character; tags alone do not bind digits).
 	local backtitle b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
 	backtitle=$(wizard_whiptail_backtitle)
-	b0=$(wizard_step_badge_ascii dnscrypt)
-	b1=$(wizard_step_badge_ascii apt)
-	b4=$(wizard_step_badge_ascii user)
-	b6=$(wizard_step_badge_ascii ssh)
-	b5=$(wizard_step_badge_ascii firewall)
-	b7=$(wizard_step_badge_ascii network)
-	b2=$(wizard_step_badge_ascii env)
-	b3=$(wizard_step_badge_ascii docker)
-	b8=$(wizard_step_badge_ascii compose)
-	b9=$(wizard_step_badge_ascii final)
+	b0=$(wizard_step_badge_whiptail dnscrypt)
+	b1=$(wizard_step_badge_whiptail apt)
+	b2=$(wizard_step_badge_whiptail user)
+	b3=$(wizard_step_badge_whiptail ssh)
+	b4=$(wizard_step_badge_whiptail firewall)
+	b5=$(wizard_step_badge_whiptail network)
+	b6=$(wizard_step_badge_whiptail env)
+	b7=$(wizard_step_badge_whiptail docker)
+	b8=$(wizard_step_badge_whiptail compose)
+	b9=$(wizard_step_badge_whiptail final)
 	wizard_ui_menu "$backtitle" "Choose an action" 18 \
 		a "auto — Full install (recommended)" \
 		t "toggles — Optional stack features" \
 		c "config — Edit installer variables" \
 		d "doctor — System / stack diagnostics" \
-		0 "${b0} dnscrypt — DNSCrypt system DNS" \
-		1 "${b1} apt — APT mirror and OS packages" \
-		4 "${b4} user — Service user" \
-		6 "${b6} ssh — SSH policy" \
-		5 "${b5} firewall — Firewall policy" \
-		7 "${b7} network — Network tuning" \
-		2 "${b2} env — Render env files" \
-		3 "${b3} docker — Docker (destructive)" \
-		8 "${b8} compose — Validate/start stack" \
-		9 "${b9} final — Final summary" \
+		0 "0 ${b0} dnscrypt — DNSCrypt system DNS" \
+		1 "1 ${b1} apt — APT mirror and OS packages" \
+		2 "2 ${b2} user — Service user" \
+		3 "3 ${b3} ssh — SSH policy" \
+		4 "4 ${b4} firewall — Firewall policy" \
+		5 "5 ${b5} network — Network tuning" \
+		6 "6 ${b6} env — Render env files" \
+		7 "7 ${b7} docker — Docker (destructive)" \
+		8 "8 ${b8} compose — Validate/start stack" \
+		9 "9 ${b9} final — Final summary" \
 		x "Exit"
 }
 
@@ -389,13 +405,13 @@ MENU
 	printf '\n── 1. Host & Security Preparation ────────\n'
 	wizard_print_menu_step dnscrypt '0. dnscrypt   Install DNSCrypt as system DNS (DoH/DNSCrypt)'
 	wizard_print_menu_step apt '1. apt        Select APT mirror and update OS packages'
-	wizard_print_menu_step user '4. user       Create or update service user'
-	wizard_print_menu_step ssh '6. ssh        Apply SSH policy'
-	wizard_print_menu_step firewall '5. firewall  Apply firewall policy'
-	wizard_print_menu_step network '7. network    Apply sysctl/network tuning'
+	wizard_print_menu_step user '2. user       Create or update service user'
+	wizard_print_menu_step ssh '3. ssh        Apply SSH policy'
+	wizard_print_menu_step firewall '4. firewall  Apply firewall policy'
+	wizard_print_menu_step network '5. network    Apply sysctl/network tuning'
 	printf '\n── 2. Docker & Stack Deployment ──────────\n'
-	wizard_print_menu_step env '2. env        Render installer and compose env files'
-	wizard_print_menu_step docker '3. docker     Install/prepare Docker resources (destructive)'
+	wizard_print_menu_step env '6. env        Render installer and compose env files'
+	wizard_print_menu_step docker '7. docker     Install/prepare Docker resources (destructive)'
 	wizard_print_menu_step compose '8. compose    Validate/start compose stack'
 	wizard_print_menu_step final '9. final      Render final summary'
 	printf '\n  x. Exit\n'
@@ -408,15 +424,16 @@ install_wizard_print_status() {
 }
 
 wizard_normalize_step() {
+	# Keys follow on-screen sequential order (not legacy install-step ids).
 	case "$1" in
 	0) printf 'dnscrypt\n' ;;
 	1) printf 'apt\n' ;;
-	2) printf 'env\n' ;;
-	3) printf 'docker\n' ;;
-	4) printf 'user\n' ;;
-	5) printf 'firewall\n' ;;
-	6) printf 'ssh\n' ;;
-	7) printf 'network\n' ;;
+	2) printf 'user\n' ;;
+	3) printf 'ssh\n' ;;
+	4) printf 'firewall\n' ;;
+	5) printf 'network\n' ;;
+	6) printf 'env\n' ;;
+	7) printf 'docker\n' ;;
 	8) printf 'compose\n' ;;
 	9) printf 'final\n' ;;
 	t) printf 'toggles\n' ;;

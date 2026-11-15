@@ -1117,9 +1117,10 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "ufw allow 443/udp" "$INSTALL_COMMAND_LOG" "firewall must open UDP 443 for the UDP443 backend stage"
 	assert_contains "ssh.apply bash -c" "$INSTALL_COMMAND_LOG" "ssh apply must render config through shell redirection"
 	assert_contains "ssh.detect" "$INSTALL_COMMAND_LOG" "ssh apply must detect the active SSH systemd unit"
-	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload SSH before restart fallback"
+	assert_contains "ssh.socket.override.write" "$INSTALL_COMMAND_LOG" "ssh apply must rewrite ssh.socket ListenStream to PORT_REMOTE_SSH"
+	assert_contains "zz-3xui-port.conf" "$INSTALL_COMMAND_LOG" "ssh socket override must sort after generator addresses.conf"
 	assert_contains "ssh.listener.check" "$INSTALL_COMMAND_LOG" "ssh apply must verify the configured SSH port listener"
-	assert_not_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must not restart when reload and listener check succeed"
+	assert_not_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "socket-activated hosts must not use reload-only path"
 }
 
 test_firewall_does_not_preserve_current_ssh_port() {
@@ -1161,11 +1162,23 @@ test_ssh_rejects_invalid_port_before_apply() {
 
 test_ssh_restarts_when_listener_check_fails_after_reload() {
 	make_fixture
+	# Force non-socket path so reload→restart fallback stays covered.
+	export INSTALL_MOCK_SSH_SOCKET=0
 	export INSTALL_MOCK_SSH_LISTENER_READY=0
 	run_installer run ssh --apply --yes
 	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload before fallback"
 	assert_contains "ssh.listener.check" "$INSTALL_COMMAND_LOG" "ssh apply must check configured listener"
 	assert_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must restart when listener check fails"
+}
+
+test_ssh_socket_retries_when_listener_check_fails() {
+	make_fixture
+	export INSTALL_MOCK_SSH_SOCKET=1
+	export INSTALL_MOCK_SSH_LISTENER_READY=0
+	run_installer run ssh --apply --yes
+	assert_contains "ssh.socket.override.write" "$INSTALL_COMMAND_LOG" "socket path must rewrite ListenStream"
+	assert_contains "ssh.socket.stop" "$INSTALL_COMMAND_LOG" "failed bind must hard-stop socket before retry"
+	assert_contains "ssh.listener.check" "$INSTALL_COMMAND_LOG" "socket path must verify PORT_REMOTE_SSH listener"
 }
 
 test_ssh_listener_mock_uses_realistic_address_pattern() {
@@ -1442,10 +1455,12 @@ test_wizard_offers_update_only_when_newer_version_exists() {
 
 test_wizard_menu_accepts_numbered_choices() {
 	make_fixture
-	printf '2\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	# Sequential menu: 6 = env (display order, not legacy step ids).
+	printf '6\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "0. dnscrypt" "$tmpdir/stdout" "wizard must show dnscrypt as first step"
 	assert_contains "1. apt" "$tmpdir/stdout" "wizard must show apt as numbered step"
-	assert_contains "2. env" "$tmpdir/stdout" "wizard must show numbered menu"
+	assert_contains "2. user" "$tmpdir/stdout" "wizard menu numbers follow display order"
+	assert_contains "6. env" "$tmpdir/stdout" "wizard must show env as menu item 6"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard must dispatch numbered choices"
 }
 
@@ -1511,11 +1526,11 @@ test_wizard_whiptail_sets_dark_newt_colors_when_unset() {
 
 test_wizard_removes_html_and_shows_last_status() {
 	make_fixture
-	printf '2\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '6\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: OK env" "$tmpdir/stdout" "wizard must show final status for previous operation"
 	assert_contains "9. final" "$tmpdir/stdout" "wizard final step must be menu item 9"
 	assert_not_contains "html" "$tmpdir/stdout" "wizard must not show removed html step"
-	assert_contains "final.summary" "$INSTALL_COMMAND_LOG" "wizard must dispatch final as menu item 8"
+	assert_contains "final.summary" "$INSTALL_COMMAND_LOG" "wizard must dispatch final as menu item 9"
 }
 
 test_wizard_rejects_unknown_menu_choice_without_exit() {
@@ -1528,7 +1543,7 @@ test_wizard_rejects_unknown_menu_choice_without_exit() {
 
 test_wizard_step_state_records_ok_env() {
 	make_fixture
-	printf '2\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '6\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "env=OK" "$INSTALL_STATE_DIR/wizard-steps.state" "successful env must persist step state"
 	assert_contains "Last operation: OK env" "$tmpdir/stdout" "Last operation phrasing must stay"
 	assert_contains "No operation yet" "$tmpdir/stdout" "first paint must show No operation yet"
@@ -1537,7 +1552,7 @@ test_wizard_step_state_records_ok_env() {
 
 test_wizard_streams_output_and_waits_for_enter() {
 	make_fixture
-	printf '7\ny\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '5\ny\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Running network..." "$tmpdir/stdout" "wizard must start step output immediately"
 	assert_contains "net.ipv4.tcp_keepalive_time" "$tmpdir/stdout" "wizard must stream step output to the console"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must pause after completed operation"
@@ -1910,8 +1925,8 @@ test_apt_falls_back_when_selected_mirror_update_fails() {
 
 test_wizard_yes_skips_apt_confirm_but_not_docker() {
 	make_fixture
-	# apt needs no "y"; Enter after apt pause; docker still needs "y"; then Enter; exit
-	printf '1\n\n3\nn\n\nx\n' | bash "$INSTALLER" wizard --yes >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	# apt needs no "y"; Enter after apt pause; docker (7) still needs confirm; then Enter; exit
+	printf '1\n\n7\nn\n\nx\n' | bash "$INSTALLER" wizard --yes >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "wizard --yes must run apt without confirm y"
 	assert_not_contains "docker.destroy" "$INSTALL_COMMAND_LOG" "declined docker wipe must not destroy"
 	assert_contains "SKIPPED docker" "$tmpdir/stdout" "docker force_prompt decline must skip"
@@ -2208,6 +2223,7 @@ test_firewall_ensures_ipv6_yes
 test_doctor_dual_mock_logs_host_probes
 test_ssh_rejects_invalid_port_before_apply
 test_ssh_restarts_when_listener_check_fails_after_reload
+test_ssh_socket_retries_when_listener_check_fails
 test_ssh_listener_mock_uses_realistic_address_pattern
 test_docker_install_handles_missing_docker_binary
 test_network_sysctl_dual_preserves_slaac

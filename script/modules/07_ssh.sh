@@ -138,8 +138,19 @@ install_ssh_apply_service() {
 		sshd -T -f "$1" | grep -E "^port[[:space:]]+"
 	' _ "$target"
 
-	if install_ssh_configure_socket_activation "$unit"; then
-		if install_ssh_service_ready "$unit"; then
+	# Prefer socket activation when present: Port= in sshd_config is ignored while
+	# ssh.socket owns the listener (common Ubuntu default). Always rewrite the
+	# socket ListenStream to PORT_REMOTE_SSH before claiming success.
+	if install_ssh_socket_unit_exists "$unit"; then
+		if install_ssh_configure_socket_activation "$unit" && install_ssh_service_ready "$unit"; then
+			printf 'SSH socket ready on port: %s\n' "$PORT_REMOTE_SSH"
+			return 0
+		fi
+		# One retry after a hard stop — generator drop-ins / stale fds can keep the old port.
+		printf 'SSH socket port %s not listening yet; retrying socket rebind\n' "$PORT_REMOTE_SSH" >&2
+		run_cmd ssh.socket.stop systemctl stop "${unit}.socket" || true
+		run_cmd ssh.service.stop systemctl stop "$unit" || true
+		if install_ssh_configure_socket_activation "$unit" && install_ssh_service_ready "$unit"; then
 			printf 'SSH socket ready on port: %s\n' "$PORT_REMOTE_SSH"
 			return 0
 		fi
@@ -159,11 +170,33 @@ install_ssh_apply_service() {
 
 	run_cmd ssh.debug.status systemctl status "$unit" --no-pager || true
 	run_cmd ssh.debug.socket systemctl status "${unit}.socket" --no-pager || true
+	run_cmd ssh.debug.socket.cat systemctl cat "${unit}.socket" || true
 	run_cmd ssh.debug.listen ss -H -ltnp || true
 	run_cmd ssh.debug.journal journalctl -u "$unit" -u "${unit}.socket" -n 100 --no-pager || true
 
 	install_ssh_restore_backup "$backup" "$target" "$unit"
 	die "failed to expose SSH on port $PORT_REMOTE_SSH"
+}
+
+install_ssh_socket_unit_exists() {
+	local unit=$1
+	local socket_unit="${unit}.socket"
+
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		[[ "${INSTALL_MOCK_SSH_SOCKET:-1}" == "1" ]]
+		return
+	fi
+
+	if systemctl cat "$socket_unit" >/dev/null 2>&1; then
+		return 0
+	fi
+	if [[ -f "/lib/systemd/system/${socket_unit}" || -f "/usr/lib/systemd/system/${socket_unit}" || -f "/etc/systemd/system/${socket_unit}" ]]; then
+		return 0
+	fi
+	if systemctl list-unit-files --no-legend "$socket_unit" 2>/dev/null | awk '{print $1}' | grep -qx "$socket_unit"; then
+		return 0
+	fi
+	return 1
 }
 
 install_ssh_service_ready() {
@@ -216,15 +249,16 @@ install_ssh_configure_socket_activation() {
 	local unit=$1
 	local socket_unit="${unit}.socket"
 	local override_dir="/etc/systemd/system/${socket_unit}.d"
-	local override_file="${override_dir}/override.conf"
+	# zz- sorts after generator addresses.conf so ListenStream= reset wins.
+	local override_file="${override_dir}/zz-3xui-port.conf"
 
-	if ! systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$socket_unit"; then
-		return 1
-	fi
+	install_ssh_socket_unit_exists "$unit" || return 1
 
 	printf 'SSH socket activation found: %s\n' "$socket_unit" >&2
 
 	run_cmd ssh.socket.override.dir install -d -m 0755 -o root -g root "$override_dir"
+	# Drop legacy installer override name if present.
+	run_cmd ssh.socket.override.cleanup rm -f "${override_dir}/override.conf" || true
 
 	run_cmd ssh.socket.override.write sh -c '
 		{
@@ -238,9 +272,15 @@ install_ssh_configure_socket_activation() {
 	' _ "$override_file" "$PORT_REMOTE_SSH"
 
 	run_cmd ssh.service.stop systemctl stop "$unit" || true
+	run_cmd ssh.socket.stop systemctl stop "$socket_unit" || true
 	run_cmd ssh.daemon.reload systemctl daemon-reload
-	run_cmd ssh.socket.restart systemctl restart "$socket_unit"
+	run_cmd ssh.socket.start systemctl start "$socket_unit"
+	# Ensure the service is attached to the new socket (idle until first connect is OK).
+	run_cmd ssh.service.start systemctl start "$unit" || true
 
 	printf 'SSH socket activation restarted on port: %s\n' "$PORT_REMOTE_SSH" >&2
+	if [[ "$INSTALL_MOCK" != "1" ]]; then
+		systemctl show "$socket_unit" -p Listen --value 2>/dev/null | head -n 5 >&2 || true
+	fi
 	return 0
 }
