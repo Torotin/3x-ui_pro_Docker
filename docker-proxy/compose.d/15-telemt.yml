@@ -1,14 +1,54 @@
+# Traefik ServersTransport cannot be declared via Docker labels (file/CRD only).
+# Overlay the comment-only stub at traefik/dynamic/telemt-web-transport.yml with the real
+# transport while Telemt is enabled — required because /dynamic is a RO directory mount.
 services:
+  traefik:
+    volumes:
+      - ../telemt/traefik-telemt-web-transport.yml:/dynamic/telemt-web-transport.yml:ro
+
+  # Oneshot: telemt-stack runs as uid 1000; host bind mounts often arrive as root
+  # (installer/rsync). Panel then fails mkdir /var/lib/telemt-panel/geoip with
+  # Permission denied. Heal ownership, then exit (restart: "no").
+  telemt-fix-perms:
+    image: alpine:latest
+    container_name: telemt-fix-perms
+    restart: "no"
+    network_mode: none
+    user: "0:0"
+    security_opt:
+      - no-new-privileges=true
+    volumes:
+      - ../telemt/config:/etc/telemt
+      - ../telemt/data:/var/lib/telemt
+      - ../telemt-panel/config:/etc/telemt-panel
+      - ../telemt-panel/data:/var/lib/telemt-panel
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /var/lib/telemt /var/lib/telemt-panel/geoip
+        for d in /etc/telemt /var/lib/telemt /etc/telemt-panel /var/lib/telemt-panel; do
+          if [ -e "$$d" ]; then chown -R 1000:1000 "$$d"; fi
+        done
+        echo "telemt-fix-perms: ownership set to 1000:1000"
+    logging:
+      options:
+        tag: "{{.Name}}"
+
   telemt:
     image: ${TELEMT_STACK_IMAGE:-torotin/telemt-stack:latest}
     container_name: telemt
     restart: unless-stopped
     init: true
     depends_on:
+      telemt-fix-perms:
+        condition: service_completed_successfully
       adguard:
         condition: service_healthy
     env_file:
       - ./.env
+    environment:
+      TELEMT_PANEL_ENABLED: ${TELEMT_PANEL_ENABLED:-true}
     user: "1000:1000"
     group_add:
       - "${DOCKER_SOCKET_GID:-0}"
@@ -28,6 +68,8 @@ services:
       - ../telemt-panel/config:/etc/telemt-panel:ro
       - ../telemt-panel/data:/var/lib/telemt-panel:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Panel Logs UI (1.0.0-rc.3) requires docker CLI on PATH; socket alone is not enough.
+      - /usr/bin/docker:/usr/bin/docker:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     cap_drop:
@@ -36,21 +78,27 @@ services:
       - no-new-privileges=true
     expose:
       - "${PORT_LOCAL_TELEMT_PROXY:-9443}"
+      - "${PORT_LOCAL_TELEMT_WEB:-18080}"
       - "${PORT_LOCAL_TELEMT_API:-9091}"
       - "${PORT_LOCAL_TELEMT_METRICS:-9090}"
       - "${PORT_LOCAL_TELEMT_PANEL:-8080}"
+      - "${PORT_LOCAL_TELEMT_SUB:-8081}"
     healthcheck:
-      test: ["CMD-SHELL", "/usr/local/bin/telemt healthcheck /etc/telemt/config.toml --mode liveness && curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/${URI_TELEMT_PANEL}/ >/dev/null"]
+      test: ["CMD-SHELL", "/usr/local/bin/telemt healthcheck /etc/telemt/config.toml --mode liveness && curl -fsS http://127.0.0.1:${PORT_LOCAL_TELEMT_PANEL:-8080}/ >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 60s
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-proxy
       - traefik.tags=traefik
 
       - traefik.http.services.telemt-panel-svc.loadbalancer.server.port=${PORT_LOCAL_TELEMT_PANEL:-8080}
+      - traefik.http.services.telemt-sub-svc.loadbalancer.server.port=${PORT_LOCAL_TELEMT_SUB:-8081}
+      - traefik.http.services.telemt-web-svc.loadbalancer.server.port=${PORT_LOCAL_TELEMT_WEB:-18080}
+      # Defined by file mounted above (not Docker labels — Traefik docs: ServersTransport is file/CRD only).
+      - traefik.http.services.telemt-web-svc.loadbalancer.serverstransport=telemt-web@file
 
       - traefik.http.middlewares.telemt-panel-compress.compress=true
       - traefik.http.middlewares.telemt-panel-rate-limit.ratelimit.average=20
@@ -60,9 +108,31 @@ services:
       - traefik.http.middlewares.telemt-panel-noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow
       - traefik.http.middlewares.telemt-panel-chain.chain.middlewares=telemt-panel-basic-auth,telemt-panel-rate-limit,telemt-panel-noindex,telemt-panel-compress
 
-      - traefik.http.routers.telemt-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TELEMT_PANEL}`)
-      - traefik.http.routers.telemt-panel.entrypoints=websecure
-      - traefik.http.routers.telemt-panel.middlewares=bouncer@file,telemt-panel-chain,admin-security-headers@file
-      - traefik.http.routers.telemt-panel.tls.certresolver=le
+      - traefik.http.middlewares.telemt-sub-rate-limit.ratelimit.average=20
+      - traefik.http.middlewares.telemt-sub-rate-limit.ratelimit.burst=40
+      - traefik.http.middlewares.telemt-sub-noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow
+      - traefik.http.middlewares.telemt-sub-chain.chain.middlewares=bouncer@file,telemt-sub-rate-limit,telemt-sub-noindex
+
+      # WEB: whole PathPrefix must reach Telemt (carrier + decoy). No BasicAuth.
+      - traefik.http.middlewares.telemt-web-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+      - traefik.http.middlewares.telemt-web-headers.headers.customresponseheaders.X-Robots-Tag=noindex, nofollow
+
+      - traefik.http.routers.telemt-panel.rule=Host(`telemt.${WEBDOMAIN}`)
+      - traefik.http.routers.telemt-panel.entrypoints=admin
+      - traefik.http.routers.telemt-panel.middlewares=telemt-panel-chain,admin-security-headers@file
+      - traefik.http.routers.telemt-panel.tls=true
       - traefik.http.routers.telemt-panel.service=telemt-panel-svc
-      - traefik.http.routers.telemt-panel.priority=9994
+
+      - traefik.http.routers.telemt-sub.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TELEMT_SUB}`)
+      - traefik.http.routers.telemt-sub.entrypoints=websecure
+      - traefik.http.routers.telemt-sub.middlewares=telemt-sub-chain
+      - traefik.http.routers.telemt-sub.tls.certresolver=le
+      - traefik.http.routers.telemt-sub.service=telemt-sub-svc
+      - traefik.http.routers.telemt-sub.priority=9997
+
+      - traefik.http.routers.telemt-web.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_TELEMT_WEB}`)
+      - traefik.http.routers.telemt-web.entrypoints=websecure
+      - traefik.http.routers.telemt-web.middlewares=telemt-web-headers
+      - traefik.http.routers.telemt-web.tls.certresolver=le
+      - traefik.http.routers.telemt-web.service=telemt-web-svc
+      - traefik.http.routers.telemt-web.priority=9000

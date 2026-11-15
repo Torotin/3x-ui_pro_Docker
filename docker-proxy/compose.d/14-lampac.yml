@@ -1,9 +1,45 @@
 services:
+  # Oneshot: Lampac image runs as uid 1000; host files often arrive as 1001/root
+  # and SQLite then fails with "readonly database". Fix ownership, then exit
+  # (restart: "no") so this container does not stay running.
+  lampac-fix-perms:
+    image: alpine:latest
+    container_name: lampac-fix-perms
+    restart: "no"
+    network_mode: none
+    user: "0:0"
+    security_opt:
+      - no-new-privileges=true
+    volumes:
+      - ../lampac/config/passwd:/lampac/passwd
+      - ../lampac/config/init.conf:/lampac/init.conf
+      - ../lampac/cache:/lampac/cache
+      - ../lampac/database:/lampac/database
+      - ../lampac/data:/lampac/data
+      - ../_data/lampac/lampa-main:/lampac/wwwroot/lampa-main
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        for f in /lampac/passwd /lampac/init.conf; do
+          if [ -e "$$f" ]; then chown 1000:1000 "$$f"; fi
+        done
+        for d in /lampac/cache /lampac/database /lampac/data /lampac/wwwroot/lampa-main; do
+          if [ -e "$$d" ]; then chown -R 1000:1000 "$$d"; fi
+        done
+        echo "lampac-fix-perms: ownership set to 1000:1000"
+    logging:
+      options:
+        tag: "{{.Name}}"
+
   lampac:
     image: ghcr.io/lampac-nextgen/lampac
     container_name: lampac
     # Use host networking instead of bridge below: uncomment the next line and remove or adjust `ports` / `networks`.
     # network_mode: host
+    depends_on:
+      lampac-fix-perms:
+        condition: service_completed_successfully
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.14
@@ -112,20 +148,18 @@ services:
       - traefik.http.routers.lampac-cub-plugins.priority=35
       - traefik.http.middlewares.lampac-cub-js.headers.customResponseHeaders.Content-Type=text/javascript
 
-      # Admin paths: BasicAuth + CrowdSec
-      - traefik.http.routers.lampac-sensitive.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog|database-editor)`)
-      - traefik.http.routers.lampac-sensitive.entrypoints=websecure
+      # Admin paths on private admin Host (no CrowdSec bouncer)
+      - traefik.http.routers.lampac-sensitive.rule=Host(`lampac-admin.${WEBDOMAIN}`) && PathRegexp(`^/(admin|adminpanel|stats|weblog|database-editor)`)
+      - traefik.http.routers.lampac-sensitive.entrypoints=admin
       - traefik.http.routers.lampac-sensitive.tls=true
-      - traefik.http.routers.lampac-sensitive.tls.certresolver=le
       - traefik.http.routers.lampac-sensitive.service=lampac
       - traefik.http.routers.lampac-sensitive.middlewares=lampac-admin-chain
       - traefik.http.routers.lampac-sensitive.priority=90
 
       # Auth pages bypass BasicAuth (higher priority than sensitive)
-      - traefik.http.routers.lampac-auth-pages.rule=Host(`${WEBDOMAIN}`) && PathRegexp(`^/(adminpanel|weblog)/auth$$`)
-      - traefik.http.routers.lampac-auth-pages.entrypoints=websecure
+      - traefik.http.routers.lampac-auth-pages.rule=Host(`lampac-admin.${WEBDOMAIN}`) && PathRegexp(`^/(adminpanel|weblog)/auth$$`)
+      - traefik.http.routers.lampac-auth-pages.entrypoints=admin
       - traefik.http.routers.lampac-auth-pages.tls=true
-      - traefik.http.routers.lampac-auth-pages.tls.certresolver=le
       - traefik.http.routers.lampac-auth-pages.service=lampac
       - traefik.http.routers.lampac-auth-pages.middlewares=lampac-headers
       - traefik.http.routers.lampac-auth-pages.priority=95
@@ -154,4 +188,4 @@ services:
       - traefik.http.middlewares.lampac-admin-rate.ratelimit.average=50
       - traefik.http.middlewares.lampac-admin-rate.ratelimit.burst=100
       - traefik.http.middlewares.lampac-admin-noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow
-      - traefik.http.middlewares.lampac-admin-chain.chain.middlewares=bouncer@file,lampac-admin-auth,lampac-admin-rate,lampac-admin-noindex,lampac-headers
+      - traefik.http.middlewares.lampac-admin-chain.chain.middlewares=lampac-admin-auth,lampac-admin-rate,lampac-admin-noindex,lampac-headers

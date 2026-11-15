@@ -3,6 +3,9 @@ services:
     image: crowdsecurity/crowdsec
     container_name: crowdsec
     restart: unless-stopped
+    # depends_on:
+    #   usque:
+    #     condition: service_healthy
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.3
@@ -18,6 +21,14 @@ services:
     environment:
       TZ: ${TZ}
       GID: ${GID-1000}
+      # DPI: Cloudflare IPv4 TLS to version/hub-data often fails; Go prefers IPv4.
+      # Bypass: SOCKS via usque (WARP). Pair with cscli.hub_branch in config volume.
+      # ALL_PROXY: socks5h://usque:1080
+      # HTTPS_PROXY: socks5h://usque:1080
+      # HTTP_PROXY: socks5h://usque:1080
+      # Include 0.0.0.0 — CrowdSec LAPI client uses http://0.0.0.0:8080; if that
+      # goes via SOCKS, agent/AppSec never start (socks ...->0.0.0.0:8080 unreachable).
+      # NO_PROXY: localhost,127.0.0.1,0.0.0.0,::1,crowdsec,usque,traefik,caddy,adguard,3x-ui,172.18.0.0/24,172.19.0.0/24,fd00:dead:beef:12::/64,fd00:dead:beef:13::/64
       COLLECTIONS: >
         crowdsecurity/sshd
         crowdsecurity/caddy
@@ -47,4 +58,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 10
-      start_period: 10s
+      start_period: 120s

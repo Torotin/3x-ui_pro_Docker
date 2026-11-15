@@ -71,6 +71,8 @@ inbound_remark_slug() {
 	xhttp) printf '%s' vless-xhttp ;;
 	grpc) printf '%s' vless-grpc-tls ;;
 	hysteria2) printf '%s' hysteria2 ;;
+	amneziawg) printf '%s' amneziawg ;;
+	mixed) printf '%s' mixed-docker-net ;;
 	*) return 1 ;;
 	esac
 }
@@ -94,6 +96,19 @@ managed_inbound_remarks_json() {
 	local kind=$1 desired=$2 desired_remark legacy_remark
 	desired_remark=$(jq -r ".inbounds.$kind.remark" <<<"$desired")
 	legacy_remark=$(legacy_managed_inbound_remark "$kind")
+	# mixed was briefly shipped as telemt-egress; keep recognizing it on upgrades.
+	if [[ "$kind" == "mixed" ]]; then
+		jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" \
+			--arg old1 'telemt-egress' --arg old2 'managed:telemt-egress' \
+			'[$desired, $legacy, $old1, $old2] | unique'
+		return 0
+	fi
+	if [[ "$kind" == "amneziawg" ]]; then
+		jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" \
+			--arg spike 'awg-spike-443' \
+			'[$desired, $legacy, $spike] | unique'
+		return 0
+	fi
 	jq -nc --arg desired "$desired_remark" --arg legacy "$legacy_remark" '[$desired, $legacy] | unique'
 }
 
@@ -103,7 +118,7 @@ build_desired_state() {
 	local shared_email=${CLIENT_EMAIL_SHARED:-"$prefix"}
 	local sub_id=${CLIENT_SUB_ID:-}
 	local tls_domain=${WEBDOMAIN:-localhost}
-	local vision_remark xhttp_remark grpc_remark hysteria2_remark
+	local vision_remark xhttp_remark grpc_remark hysteria2_remark amneziawg_remark mixed_remark
 	if [[ -z "$sub_id" ]]; then
 		# Стабильный subId производен от домена и общей метки клиента.
 		sub_id=$(printf '%s:%s' "${WEBDOMAIN:-localhost}" "$shared_email" | sha256sum | cut -c1-16)
@@ -112,6 +127,8 @@ build_desired_state() {
 	xhttp_remark=$(inbound_remark xhttp)
 	grpc_remark=$(inbound_remark grpc)
 	hysteria2_remark=$(inbound_remark hysteria2)
+	amneziawg_remark=$(inbound_remark amneziawg)
+	mixed_remark=$(inbound_remark mixed)
 
 	jq -nc \
 		--arg webListen "${webListen:-0.0.0.0}" \
@@ -123,7 +140,8 @@ build_desired_state() {
 		--arg xhttpPath "${URI_VLESS_XHTTP:-/xhttp}" \
 		--arg grpcPort "${PORT_LOCAL_GRPC:-9444}" \
 		--arg grpcPath "${URI_VLESS_GRPC:-/grpc}" \
-		--arg hysteria2Port "${PORT_LOCAL_HYSTERIA:-443}" \
+		--arg udp443Port "${PORT_LOCAL_UDP443:-${PORT_LOCAL_HYSTERIA:-443}}" \
+		--arg mixedPort "${PORT_LOCAL_XRAY_MIXED:-10808}" \
 		--arg xrayTlsCert "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${tls_domain}-cert.pem}" \
 		--arg xrayTlsKey "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${tls_domain}-key.pem}" \
 		--arg domain "${WEBDOMAIN:-}" \
@@ -133,6 +151,8 @@ build_desired_state() {
 		--arg xhttpRemark "$xhttp_remark" \
 		--arg grpcRemark "$grpc_remark" \
 		--arg hysteria2Remark "$hysteria2_remark" \
+		--arg amneziawgRemark "$amneziawg_remark" \
+		--arg mixedRemark "$mixed_remark" \
 		'{
           panel: {
             webListen: $webListen,
@@ -144,10 +164,13 @@ build_desired_state() {
             vision: {managed: true, protocol: "vless", port: ($visionPort|tonumber), remark: $visionRemark},
             xhttp: {managed: true, protocol: "vless", port: ($xhttpPort|tonumber), remark: $xhttpRemark, path: $xhttpPath},
             grpc: {managed: true, protocol: "vless", port: ($grpcPort|tonumber), remark: $grpcRemark, path: $grpcPath},
-            hysteria2: {managed: true, protocol: "hysteria", port: ($hysteria2Port|tonumber), remark: $hysteria2Remark}
+            hysteria2: {managed: true, protocol: "hysteria", port: ($udp443Port|tonumber), remark: $hysteria2Remark},
+            amneziawg: {managed: true, protocol: "amneziawg", port: ($udp443Port|tonumber), remark: $amneziawgRemark,
+              subnet: "10.8.1.0/24", mtu: 1280, dns1: "8.8.8.8", dns2: "8.8.4.4"},
+            mixed: {managed: true, protocol: "mixed", port: ($mixedPort|tonumber), remark: $mixedRemark}
           },
           clients: {
-            shared: {email: $sharedEmail, subId: $subId, flow: "", visionFlow: "xtls-rprx-vision", xhttpFlow: "", grpcFlow: ""}
+            shared: {email: $sharedEmail, subId: $subId, flow: "xtls-rprx-vision", visionFlow: "xtls-rprx-vision", xhttpFlow: "", grpcFlow: ""}
           },
           tls: {
             certFile: $xrayTlsCert,
@@ -178,8 +201,9 @@ desired_panel_keys() {
 		subEnableRouting subRoutingRules subListen subPort subPath subDomain \
 		externalTrafficInformEnable externalTrafficInformURI subCertFile subKeyFile \
 		subUpdates subEncrypt subShowInfo subURI subJsonPath subJsonURI \
-		subClashEnable subClashPath subClashURI \
+		subClashEnable subClashPath subClashURI subClashEnableRouting subClashRules \
 		subJsonFragment subJsonNoises subJsonMux subJsonRules \
+		subJsonRoutingRules subJsonDns subJsonObservatory \
 		ldapEnable ldapHost ldapPort ldapUseTLS ldapBindDN ldapPassword ldapBaseDN \
 		ldapUserFilter ldapUserAttr ldapVlessField ldapSyncCron ldapFlagField \
 		ldapTruthyValues ldapInvertFlag ldapInboundTags ldapAutoCreate ldapAutoDelete \
@@ -196,7 +220,7 @@ geoip|geoip_zkeenip|https://github.com/jameszeroX/zkeen-ip/releases/latest/downl
 geoip|geoip_v2fly|https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
 geoip|geoip_refilter|https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat
 geosite|adlist|https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat
-geosite|geosite_RU|https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat
+geosite|geosite_RU|https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
 EOF
 }
 
@@ -380,10 +404,26 @@ vless_client_create_payload_json() {
     }'
 }
 
+# Header name Traefik must inject toward HTTP-based Xray backends (XHTTP/gRPC).
+# Xray trusts X-Forwarded-For only when at least one of these request headers is present.
+xray_trusted_xff_header() {
+	printf '%s' "${XRAY_TRUSTED_XFF_HEADER:-X-Xray-Trusted-Proxy}"
+}
+
+build_trusted_xff_headers_json() {
+	jq -nc --arg header "$(xray_trusted_xff_header)" '[$header]'
+}
+
 # Строит общие socket options для создаваемых Xray inbound.
+# Optional 4th arg: JSON array of trustedXForwardedFor header names (XHTTP/WS/HU/gRPC).
 build_sockopt_json() {
 	local accept_proxy=${1:-false} domain_strategy=${2:-AsIs} tproxy=${3:-off}
-	jq -nc --argjson acceptProxyProtocol "$accept_proxy" --arg domainStrategy "$domain_strategy" --arg tproxy "$tproxy" '{
+	local trusted_xff_json=${4:-'[]'}
+	jq -nc \
+		--argjson acceptProxyProtocol "$accept_proxy" \
+		--arg domainStrategy "$domain_strategy" \
+		--arg tproxy "$tproxy" \
+		--argjson trustedXForwardedFor "$trusted_xff_json" '{
       V6Only:false,
       acceptProxyProtocol:$acceptProxyProtocol,
       dialerProxy:"",
@@ -399,7 +439,7 @@ build_sockopt_json() {
       tcpWindowClamp:600,
       tcpcongestion:"bbr",
       tproxy:$tproxy
-    }'
+    } + (if ($trustedXForwardedFor | length) > 0 then {trustedXForwardedFor:$trustedXForwardedFor} else {} end)'
 }
 
 # Строит список внешнего proxy для маскирующего соединения, если задан домен.
@@ -443,14 +483,24 @@ strip_removed_xray_stream_fields_json() {
 }
 
 # Нормализует сохраненный REALITY stream без регенерации ключей.
+# Reconcile fallback target/xver from env so ENABLE_TELEMT flips
+# (telemt:9443 vs traefik:4443) apply on existing Vision inbounds.
 sanitize_vision_stream_json() {
-	local stream=$1 fingerprint
+	local stream=$1 fingerprint target xver
 	fingerprint=$(jq -r '.realitySettings.settings.fingerprint // empty' <<<"$stream")
 	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
-	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c --arg fingerprint "$fingerprint" '
+	target="${REALITY_TARGET_HOST:-${VISION_FALLBACK_HOST:-telemt}}:${REALITY_TARGET_PORT:-${VISION_FALLBACK_PORT:-${PORT_LOCAL_TELEMT_PROXY:-9443}}}"
+	xver="${REALITY_TARGET_XVER:-${VISION_FALLBACK_XVER:-1}}"
+	printf '%s' "$stream" | strip_removed_xray_stream_fields_json | jq -c \
+		--arg fingerprint "$fingerprint" \
+		--arg target "$target" \
+		--argjson xver "$xver" '
       if (.realitySettings // null) then
         .realitySettings.maxTimeDiff = (.realitySettings.maxTimeDiff // .realitySettings.maxTimediff // 0)
         | del(.realitySettings.maxTimediff)
+        | del(.realitySettings.dest)
+        | .realitySettings.target = $target
+        | .realitySettings.xver = $xver
         | .realitySettings.settings.fingerprint = $fingerprint
       else
         .
@@ -478,29 +528,33 @@ sanitize_external_proxy_tls_json() {
 }
 
 sanitize_xhttp_stream_json() {
-	local stream=$1 path=$2 host=$3 sanitized
+	local stream=$1 path=$2 host=$3 sanitized trusted_xff
 	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2","http/1.1"]')
-	printf '%s' "$sanitized" | jq -c --arg path "$path" --arg host "$host" '
+	trusted_xff=$(build_trusted_xff_headers_json)
+	printf '%s' "$sanitized" | jq -c --arg path "$path" --arg host "$host" --argjson trustedXForwardedFor "$trusted_xff" '
       .network = "xhttp"
       | .security = "none"
       | .xhttpSettings.path = $path
       | .xhttpSettings.host = $host
+      | .sockopt = ((.sockopt // {}) + {trustedXForwardedFor:$trustedXForwardedFor})
     '
 }
 
 sanitize_grpc_stream_json() {
-	local stream=$1 path=$2 host=$3 cert_file=$4 key_file=$5 service_name fingerprint sanitized
+	local stream=$1 path=$2 host=$3 cert_file=$4 key_file=$5 service_name fingerprint sanitized trusted_xff
 	service_name=${path#/}
 	service_name=${service_name%/}
 	fingerprint=$(jq -r '.tlsSettings.settings.fingerprint // .externalProxy[0].fingerprint // empty' <<<"$stream")
 	tls_fingerprint_allowed "$fingerprint" || fingerprint=$(select_tls_fingerprint)
 	sanitized=$(sanitize_external_proxy_tls_json "$stream" "$host" '["h2"]')
+	trusted_xff=$(build_trusted_xff_headers_json)
 	printf '%s' "$sanitized" | jq -c \
 		--arg serviceName "$service_name" \
 		--arg host "$host" \
 		--arg certFile "$cert_file" \
 		--arg keyFile "$key_file" \
-		--arg fingerprint "$fingerprint" '
+		--arg fingerprint "$fingerprint" \
+		--argjson trustedXForwardedFor "$trusted_xff" '
       .network = "grpc"
       | .security = "tls"
       | .tlsSettings.serverName = $host
@@ -518,6 +572,7 @@ sanitize_grpc_stream_json() {
       | .grpcSettings.serviceName = $serviceName
       | .grpcSettings.authority = (.grpcSettings.authority // "")
       | .grpcSettings.multiMode = (.grpcSettings.multiMode // false)
+      | .sockopt = ((.sockopt // {}) + {trustedXForwardedFor:$trustedXForwardedFor})
     '
 }
 
@@ -600,20 +655,23 @@ build_vision_stream_json() {
 
 # Строит streamSettings для VLESS gRPC backend с TLS между Traefik и Xray.
 build_grpc_stream_json() {
-	local path=$1 host=$2 cert_file=$3 key_file=$4 service_name external_proxy tls_settings fingerprint
+	local path=$1 host=$2 cert_file=$3 key_file=$4 service_name external_proxy tls_settings fingerprint sockopt
 	service_name=${path#/}
 	service_name=${service_name%/}
 	fingerprint=$(select_tls_fingerprint)
 	external_proxy=$(build_external_proxy_json "$host" tls '["h2"]' "$fingerprint")
 	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h2"]' "$fingerprint")
+	sockopt=$(build_sockopt_json false AsIs off "$(build_trusted_xff_headers_json)")
 	jq -nc \
 		--arg serviceName "$service_name" \
 		--argjson externalProxy "$external_proxy" \
-		--argjson tlsSettings "$tls_settings" '{
+		--argjson tlsSettings "$tls_settings" \
+		--argjson sockopt "$sockopt" '{
           network:"grpc",
           security:"tls",
           externalProxy:$externalProxy,
           tlsSettings:$tlsSettings,
+          sockopt:$sockopt,
           grpcSettings:{
             serviceName:$serviceName,
             authority:"",
@@ -625,7 +683,7 @@ build_grpc_stream_json() {
 # Строит streamSettings для XHTTP backend, TLS которого завершается в Traefik.
 build_xhttp_stream_json() {
 	local path=$1 host=$2 sockopt external_proxy
-	sockopt=$(build_sockopt_json false UseIP tproxy)
+	sockopt=$(build_sockopt_json false UseIP tproxy "$(build_trusted_xff_headers_json)")
 	external_proxy=$(build_external_proxy_json "$host" tls '["h2","http/1.1"]')
 	jq -nc --arg path "$path" --arg host "$host" --argjson sockopt "$sockopt" --argjson externalProxy "$external_proxy" '{
       network:"xhttp",
@@ -655,7 +713,18 @@ build_hysteria2_stream_json() {
 	local host=$1 cert_file=$2 key_file=$3 auth=${4:-} tls_settings masq_url
 	tls_settings=$(build_tls_settings_json "$host" "$cert_file" "$key_file" '["h3"]' "")
 	masq_url=${HYSTERIA2_MASQ_URL:-}
-	[[ -n "$masq_url" ]] || masq_url="https://${host}/"
+	# Traefik websecure listens on :4443 in docker-net (not public :443 — that is Vision).
+	# Prefer https://${WEBDOMAIN}:4443/ so JSON subscriptions do not leak the internal
+	# hostname "traefik" (3x-ui copies masquerade into client outbounds). Compose must
+	# map WEBDOMAIN → Traefik (172.18.0.6) via extra_hosts; do not use https://${host}/
+	# on :443 (closed / wrong service inside this container).
+	if [[ -z "$masq_url" ]]; then
+		if [[ -n "${WEBDOMAIN:-}" ]]; then
+			masq_url="https://${WEBDOMAIN}:4443/"
+		else
+			masq_url="https://172.18.0.6:4443/"
+		fi
+	fi
 	jq -nc \
 		--arg masqUrl "$masq_url" \
 		--arg auth "$auth" \
@@ -670,8 +739,8 @@ build_hysteria2_stream_json() {
             masquerade:{
               type:"proxy",
               url:$masqUrl,
-              rewriteHost:false,
-              insecure:false
+              rewriteHost:true,
+              insecure:true
             }
           }
         }'

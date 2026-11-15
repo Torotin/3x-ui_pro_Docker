@@ -10,8 +10,20 @@ DNSCRYPT_SERVICE_FILE="${DNSCRYPT_SERVICE_FILE:-/etc/systemd/system/dnscrypt-pro
 DNSCRYPT_RESOLVED_DROPIN_DIR="${DNSCRYPT_RESOLVED_DROPIN_DIR:-/etc/systemd/resolved.conf.d}"
 DNSCRYPT_RESOLVED_DROPIN="${DNSCRYPT_RESOLVED_DROPIN:-$DNSCRYPT_RESOLVED_DROPIN_DIR/dnscrypt-proxy.conf}"
 DNSCRYPT_RESOLV_CONF="${DNSCRYPT_RESOLV_CONF:-${INSTALL_TEST_RESOLV_CONF:-/etc/resolv.conf}}"
+# Hosts file used for local short-hostname mapping (sudo/getaddrinfo). Overridable in tests.
+DNSCRYPT_HOSTS_FILE="${DNSCRYPT_HOSTS_FILE:-${INSTALL_TEST_HOSTS:-/etc/hosts}}"
 DNSCRYPT_GITHUB_REPO="${DNSCRYPT_GITHUB_REPO:-DNSCrypt/dnscrypt-proxy}"
 DNSCRYPT_GITHUB_API_LATEST="${DNSCRYPT_GITHUB_API_LATEST:-https://api.github.com/repos/${DNSCRYPT_GITHUB_REPO}/releases/latest}"
+# Optional offline/local archive (absolute path). Also settable via --archive.
+DNSCRYPT_ARCHIVE_FILE="${DNSCRYPT_ARCHIVE_FILE:-}"
+# Space/comma-separated URL prefixes tried when github.com/releases/download returns 5xx.
+# Example: "https://ghfast.top/ https://ghproxy.net/"
+DNSCRYPT_DOWNLOAD_MIRRORS="${DNSCRYPT_DOWNLOAD_MIRRORS:-}"
+DNSCRYPT_CURL_CONNECT_TIMEOUT="${DNSCRYPT_CURL_CONNECT_TIMEOUT:-10}"
+DNSCRYPT_CURL_MAX_TIME="${DNSCRYPT_CURL_MAX_TIME:-180}"
+DNSCRYPT_DOWNLOAD_RETRIES="${DNSCRYPT_DOWNLOAD_RETRIES:-3}"
+DNSCRYPT_RELEASE_JSON="${DNSCRYPT_RELEASE_JSON:-}"
+DNSCRYPT_ASSET_API_URL="${DNSCRYPT_ASSET_API_URL:-}"
 
 dnscrypt_detect_arch() {
 	case "$(uname -m)" in
@@ -37,18 +49,32 @@ dnscrypt_detect_arch() {
 	esac
 }
 
-# Resolve DNSCRYPT_VERSION to a concrete release (no leading v), then set archive URL.
+# Fetch release JSON for a concrete tag (no leading v) into DNSCRYPT_RELEASE_JSON.
+dnscrypt_fetch_release_json() {
+	local version=$1 api_url json
+	api_url="https://api.github.com/repos/${DNSCRYPT_GITHUB_REPO}/releases/tags/${version}"
+	json="$(curl -fsSL --connect-timeout "${DNSCRYPT_CURL_CONNECT_TIMEOUT}" --max-time 30 \
+		-H 'Accept: application/vnd.github+json' \
+		-H 'User-Agent: 3x-ui-pro-docker-dnscrypt' \
+		"$api_url")" || die "Failed to query $api_url (GitHub API). Set DNSCRYPT_ARCHIVE_FILE=/path/to/${DNSCRYPT_ARCHIVE:-archive.tar.gz} for offline install."
+	DNSCRYPT_RELEASE_JSON=$json
+}
+
+# Resolve DNSCRYPT_VERSION to a concrete release (no leading v), then set archive URL + asset API URL.
 dnscrypt_resolve_version() {
 	local tag json
+	DNSCRYPT_RELEASE_JSON=""
+	DNSCRYPT_ASSET_API_URL=""
 	if [[ -n "$DNSCRYPT_VERSION" ]]; then
 		DNSCRYPT_VERSION="${DNSCRYPT_VERSION#v}"
 		printf '[+] Using pinned version: %s\n' "$DNSCRYPT_VERSION"
 	else
 		printf '[+] Resolving latest dnscrypt-proxy release from GitHub\n'
-		json="$(curl -fsSL --connect-timeout 5 --max-time 20 \
+		json="$(curl -fsSL --connect-timeout "${DNSCRYPT_CURL_CONNECT_TIMEOUT}" --max-time 30 \
 			-H 'Accept: application/vnd.github+json' \
 			-H 'User-Agent: 3x-ui-pro-docker-dnscrypt' \
-			"$DNSCRYPT_GITHUB_API_LATEST")" || die "Failed to query $DNSCRYPT_GITHUB_API_LATEST"
+			"$DNSCRYPT_GITHUB_API_LATEST")" || die "Failed to query $DNSCRYPT_GITHUB_API_LATEST (GitHub API). Pin DNSCRYPT_VERSION and/or set DNSCRYPT_ARCHIVE_FILE for offline install."
+		DNSCRYPT_RELEASE_JSON=$json
 		if command -v python3 >/dev/null 2>&1; then
 			tag="$(printf '%s' "$json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["tag_name"])')"
 		else
@@ -61,6 +87,28 @@ dnscrypt_resolve_version() {
 	[[ -n "$DNSCRYPT_ARCHIVE_ARCH" ]] || die "dnscrypt arch is not detected"
 	DNSCRYPT_ARCHIVE="dnscrypt-proxy-${DNSCRYPT_ARCHIVE_ARCH}-${DNSCRYPT_VERSION}.tar.gz"
 	DNSCRYPT_DOWNLOAD_URL="https://github.com/${DNSCRYPT_GITHUB_REPO}/releases/download/${DNSCRYPT_VERSION}/${DNSCRYPT_ARCHIVE}"
+	# browser_download_url often 5xx from some regions; Assets API + octet-stream is the reliable path.
+	if [[ -z "$DNSCRYPT_RELEASE_JSON" ]]; then
+		dnscrypt_fetch_release_json "$DNSCRYPT_VERSION"
+	fi
+	if command -v python3 >/dev/null 2>&1; then
+		DNSCRYPT_ASSET_API_URL="$(printf '%s' "$DNSCRYPT_RELEASE_JSON" | DNSCRYPT_ARCHIVE_NAME="$DNSCRYPT_ARCHIVE" python3 -c '
+import json, os, sys
+name = os.environ["DNSCRYPT_ARCHIVE_NAME"]
+assets = json.load(sys.stdin).get("assets") or []
+for asset in assets:
+    if asset.get("name") == name and asset.get("url"):
+        print(asset["url"])
+        break
+')"
+	else
+		DNSCRYPT_ASSET_API_URL="$(printf '%s' "$DNSCRYPT_RELEASE_JSON" | tr -d '\n' | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"'"$DNSCRYPT_ARCHIVE"'".*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+	fi
+	if [[ -n "$DNSCRYPT_ASSET_API_URL" ]]; then
+		printf '[+] GitHub Assets API URL resolved for %s\n' "$DNSCRYPT_ARCHIVE"
+	else
+		printf '[!] GitHub Assets API URL not found in release metadata; will try browser download URL / mirrors\n'
+	fi
 }
 
 dnscrypt_parse_args() {
@@ -78,9 +126,19 @@ dnscrypt_parse_args() {
 		--version=*)
 			DNSCRYPT_VERSION="${1#--version=}"
 			;;
+		--archive)
+			shift
+			(($# > 0)) || die "dnscrypt: --archive requires a path to a local .tar.gz"
+			DNSCRYPT_ARCHIVE_FILE="$1"
+			;;
+		--archive=*)
+			DNSCRYPT_ARCHIVE_FILE="${1#--archive=}"
+			;;
 		--apply | --yes) ;;
 		-h | --help)
-			printf '%s\n' "dnscrypt flags: --force, --reconfigure, --version X.Y.Z (default: latest from GitHub; env DNSCRYPT_VERSION)"
+			printf '%s\n' "dnscrypt flags: --force, --reconfigure, --version X.Y.Z, --archive /path/file.tar.gz"
+			printf '%s\n' "  default version: latest from GitHub (env DNSCRYPT_VERSION)"
+			printf '%s\n' "  download bypass: Assets API first; mirrors via DNSCRYPT_DOWNLOAD_MIRRORS; offline via --archive / DNSCRYPT_ARCHIVE_FILE"
 			return 2
 			;;
 		--*)
@@ -202,16 +260,121 @@ dnscrypt_remove_distro_bits() {
 	apt-get purge -y dnscrypt-proxy || true
 }
 
+# Split DNSCRYPT_DOWNLOAD_MIRRORS on commas/spaces into prefix lines.
+dnscrypt_mirror_prefixes() {
+	local raw=${DNSCRYPT_DOWNLOAD_MIRRORS:-} item
+	raw=${raw//;/ }
+	raw=${raw//,/ }
+	# shellcheck disable=SC2086
+	for item in $raw; do
+		[[ -n "$item" ]] || continue
+		printf '%s\n' "$item"
+	done
+}
+
+# One curl download attempt; returns curl status. Does not die.
+dnscrypt_curl_to_file() {
+	local dest=$1 url=$2
+	shift 2 || true
+	curl -fsSL \
+		--connect-timeout "${DNSCRYPT_CURL_CONNECT_TIMEOUT}" \
+		--max-time "${DNSCRYPT_CURL_MAX_TIME}" \
+		--retry "${DNSCRYPT_DOWNLOAD_RETRIES}" \
+		--retry-delay 2 \
+		--retry-all-errors \
+		"$@" \
+		-o "$dest" \
+		"$url"
+}
+
+# Download archive into $1 using Assets API → browser URL → mirrors → clear error.
+dnscrypt_fetch_archive() {
+	local dest=$1 mirror_prefix mirrored ok=0
+	rm -f -- "$dest"
+
+	if [[ -n "${DNSCRYPT_ARCHIVE_FILE:-}" ]]; then
+		[[ -f "$DNSCRYPT_ARCHIVE_FILE" ]] || die "dnscrypt: local archive not found: $DNSCRYPT_ARCHIVE_FILE"
+		printf '[+] Using local archive: %s\n' "$DNSCRYPT_ARCHIVE_FILE"
+		run_cmd dnscrypt.download cp -a -- "$DNSCRYPT_ARCHIVE_FILE" "$dest"
+		ok=1
+	fi
+
+	if ((ok == 0)) && [[ -n "${DNSCRYPT_ASSET_API_URL:-}" ]]; then
+		printf '[+] Downloading via GitHub Assets API (octet-stream)\n'
+		printf '    %s\n' "$DNSCRYPT_ASSET_API_URL"
+		if run_cmd dnscrypt.download dnscrypt_curl_to_file "$dest" "$DNSCRYPT_ASSET_API_URL" \
+			-H 'Accept: application/octet-stream' \
+			-H 'User-Agent: 3x-ui-pro-docker-dnscrypt'; then
+			ok=1
+		else
+			printf '[!] Assets API download failed; trying browser release URL / mirrors\n'
+			rm -f -- "$dest"
+		fi
+	fi
+
+	if ((ok == 0)); then
+		printf '[+] Downloading via browser release URL\n'
+		printf '    %s\n' "$DNSCRYPT_DOWNLOAD_URL"
+		if run_cmd dnscrypt.download dnscrypt_curl_to_file "$dest" "$DNSCRYPT_DOWNLOAD_URL" \
+			-H 'User-Agent: 3x-ui-pro-docker-dnscrypt'; then
+			ok=1
+		else
+			printf '[!] browser release URL failed\n'
+			rm -f -- "$dest"
+		fi
+	fi
+
+	if ((ok == 0)); then
+		while IFS= read -r mirror_prefix; do
+			[[ -n "$mirror_prefix" ]] || continue
+			mirrored="${mirror_prefix%/}/$DNSCRYPT_DOWNLOAD_URL"
+			# Allow either "https://mirror/https://github.com/..." or "https://mirror/github.com/..."
+			if [[ "$mirror_prefix" == *"://"* && "$DNSCRYPT_DOWNLOAD_URL" == https://* ]]; then
+				mirrored="${mirror_prefix%/}/$DNSCRYPT_DOWNLOAD_URL"
+			fi
+			printf '[+] Trying download mirror\n'
+			printf '    %s\n' "$mirrored"
+			if run_cmd dnscrypt.download dnscrypt_curl_to_file "$dest" "$mirrored" \
+				-H 'User-Agent: 3x-ui-pro-docker-dnscrypt'; then
+				ok=1
+				break
+			fi
+			rm -f -- "$dest"
+		done < <(dnscrypt_mirror_prefixes)
+	fi
+
+	if ((ok == 0)) || [[ ! -s "$dest" ]]; then
+		die "Failed to download $DNSCRYPT_ARCHIVE.
+  Tried: GitHub Assets API, $DNSCRYPT_DOWNLOAD_URL, and DNSCRYPT_DOWNLOAD_MIRRORS.
+  Bypass: copy the archive to the host and re-run with --archive /path/$DNSCRYPT_ARCHIVE
+  or set DNSCRYPT_ARCHIVE_FILE=/path/$DNSCRYPT_ARCHIVE
+  (release page: https://github.com/${DNSCRYPT_GITHUB_REPO}/releases/tag/${DNSCRYPT_VERSION})"
+	fi
+
+	# Sanity: official linux_x86_64 tarball is several MB; reject HTML/error bodies.
+	if [[ "$(wc -c <"$dest")" -lt 100000 ]]; then
+		die "Downloaded archive looks too small ($(wc -c <"$dest") bytes); refusing to install. Check GitHub/mirror response or use --archive."
+	fi
+}
+
+# Idempotent temp-dir cleanup for dnscrypt_install_binary (safe on EXIT + success).
+dnscrypt_cleanup_tmpdir() {
+	if [[ -n "${DNSCRYPT_TMP_WORKDIR:-}" ]]; then
+		rm -rf -- "$DNSCRYPT_TMP_WORKDIR"
+	fi
+	DNSCRYPT_TMP_WORKDIR=""
+}
+
 dnscrypt_install_binary() {
 	local workdir
-	printf '[+] Downloading dnscrypt-proxy %s (%s)\n' "$DNSCRYPT_VERSION" "$DNSCRYPT_ARCHIVE_ARCH"
-	printf '    %s\n' "$DNSCRYPT_DOWNLOAD_URL"
+	printf '[+] Fetching dnscrypt-proxy %s (%s)\n' "$DNSCRYPT_VERSION" "$DNSCRYPT_ARCHIVE_ARCH"
 	workdir="$(mktemp -d /tmp/dnscrypt-proxy-install.XXXXXX)"
-	# shellcheck disable=SC2064
-	trap "rm -rf -- '$workdir'" RETURN
+	DNSCRYPT_TMP_WORKDIR=$workdir
+	# die()/exit skip RETURN traps; chain EXIT so workdir is removed then installer cleanup runs.
+	trap 'dnscrypt_cleanup_tmpdir; install_exit_cleanup' EXIT
 
-	run_cmd dnscrypt.download curl -fsSL -o "$workdir/$DNSCRYPT_ARCHIVE" "$DNSCRYPT_DOWNLOAD_URL"
-	tar -xzf "$workdir/$DNSCRYPT_ARCHIVE" -C "$workdir"
+	dnscrypt_fetch_archive "$workdir/$DNSCRYPT_ARCHIVE"
+	tar -xzf "$workdir/$DNSCRYPT_ARCHIVE" -C "$workdir" || die "Failed to extract $DNSCRYPT_ARCHIVE (corrupt download?)"
 
 	if [[ ! -x "$workdir/$DNSCRYPT_EXTRACT_DIR/dnscrypt-proxy" ]]; then
 		die "Binary not found in archive ($DNSCRYPT_EXTRACT_DIR/dnscrypt-proxy)"
@@ -232,8 +395,8 @@ dnscrypt_install_binary() {
 		"$DNSCRYPT_INSTALL_DIR"/example-* \
 		"$DNSCRYPT_INSTALL_DIR/localhost.pem" \
 		"$DNSCRYPT_INSTALL_DIR/LICENSE"
-	trap - RETURN
-	rm -rf -- "$workdir"
+	dnscrypt_cleanup_tmpdir
+	trap install_exit_cleanup EXIT
 }
 
 dnscrypt_detect_connectivity() {
@@ -695,7 +858,7 @@ netprobe_timeout = 60
 ## On other operating systems, the connection will be initialized
 ## but nothing will be sent at all.
 
-netprobe_address = '9.9.9.9:53'
+netprobe_address = '9.9.9.11:53'
 
 
 ## Offline mode - Do not use any remote encrypted servers.
@@ -734,6 +897,7 @@ block_ipv6 = __BLOCK_IPV6__
 
 ## Immediately respond to A and AAAA queries for host names without a domain name
 ## This also prevents "dotless domain names" from being resolved upstream.
+## Keep true: short hostnames must come from /etc/hosts (see dnscrypt_ensure_local_hostname).
 
 block_unqualified = true
 
@@ -1400,7 +1564,7 @@ EOF
 	rm -f -- "$resolv"
 	printf '%s\n' "$DNSCRYPT_TEMP_RESOLV_CONF_CONTENT" >"$resolv"
 
-	if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+	if systemctl cat systemd-resolved.service >/dev/null 2>&1; then
 		systemctl restart systemd-resolved || true
 	fi
 }
@@ -1469,7 +1633,56 @@ dnscrypt_lock_resolv() {
 	chattr -i "$resolv" 2>/dev/null || true
 	rm -f -- "$resolv"
 	printf '%s\n' "$DNSCRYPT_RESOLV_CONF_CONTENT" >"$resolv"
-	chattr +i "$resolv"
+	# CAP_LINUX_IMMUTABLE / some FS (LXC, OpenVZ, tmpfs) may reject immutable; do not abort install.
+	chattr +i "$resolv" 2>/dev/null || printf '[!] Warning: could not set immutable flag on %s\n' "$resolv" >&2
+}
+
+# True when short hostname is mapped on loopback in hosts (comments ignored).
+dnscrypt_hosts_has_local_entry() {
+	local hosts=$1 short=$2
+	[[ -r "$hosts" ]] && awk -v host="$short" '
+		BEGIN { found=0 }
+		/^[[:space:]]*#/ { next }
+		$1 == "127.0.0.1" || $1 == "127.0.1.1" {
+			for (i = 2; i <= NF; i++) if ($i == host) { found=1; exit }
+		}
+		END { exit !found }
+	' "$hosts"
+}
+
+# With block_unqualified=true, short hostnames never resolve via DNS.
+# Missing /etc/hosts entry → sudo: unable to resolve host <hostname>.
+dnscrypt_ensure_local_hostname() {
+	local hosts=${DNSCRYPT_HOSTS_FILE:-/etc/hosts}
+	local short fqdn line
+	short="$(hostname -s 2>/dev/null || true)"
+	[[ -n "$short" ]] || short="$(hostname 2>/dev/null || true)"
+	short="${short%%.*}"
+	[[ -n "$short" && "$short" != "localhost" ]] || return 0
+
+	fqdn="$(hostname -f 2>/dev/null || true)"
+	if [[ -z "$fqdn" || "$fqdn" == "$short" || "$fqdn" == "localhost" || "$fqdn" == *\ * ]]; then
+		fqdn=""
+	fi
+
+	if dnscrypt_hosts_has_local_entry "$hosts" "$short"; then
+		printf '[+] Local hostname already present in %s (%s)\n' "$hosts" "$short"
+		return 0
+	fi
+
+	printf '[+] Mapping local hostname in %s (sudo/getaddrinfo; block_unqualified=true)\n' "$hosts"
+	mkdir -p -- "$(dirname -- "$hosts")"
+	[[ -e "$hosts" ]] || : >"$hosts"
+	if [[ -s "$hosts" ]]; then
+		# Ensure file ends with a newline before appending.
+		[[ "$(tail -c1 "$hosts" | wc -l)" -gt 0 ]] || printf '\n' >>"$hosts"
+	fi
+	if [[ -n "$fqdn" ]]; then
+		line=$'127.0.1.1\t'"${short}"$'\t'"${fqdn}"
+	else
+		line=$'127.0.1.1\t'"${short}"
+	fi
+	printf '%s\n' "$line" >>"$hosts"
 }
 
 dnscrypt_wait_ready() {
@@ -1528,15 +1741,15 @@ dnscrypt_print_summary() {
 
 	if ((DNSCRYPT_HAS_IPV4 == 1)); then
 		printf '\n[+] DIG test (direct @127.0.0.1)\n'
-		dig +time=5 +tries=2 google.com @127.0.0.1 || true
+		dig +time=5 +tries=2 example.com @127.0.0.1 || true
 	fi
 	if ((DNSCRYPT_HAS_IPV6 == 1)); then
 		printf '\n[+] DIG test (direct @::1)\n'
-		dig +time=5 +tries=2 google.com @::1 || true
+		dig +time=5 +tries=2 example.com @::1 || true
 	fi
 
 	printf '\n[+] DIG test (system resolver)\n'
-	dig +time=5 +tries=2 google.com || true
+	dig +time=5 +tries=2 example.com || true
 
 	printf '\n[+] Current DNS\n'
 	ls -la "$DNSCRYPT_RESOLV_CONF" || true
@@ -1578,6 +1791,7 @@ dnscrypt_run_install() {
 	dnscrypt_decide_mode
 
 	if ((DNSCRYPT_SKIP_HEALTHY == 1)); then
+		dnscrypt_ensure_local_hostname
 		printf '[+] Keeping existing binary: %s\n' "${DNSCRYPT_INSTALLED_VERSION}"
 		printf '[+] Done. dnscrypt-proxy %s is already installed and set as system DNS.\n' "$DNSCRYPT_VERSION"
 		return 0
@@ -1591,7 +1805,7 @@ dnscrypt_run_install() {
 		systemctl disable dnscrypt-proxy 2>/dev/null || true
 		rm -f -- "$DNSCRYPT_SERVICE_FILE"
 		pkill -x dnscrypt-proxy 2>/dev/null || true
-		systemctl daemon-reload || true
+		systemctl daemon-reload 2>/dev/null || true
 		dnscrypt_install_binary
 		;;
 	upgrade)
@@ -1627,6 +1841,7 @@ dnscrypt_run_install() {
 
 	dnscrypt_wait_ready
 	dnscrypt_lock_resolv
+	dnscrypt_ensure_local_hostname
 	dnscrypt_print_summary
 }
 
@@ -1659,6 +1874,7 @@ install_dnscrypt_command() {
 		run_cmd dnscrypt.config write "$DNSCRYPT_CONFIG_FILE"
 		run_cmd dnscrypt.unit write "$DNSCRYPT_SERVICE_FILE"
 		run_cmd dnscrypt.resolved write "$DNSCRYPT_RESOLVED_DROPIN"
+		run_cmd dnscrypt.hosts.ensure printf 'ensure 127.0.1.1 local hostname in /etc/hosts\n'
 		run_cmd dnscrypt.service.enable systemctl enable dnscrypt-proxy
 		run_cmd dnscrypt.service.restart systemctl restart dnscrypt-proxy
 		run_cmd dnscrypt.dig dig +time=2 +tries=1 +short example.com @127.0.0.1
@@ -1709,6 +1925,18 @@ install_doctor_check_dnscrypt() {
 		else
 			doctor_issue dnscrypt "resolv.conf does not clearly point to 127.0.0.1/::1" "$next_action"
 		fi
+		local short_host hosts_file=${DNSCRYPT_HOSTS_FILE:-${INSTALL_TEST_HOSTS:-/etc/hosts}}
+		short_host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+		short_host="${short_host%%.*}"
+		if [[ -n "$short_host" && "$short_host" != "localhost" ]]; then
+			if dnscrypt_hosts_has_local_entry "$hosts_file" "$short_host"; then
+				doctor_ok_detail "local hostname mapped in hosts ($short_host)"
+			elif getent hosts "$short_host" >/dev/null 2>&1; then
+				doctor_ok_detail "local hostname resolves ($short_host)"
+			else
+				doctor_issue dnscrypt "local hostname '$short_host' does not resolve (sudo may warn: unable to resolve host); expected 127.0.1.1 in $hosts_file" "$next_action --reconfigure"
+			fi
+		fi
 		if command -v dig >/dev/null 2>&1; then
 			if dig +time=2 +tries=1 +short example.com @127.0.0.1 >/dev/null 2>&1; then
 				doctor_ok_detail "dig @127.0.0.1 succeeded"
@@ -1743,7 +1971,7 @@ uninstall_purge_dnscrypt() {
 	run_cmd dnscrypt.purge.resolv bash -c "printf '%s\\n' 'nameserver 9.9.9.9' 'nameserver 1.1.1.1' 'nameserver 2620:fe::fe' 'nameserver 2606:4700:4700::1111' 'options edns0' >'$resolv_file'"
 	run_cmd dnscrypt.purge.dir rm -rf -- "$DNSCRYPT_INSTALL_DIR"
 	run_cmd dnscrypt.purge.reload systemctl daemon-reload || true
-	if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+	if systemctl cat systemd-resolved.service >/dev/null 2>&1; then
 		run_cmd dnscrypt.purge.resolved systemctl restart systemd-resolved || true
 	fi
 }

@@ -59,25 +59,16 @@ services:
       - traefik.http.middlewares.adguard-basic-auth.basicauth.users=${HT_PASS_ENCODED}
       - traefik.http.middlewares.adguard-basic-auth.basicauth.realm=AdGuardHome
 
-      # Редирект: добавляем префикс /${URI_ADGUARD_PANEL} к Location
-      - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
-      - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
-      - traefik.http.middlewares.redirect-adguard-panel.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_ADGUARD_PANEL}/$$1
-
-      # Снятие префикса
-      - traefik.http.middlewares.strip-adguard-prefix.stripPrefix.prefixes=/${URI_ADGUARD_PANEL}
-
-      # Общая цепочка для AdGuard
-      - traefik.http.middlewares.adguard-chain.chain.middlewares=bouncer@file,adguard-basic-auth,rate-limit,admin-security-headers@file,strip-adguard-prefix,redirect-adguard-panel,compress
+      - traefik.http.middlewares.adguard-admin-chain.chain.middlewares=adguard-basic-auth,rate-limit,admin-security-headers@file,compress
       - traefik.http.middlewares.adguard-doh-chain.chain.middlewares=bouncer@file,adguard-doh-rate-limit,adguard-doh-path
 
-      # Panel router
-      - traefik.http.routers.adguard-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_ADGUARD_PANEL}`)
-      - traefik.http.routers.adguard-panel.entrypoints=websecure
-      - traefik.http.routers.adguard-panel.middlewares=adguard-chain
-      - traefik.http.routers.adguard-panel.tls.certresolver=le
+      # Panel on private admin Host (DoH stays public below)
+      - traefik.http.routers.adguard-panel.rule=Host(`adguard.${WEBDOMAIN}`)
+      - traefik.http.routers.adguard-panel.entrypoints=admin
+      - traefik.http.routers.adguard-panel.middlewares=adguard-admin-chain
+      - traefik.http.routers.adguard-panel.tls=true
       - traefik.http.routers.adguard-panel.service=adguard-panel
-      - traefik.http.routers.adguard-panel.priority=1000
+      - traefik.http.routers.adguard-panel.priority=100
 
       # Public DoH router. Plain DNS remains internal on 172.19.0.10:53.
       - traefik.http.routers.adguard-doh.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_ADGUARD_DOH}`)

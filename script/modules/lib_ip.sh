@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Shared host IPv4/IPv6 connectivity probe for installer modules.
 
+ip_probe_is_valid_ipv4() {
+	[[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+ip_probe_is_valid_ipv6() {
+	local ip=${1:-}
+	# Require at least one colon and only hex/colon chars (rejects HTML/JSON with ':').
+	[[ "$ip" == *:* ]] && [[ "$ip" =~ ^[0-9a-fA-F:]+$ ]]
+}
+
 ip_probe_fetch_public_ip() {
 	local family=$1
 	local url ip
@@ -36,17 +46,26 @@ ip_probe_fetch_public_ip() {
 	fi
 
 	for url in "${urls[@]}"; do
+		# --connect-timeout + --max-time bound DNS hangs when resolv.conf is mid-reconfigure.
 		ip="$(curl -fsS "${curl_opts[@]}" --connect-timeout 3 --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]')" || true
-		if [[ "$family" == "4" ]] && [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		if [[ "$family" == "4" ]] && ip_probe_is_valid_ipv4 "$ip"; then
 			printf '%s\n' "$ip"
 			return 0
 		fi
-		if [[ "$family" == "6" ]] && [[ "$ip" == *:* ]] && [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		if [[ "$family" == "6" ]] && ip_probe_is_valid_ipv6 "$ip"; then
 			printf '%s\n' "$ip"
 			return 0
 		fi
 	done
 	return 1
+}
+
+# Under `set -o pipefail`, `cmd | grep -q` can exit 141 (SIGPIPE) when grep
+# closes early after the first match — false negative for "has output" checks.
+ip_probe_cmd_has_output() {
+	local out
+	out="$("$@" 2>/dev/null || true)"
+	[[ -n "$out" ]]
 }
 
 ip_probe_has_ipv4() {
@@ -56,7 +75,7 @@ ip_probe_has_ipv4() {
 		export IP_PROBE_PUBLIC_IPV4
 		return 0
 	fi
-	if ! ip -4 route show default 2>/dev/null | grep -q .; then
+	if ! ip_probe_cmd_has_output ip -4 route show default; then
 		return 1
 	fi
 	IP_PROBE_PUBLIC_IPV4="$(ip_probe_fetch_public_ip 4)" || return 1
@@ -74,10 +93,11 @@ ip_probe_has_ipv6() {
 	if [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 1)" == "1" ]]; then
 		return 1
 	fi
-	if ! ip -6 -o addr show scope global 2>/dev/null | grep -q .; then
+	# Prefer usable addresses: interface up, skip deprecated/tentative leftovers.
+	if ! ip_probe_cmd_has_output ip -6 -o addr show up scope global -deprecated; then
 		return 1
 	fi
-	if ! ip -6 route show default 2>/dev/null | grep -q .; then
+	if ! ip_probe_cmd_has_output ip -6 route show default; then
 		return 1
 	fi
 	IP_PROBE_PUBLIC_IPV6="$(ip_probe_fetch_public_ip 6)" || return 1
@@ -88,7 +108,7 @@ ip_probe_has_ipv6() {
 ip_probe_resolve_host_mode() {
 	local has_v4=0 has_v6=0
 
-	if [[ -n "${PUBLIC_IPV4:-}" ]]; then
+	if ip_probe_is_valid_ipv4 "${PUBLIC_IPV4:-}"; then
 		has_v4=1
 	elif ip_probe_has_ipv4; then
 		PUBLIC_IPV4="$IP_PROBE_PUBLIC_IPV4"
@@ -98,12 +118,15 @@ ip_probe_resolve_host_mode() {
 	fi
 
 	if [[ -n "${PUBLIC_IPV6:-}" ]]; then
-		# Reject poisoned legacy fallback where v6 was copied from v4
-		if [[ "$PUBLIC_IPV6" == "$PUBLIC_IPV4" ]] && [[ "$PUBLIC_IPV6" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		# Reject poisoned legacy fallback (v6 copied from v4) and non-IPv6 junk.
+		if [[ "$PUBLIC_IPV6" == "$PUBLIC_IPV4" ]] || ! ip_probe_is_valid_ipv6 "$PUBLIC_IPV6"; then
 			PUBLIC_IPV6=""
 		fi
 	fi
-	if ip_probe_has_ipv6; then
+	if [[ -n "${PUBLIC_IPV6:-}" ]]; then
+		# Trust a valid preset; avoid wiping it when external probe times out.
+		has_v6=1
+	elif ip_probe_has_ipv6; then
 		PUBLIC_IPV6="$IP_PROBE_PUBLIC_IPV6"
 		has_v6=1
 	else

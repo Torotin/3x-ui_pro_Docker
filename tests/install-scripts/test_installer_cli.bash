@@ -109,7 +109,7 @@ make_fixture() {
 	export SSH_PBK=ssh-ed25519-mock
 	export PORT_REMOTE_SSH=22022
 	unset INSTALL_MOCK_REMOTE_VERSION INSTALL_MOCK_REMOTE_CHANGELOG HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 STRICT_DNS_CHECK STRICT_ACME_CHECK
+	unset ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG UDP443_BACKEND PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA STRICT_DNS_CHECK STRICT_ACME_CHECK
 	unset DNSCRYPT_VERSION
 	unset TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_ME_KEEPALIVE_ENABLED TELEMT_HARDSWAP
 	unset TELEMT_PROXY_SECRET_ROTATE_RUNTIME TELEMT_STUN_USE TELEMT_STUN_TCP_FALLBACK
@@ -117,8 +117,16 @@ make_fixture() {
 	unset VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER
 	unset REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
 	unset INSTALL_MOCK_DOCTOR_PHASE
+	unset INSTALL_MOCK_DOCKER_PRESENT
 	unset INSTALL_MOCK_IP_PROBE_IPV4 INSTALL_MOCK_IP_PROBE_IPV6
 	unset INSTALL_MOCK_PUBLIC_IPV4 INSTALL_MOCK_PUBLIC_IPV6
+	unset INSTALL_MOCK_SSH_SOCKET INSTALL_MOCK_SSH_LISTENER_READY INSTALL_MOCK_SSH_IPV6
+	unset INSTALL_MOCK_PATH_MTU INSTALL_MOCK_IFACE_MTU INSTALL_MOCK_DOCKER_MTU
+	unset DOCKER_ENABLE_IPV6 DOCKER_MTU DOCKER_GHCR_MIRROR DOCKER_HTTP_PROXY DOCKER_NO_PROXY
+	unset DOCKER_DISABLE_REGISTRY_MIRRORS DOCKER_PREFER_IPV4
+	unset APT_SOURCES_LIST APT_UBUNTU_SOURCES APT_AUTO_UPGRADES_FILE APT_UNATTENDED_FILE
+	export WIZARD_UI=text
+	unset WIZARD_ASSUME_YES
 	mkdir -p "$INSTALL_ROOT" "$INSTALL_STATE_DIR"
 	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
 ID=ubuntu
@@ -441,7 +449,7 @@ test_compose_installs_docker_maintenance_timer() {
 	assert_contains "docker.maintenance.timer.write" "$INSTALL_COMMAND_LOG" "compose install must write Docker maintenance timer"
 	assert_contains "docker.maintenance.enable systemctl enable docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must enable maintenance timer"
 	assert_contains "docker.maintenance.start systemctl start docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must start maintenance timer"
-	assert_contains "docker.maintenance.list systemctl list-timers --all docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must list maintenance timer"
+	assert_contains "docker.maintenance.active systemctl is-active --quiet docker-proxy-maintenance.timer" "$INSTALL_COMMAND_LOG" "compose install must verify maintenance timer is active"
 }
 
 test_env_reports_permission_problem_before_backup() {
@@ -455,6 +463,22 @@ test_env_reports_permission_problem_before_backup() {
 	fi
 	assert_contains "run with sudo or set INSTALL_ROOT/INSTALL_STATE_DIR" "$tmpdir/stderr" "env must explain how to fix write permissions"
 	assert_not_contains "cp:" "$tmpdir/stderr" "env must not fail with raw cp permission errors"
+}
+
+test_env_defaults_missing_or_ip_webdomain_to_sslip() {
+	make_fixture
+	export WEBDOMAIN=31.59.155.170
+	export INSTALL_MOCK_PUBLIC_IPV4=31.59.155.170
+	run_installer run env
+	assert_contains "WEBDOMAIN=31.59.155.170.sslip.io" "$INSTALL_STATE_DIR/install.env" "bare IPv4 WEBDOMAIN must become <ipv4>.sslip.io"
+	assert_contains "XRAY_TLS_CERT_FILE=/etc/traefik/pem/31.59.155.170.sslip.io-cert.pem" "$INSTALL_ROOT/compose.d/.env" "PEM cert path must track sslip WEBDOMAIN"
+	assert_contains "WEBDOMAIN defaulted to 31.59.155.170.sslip.io" "$tmpdir/stdout" "env must log sslip defaulting"
+
+	make_fixture
+	unset WEBDOMAIN
+	export INSTALL_MOCK_PUBLIC_IPV4=198.51.100.10
+	run_installer run env
+	assert_contains "WEBDOMAIN=198.51.100.10.sslip.io" "$INSTALL_STATE_DIR/install.env" "empty WEBDOMAIN must become <ipv4>.sslip.io"
 }
 
 test_env_preserves_existing_state_defaults() {
@@ -613,7 +637,8 @@ test_env_normalizes_global_boolean_values() {
 		assert_contains "ENABLE_TELEMT=false" "$file" "ENABLE_TELEMT must normalize to false in $file"
 		assert_contains "ENABLE_MIHOMO=false" "$file" "ENABLE_MIHOMO must normalize to false in $file"
 		assert_contains "ENABLE_VLESS_GRPC=true" "$file" "ENABLE_VLESS_GRPC must normalize to true in $file"
-		assert_contains "ENABLE_HYSTERIA2=false" "$file" "ENABLE_HYSTERIA2 must normalize to false in $file"
+		assert_contains "UDP443_BACKEND=amneziawg" "$file" "legacy ENABLE_HYSTERIA2=0 must resolve to amneziawg backend in $file"
+		assert_contains "PORT_LOCAL_UDP443=443" "$file" "env render must persist UDP443 publish port in $file"
 		assert_contains "STRICT_DNS_CHECK=true" "$file" "STRICT_DNS_CHECK must normalize to true in $file"
 		assert_contains "STRICT_ACME_CHECK=false" "$file" "STRICT_ACME_CHECK must normalize to false in $file"
 		assert_contains "TELEMT_MIDDLE_PROXY_NAT_PROBE=true" "$file" "TELEMT_MIDDLE_PROXY_NAT_PROBE must normalize to true in $file"
@@ -636,6 +661,103 @@ test_env_rejects_invalid_global_boolean_values() {
 		fail "env must reject invalid global boolean values"
 	fi
 	assert_contains "ENABLE_HYSTERIA2 must be boolean" "$tmpdir/stderr" "invalid boolean must name the variable and allowed values"
+}
+
+run_udp443_env_resolution() {
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/02_env.sh"
+	install_normalize_udp443_port_env
+	install_normalize_udp443_backend
+}
+
+assert_udp443_backend_resolution() {
+	local expected_backend=$1 expected_hy2=$2 expected_awg=$3 message=$4
+	[[ "$UDP443_BACKEND" == "$expected_backend" ]] || fail "$message: expected UDP443_BACKEND=$expected_backend got $UDP443_BACKEND"
+	[[ "$ENABLE_HYSTERIA2" == "$expected_hy2" ]] || fail "$message: expected ENABLE_HYSTERIA2=$expected_hy2 got $ENABLE_HYSTERIA2"
+	[[ "$ENABLE_AMNEZIAWG" == "$expected_awg" ]] || fail "$message: expected ENABLE_AMNEZIAWG=$expected_awg got $ENABLE_AMNEZIAWG"
+}
+
+test_udp443_backend_defaults_amneziawg_when_unset() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution amneziawg false true "unset UDP443_BACKEND and ENABLE_HYSTERIA2"
+}
+
+test_udp443_backend_legacy_hysteria2_when_hy2_true() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
+	export ENABLE_HYSTERIA2=true
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution hysteria2 true false "legacy ENABLE_HYSTERIA2=true"
+}
+
+test_udp443_backend_legacy_amneziawg_when_hy2_false() {
+	make_fixture
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
+	export ENABLE_HYSTERIA2=false
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution amneziawg false true "legacy ENABLE_HYSTERIA2=false"
+}
+
+test_udp443_backend_explicit_off() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=off
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution off false false "explicit UDP443_BACKEND=off"
+}
+
+test_udp443_backend_explicit_hysteria2() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=hysteria2
+	run_udp443_env_resolution
+	assert_udp443_backend_resolution hysteria2 true false "explicit UDP443_BACKEND=hysteria2"
+}
+
+test_udp443_port_reads_legacy_hysteria_port() {
+	make_fixture
+	unset PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA
+	export PORT_LOCAL_HYSTERIA=443
+	run_udp443_env_resolution
+	[[ "$PORT_LOCAL_UDP443" == "443" ]] || fail "expected PORT_LOCAL_UDP443=443 from legacy, got $PORT_LOCAL_UDP443"
+	[[ "$PORT_LOCAL_HYSTERIA" == "443" ]] || fail "PORT_LOCAL_HYSTERIA shim must match UDP443 port, got $PORT_LOCAL_HYSTERIA"
+}
+
+test_udp443_port_prefers_udp443_over_legacy() {
+	make_fixture
+	export PORT_LOCAL_UDP443=5443 PORT_LOCAL_HYSTERIA=443
+	run_udp443_env_resolution
+	[[ "$PORT_LOCAL_UDP443" == "5443" ]] || fail "PORT_LOCAL_UDP443 must stay explicit, got $PORT_LOCAL_UDP443"
+	[[ "$PORT_LOCAL_HYSTERIA" == "5443" ]] || fail "PORT_LOCAL_HYSTERIA shim must follow UDP443 port, got $PORT_LOCAL_HYSTERIA"
+}
+
+test_udp443_backend_rejects_invalid_value() {
+	make_fixture
+	unset ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG
+	export UDP443_BACKEND=nope
+	if (
+		# shellcheck source=/dev/null
+		source "$ROOT_DIR/script/modules/00_common.sh"
+		# shellcheck source=/dev/null
+		source "$ROOT_DIR/script/modules/02_env.sh"
+		install_normalize_udp443_port_env
+		install_normalize_udp443_backend
+	); then
+		fail "env must reject invalid UDP443_BACKEND"
+	fi
+}
+
+test_env_rejects_invalid_udp443_backend_on_run() {
+	make_fixture
+	export UDP443_BACKEND=nope
+	if run_installer run env; then
+		fail "installer env must reject invalid UDP443_BACKEND"
+	fi
+	assert_contains "UDP443_BACKEND must be amneziawg|hysteria2|off" "$tmpdir/stderr" "invalid UDP443_BACKEND must name allowed values"
 }
 
 test_state_loader_preserves_literal_dollars() {
@@ -731,7 +853,7 @@ test_ip_probe_ipv4_only_leaves_ipv6_empty() {
 	[[ "$PUBLIC_IPV6" != "$PUBLIC_IPV4" ]] || fail "PUBLIC_IPV6 must not equal PUBLIC_IPV4"
 }
 
-test_ip_probe_clears_stale_ipv6_when_unreachable() {
+test_ip_probe_keeps_valid_preset_ipv6_when_probe_fails() {
 	make_fixture
 	export PUBLIC_IPV4=198.51.100.10
 	export PUBLIC_IPV6=2001:db8:dead:beef::1
@@ -744,8 +866,61 @@ test_ip_probe_clears_stale_ipv6_when_unreachable() {
 	# shellcheck source=/dev/null
 	source "$ROOT_DIR/script/modules/lib_ip.sh"
 	ip_probe_resolve_host_mode
-	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "stale PUBLIC_IPV6 must downgrade to ipv4, got $HOST_IP_MODE"
-	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "stale PUBLIC_IPV6 must be cleared, got $PUBLIC_IPV6"
+	[[ "$HOST_IP_MODE" == "dual" ]] || fail "valid preset PUBLIC_IPV6 must keep dual when probe fails, got $HOST_IP_MODE"
+	[[ "$PUBLIC_IPV6" == "2001:db8:dead:beef::1" ]] || fail "valid preset PUBLIC_IPV6 must be kept, got $PUBLIC_IPV6"
+}
+
+test_ip_probe_clears_invalid_or_poisoned_preset_ipv6() {
+	make_fixture
+	export PUBLIC_IPV4=198.51.100.10
+	export PUBLIC_IPV6=198.51.100.10
+	unset HOST_IP_MODE
+	export INSTALL_MOCK=1
+	export INSTALL_MOCK_IP_PROBE_IPV4=1
+	export INSTALL_MOCK_IP_PROBE_IPV6=0
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_resolve_host_mode
+	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "poisoned PUBLIC_IPV6 must downgrade to ipv4, got $HOST_IP_MODE"
+	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "poisoned PUBLIC_IPV6 must be cleared, got $PUBLIC_IPV6"
+
+	export PUBLIC_IPV6='{"error":"rate limit"}'
+	unset HOST_IP_MODE
+	ip_probe_resolve_host_mode
+	[[ "$HOST_IP_MODE" == "ipv4" ]] || fail "junk PUBLIC_IPV6 must downgrade to ipv4, got $HOST_IP_MODE"
+	[[ -z "${PUBLIC_IPV6:-}" ]] || fail "junk PUBLIC_IPV6 must be cleared, got $PUBLIC_IPV6"
+}
+
+test_ip_probe_rejects_invalid_preset_ipv4_and_reprobes() {
+	make_fixture
+	export PUBLIC_IPV4='not-an-ip'
+	unset PUBLIC_IPV6 HOST_IP_MODE
+	export INSTALL_MOCK=1
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_resolve_host_mode
+	[[ "$PUBLIC_IPV4" == "198.51.100.10" ]] || fail "invalid PUBLIC_IPV4 must be replaced by probe, got $PUBLIC_IPV4"
+	[[ "$HOST_IP_MODE" == "dual" ]] || fail "expected dual after re-probe, got $HOST_IP_MODE"
+}
+
+test_ip_probe_validators_reject_html_and_accept_hex_v6() {
+	make_fixture
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/lib_ip.sh"
+	ip_probe_is_valid_ipv4 198.51.100.10 || fail "valid ipv4 rejected"
+	if ip_probe_is_valid_ipv4 '198.51.100'; then fail "incomplete ipv4 accepted"; fi
+	ip_probe_is_valid_ipv6 '2001:db8::10' || fail "valid ipv6 rejected"
+	if ip_probe_is_valid_ipv6 '{"error":"rate limit"}'; then fail "JSON with colon accepted as ipv6"; fi
+	if ip_probe_is_valid_ipv6 'deadbeef'; then fail "hex without colon accepted as ipv6"; fi
+	if ip_probe_is_valid_ipv6 '2001:db8::10' && ! ip_probe_is_valid_ipv4 'not-an-ip'; then
+		:
+	else
+		fail "validators smoke combination failed"
+	fi
 }
 
 test_env_detects_public_ips_when_missing() {
@@ -813,6 +988,19 @@ ENV
 	assert_contains 'stun_servers = ["stun1.l.google.com:19302", "stun2.l.google.com:19302"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render STUN servers as TOML array"
 	assert_contains 'http_ip_detect_urls = ["https://api.ipify.org", "https://ifconfig.me/ip"]' "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must render HTTP IP detect URLs as TOML array"
 	assert_not_contains "http_ip_detect_urls = '[" "$INSTALL_ROOT/telemt/config/config.toml" "Telemt config must not render HTTP IP detect URLs as TOML string"
+	assert_contains 'URI_TELEMT_SUB=' "$INSTALL_ROOT/compose.d/.env" "compose env must persist generated Telemt subpage path"
+	assert_contains 'PORT_LOCAL_TELEMT_SUB=8081' "$INSTALL_ROOT/compose.d/.env" "compose env must default Telemt subpage listen port to 8081"
+	assert_contains '[subpage]' "$INSTALL_ROOT/telemt-panel/config/config.toml" "Telemt panel config must enable 1.x subpage when Telemt is enabled"
+	assert_contains 'base_path = ""' "$INSTALL_ROOT/telemt-panel/config/config.toml" "Telemt panel admin must use empty base_path for admin Host routing"
+}
+
+test_final_summary_includes_telemt_admin_when_enabled() {
+	make_fixture
+	export ENABLE_TELEMT=true
+	run_installer run env final
+	assert_contains "Telemt Panel     : https://telemt.example.test:9443/" "$tmpdir/stdout" "final summary must include admin Telemt panel URL on telemt host"
+	assert_contains "Telemt Panel     : https://telemt.example.test:9443/" "$INSTALL_STATE_DIR/install.summary" "persisted summary must include admin Telemt panel URL on telemt host"
+	assert_contains "Telemt Subpage   : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "persisted summary must include public Telemt subpage base URL"
 }
 
 test_env_can_disable_telemt_rendering() {
@@ -967,6 +1155,10 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "docker.daemon.json.validate printf python3\\ -m\\ json.tool\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker install must log daemon.json validation in mock mode"
 	assert_contains "docker.service.enable systemctl enable docker" "$INSTALL_COMMAND_LOG" "docker install must enable Docker service"
 	assert_not_contains "docker.service.enable systemctl enable --now docker" "$INSTALL_COMMAND_LOG" "docker install must not start service before daemon restart"
+	assert_contains "docker.socket.stop systemctl stop docker.socket" "$INSTALL_COMMAND_LOG" "docker wipe must stop docker.socket before dockerd so overlay mounts can be removed"
+	assert_contains "docker.service.stop systemctl stop docker" "$INSTALL_COMMAND_LOG" "docker wipe must stop docker.service after socket"
+	assert_contains "docker.containerd.stop systemctl stop containerd" "$INSTALL_COMMAND_LOG" "docker wipe must stop containerd after docker"
+	assert_contains "docker.data.unmount install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker wipe must unmount overlay trees before rm -rf"
 	assert_contains "docker.service.reset_failed systemctl reset-failed docker docker.socket" "$INSTALL_COMMAND_LOG" "docker install must clear failed service/socket state before restart"
 	assert_contains "docker.socket.start systemctl start docker.socket" "$INSTALL_COMMAND_LOG" "docker install must start socket before dockerd fd activation restart"
 	assert_contains "docker.service.restart systemctl restart docker" "$INSTALL_COMMAND_LOG" "docker install must restart Docker after daemon config"
@@ -978,12 +1170,19 @@ test_destructive_steps_use_mock_runner_when_explicit() {
 	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "explicit firewall command must be routed through runner"
 	assert_contains "ufw default allow routed" "$INSTALL_COMMAND_LOG" "firewall must allow Docker bridge routed traffic"
 	assert_contains "ufw allow 22022/tcp" "$INSTALL_COMMAND_LOG" "firewall must preserve configured SSH port"
-	assert_contains "ufw allow 443/udp" "$INSTALL_COMMAND_LOG" "firewall must open UDP 443 for accepted Hysteria2 stage"
+	assert_contains "ufw allow 443/udp" "$INSTALL_COMMAND_LOG" "firewall must open UDP 443 for the UDP443 backend stage"
 	assert_contains "ssh.apply bash -c" "$INSTALL_COMMAND_LOG" "ssh apply must render config through shell redirection"
+	# %q escapes the shell-format arg as \$\{USER_SSH\} \$\{PORT_REMOTE_SSH\} ...
+	assert_contains '\$\{USER_SSH\}' "$INSTALL_COMMAND_LOG" "sshd_config envsubst must whitelist USER_SSH"
+	assert_contains '\$\{SSH_AUTH_METHODS\}' "$INSTALL_COMMAND_LOG" "sshd_config envsubst must whitelist SSH_AUTH_METHODS"
 	assert_contains "ssh.detect" "$INSTALL_COMMAND_LOG" "ssh apply must detect the active SSH systemd unit"
-	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload SSH before restart fallback"
+	assert_contains "ssh.socket.override.write" "$INSTALL_COMMAND_LOG" "ssh apply must rewrite ssh.socket ListenStream to PORT_REMOTE_SSH"
+	assert_contains "zz-3xui-port.conf" "$INSTALL_COMMAND_LOG" "ssh socket override must sort after generator addresses.conf"
+	assert_contains "ListenStream=[::]:" "$INSTALL_COMMAND_LOG" "default mock must include IPv6 ListenStream when IPv6 is available"
+	assert_contains "chmod 0644" "$INSTALL_COMMAND_LOG" "socket override must be mode 0644"
 	assert_contains "ssh.listener.check" "$INSTALL_COMMAND_LOG" "ssh apply must verify the configured SSH port listener"
-	assert_not_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must not restart when reload and listener check succeed"
+	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "socket path must reload sshd without stopping the session"
+	assert_not_contains "ssh.service.stop systemctl stop ssh" "$INSTALL_COMMAND_LOG" "socket path must not stop ssh.service (kills interactive sessions)"
 }
 
 test_firewall_does_not_preserve_current_ssh_port() {
@@ -1025,6 +1224,8 @@ test_ssh_rejects_invalid_port_before_apply() {
 
 test_ssh_restarts_when_listener_check_fails_after_reload() {
 	make_fixture
+	# Force non-socket path so reload→restart fallback stays covered.
+	export INSTALL_MOCK_SSH_SOCKET=0
 	export INSTALL_MOCK_SSH_LISTENER_READY=0
 	run_installer run ssh --apply --yes
 	assert_contains "ssh.reload systemctl reload ssh" "$INSTALL_COMMAND_LOG" "ssh apply must reload before fallback"
@@ -1032,10 +1233,53 @@ test_ssh_restarts_when_listener_check_fails_after_reload() {
 	assert_contains "ssh.restart systemctl restart ssh" "$INSTALL_COMMAND_LOG" "ssh apply must restart when listener check fails"
 }
 
+test_ssh_socket_retries_when_listener_check_fails() {
+	make_fixture
+	export INSTALL_MOCK_SSH_SOCKET=1
+	export INSTALL_MOCK_SSH_LISTENER_READY=0
+	run_installer run ssh --apply --yes
+	assert_contains "ssh.socket.override.write" "$INSTALL_COMMAND_LOG" "socket path must rewrite ListenStream"
+	assert_contains "ssh.socket.stop" "$INSTALL_COMMAND_LOG" "failed bind must hard-stop socket before retry"
+	assert_contains "ssh.listener.check" "$INSTALL_COMMAND_LOG" "socket path must verify PORT_REMOTE_SSH listener"
+	assert_not_contains "ssh.service.stop systemctl stop ssh" "$INSTALL_COMMAND_LOG" "retry must not stop ssh.service"
+}
+
 test_ssh_listener_mock_uses_realistic_address_pattern() {
 	make_fixture
 	run_installer run ssh --apply --yes
-	assert_contains 'addr ~ port' "$INSTALL_COMMAND_LOG" "ssh listener check must match address-prefixed sockets"
+	# %q logs the embedded awk as split(\\$4, a, \\":\\"); match the stable port-field compare.
+	assert_contains 'split(' "$INSTALL_COMMAND_LOG" "ssh listener check must split Local Address on colon"
+	assert_contains 'a[n] == p' "$INSTALL_COMMAND_LOG" "ssh listener check must compare the port field"
+}
+
+test_ssh_socket_omits_ipv6_listen_when_disabled() {
+	make_fixture
+	export INSTALL_MOCK_SSH_IPV6=0
+	run_installer run ssh --apply --yes
+	assert_contains "ssh.socket.override.write" "$INSTALL_COMMAND_LOG" "socket path must still write IPv4 ListenStream"
+	assert_contains "ListenStream=0.0.0.0:" "$INSTALL_COMMAND_LOG" "IPv4 ListenStream must remain"
+	assert_not_contains "ListenStream=[::]:" "$INSTALL_COMMAND_LOG" "IPv6-disabled hosts must not bind [::]"
+	assert_not_contains "BindIPv6Only=ipv6-only" "$INSTALL_COMMAND_LOG" "IPv6-disabled hosts must not set BindIPv6Only"
+}
+
+test_ssh_restore_removes_socket_port_override() {
+	make_fixture
+	local backup="$INSTALL_STATE_DIR/backups/sshd_config.bak"
+	local target="$tmpdir/sshd_config"
+	mkdir -p "$(dirname "$backup")"
+	printf 'Port 22\n' >"$backup"
+	printf 'Port 22022\n' >"$target"
+	export INSTALL_MOCK=1
+	export INSTALL_MOCK_SSH_SOCKET=1
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/07_ssh.sh"
+	install_ssh_restore_backup "$backup" "$target" ssh
+	assert_contains "ssh.rollback.socket.override.rm" "$INSTALL_COMMAND_LOG" "rollback must remove zz-3xui-port.conf"
+	assert_contains "zz-3xui-port.conf" "$INSTALL_COMMAND_LOG" "rollback must target the installer socket drop-in"
+	assert_contains "ssh.rollback.daemon.reload systemctl daemon-reload" "$INSTALL_COMMAND_LOG" "rollback must daemon-reload after drop-in removal"
+	assert_contains "ssh.rollback.socket.start" "$INSTALL_COMMAND_LOG" "rollback must restart the socket unit"
 }
 
 test_ssh_auth_mode_follows_optional_public_key() {
@@ -1047,15 +1291,38 @@ test_ssh_auth_mode_follows_optional_public_key() {
 
 	export SSH_PBK=ssh-ed25519-mock
 	install_ssh_set_auth_mode
+	install_ssh_assert_auth_enabled
 	install_render_sshd_config "$ROOT_DIR/script/template/sshd_config.template" "$rendered"
 	assert_contains "PubkeyAuthentication yes" "$rendered" "ssh with public key must enable pubkey auth"
 	assert_contains "PasswordAuthentication no" "$rendered" "ssh with public key must disable password auth"
+	assert_contains "AuthenticationMethods publickey" "$rendered" "pubkey mode must pin AuthenticationMethods"
+	assert_not_contains "Protocol 2" "$rendered" "deprecated Protocol directive must be removed"
+	assert_contains "Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com" "$rendered" "ciphers must be AES-GCM only (Terrapin-safe)"
+	assert_contains "MACs hmac-sha2-512,hmac-sha2-256" "$rendered" "MACs must be non-ETM hmac-sha2 only"
+	assert_not_contains "chacha20-poly1305@openssh.com" "$rendered" "ChaCha20-Poly1305 must be dropped (Terrapin)"
+	assert_not_contains "-etm@openssh.com" "$rendered" "ETM MACs must be dropped (Terrapin)"
+	assert_not_contains "aes256-ctr" "$rendered" "CTR ciphers must be dropped"
+	assert_contains "AllowTcpForwarding yes" "$rendered" "Match User must allow TCP forwarding for service user"
+	assert_not_contains "AllowAgentForwarding yes" "$rendered" "Match User must not re-enable agent forwarding"
 
 	export SSH_PBK=
 	install_ssh_set_auth_mode
+	install_ssh_assert_auth_enabled
 	install_render_sshd_config "$ROOT_DIR/script/template/sshd_config.template" "$rendered"
 	assert_contains "PubkeyAuthentication no" "$rendered" "ssh without public key must disable pubkey auth"
 	assert_contains "PasswordAuthentication yes" "$rendered" "ssh without public key must enable password auth"
+	assert_contains "AuthenticationMethods password" "$rendered" "password mode must pin AuthenticationMethods"
+}
+
+test_ssh_rejects_dual_auth_disabled_lockout() {
+	make_fixture
+	source "$ROOT_DIR/script/modules/07_ssh.sh"
+	export PUBKEY_AUTH=no PASSWORD_AUTH=no SSH_AUTH_METHODS=
+	# die() exits the process — run in a subshell so the suite continues.
+	if (install_ssh_assert_auth_enabled) 2>"$tmpdir/stderr"; then
+		fail "ssh must refuse both auth methods disabled"
+	fi
+	assert_contains "SSH auth lockout" "$tmpdir/stderr" "ssh must explain dual-auth lockout"
 }
 
 test_docker_install_handles_missing_docker_binary() {
@@ -1069,6 +1336,8 @@ test_docker_install_handles_missing_docker_binary() {
 	assert_contains "apt-get remove -y docker-compose" "$INSTALL_COMMAND_LOG" "docker install must not leave Compose v1 package installed"
 	assert_contains "docker.install.packages" "$INSTALL_COMMAND_LOG" "fresh install must install Docker packages"
 	assert_contains "docker-compose-plugin" "$INSTALL_COMMAND_LOG" "docker install must install Compose v2 plugin"
+	assert_contains "docker.socket.stop systemctl stop docker.socket" "$INSTALL_COMMAND_LOG" "fresh install purge path must still stop docker.socket when present"
+	assert_contains "docker.data.unmount install_docker_unmount_data_tree /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "fresh install purge path must unmount before rm -rf"
 	assert_contains "docker.data.remove rm -rf -- /var/lib/docker /var/lib/containerd" "$INSTALL_COMMAND_LOG" "docker data purge must use rm -rf --"
 }
 
@@ -1077,10 +1346,11 @@ test_network_sysctl_dual_preserves_slaac() {
 	export HOST_IP_MODE=dual
 	printf 'HOST_IP_MODE=dual\n' >>"$INSTALL_STATE_DIR/install.env"
 	run_installer run network --apply --yes
-	assert_contains "net.ipv6.conf.all.forwarding = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable ipv6 forwarding"
-	assert_contains "net.ipv6.conf.all.accept_ra = 2" "$INSTALL_COMMAND_LOG" "dual sysctl must use accept_ra=2 with forwarding"
-	assert_contains "net.ipv6.conf.all.autoconf = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable autoconf"
-	assert_not_contains "net.ipv6.conf.all.accept_ra = 0" "$INSTALL_COMMAND_LOG" "dual must not force accept_ra=0"
+	assert_contains "net.ipv6.conf.all.disable_ipv6     = 0" "$INSTALL_COMMAND_LOG" "dual sysctl must keep IPv6 enabled"
+	assert_contains "net.ipv6.conf.all.forwarding     = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable ipv6 forwarding"
+	assert_contains "net.ipv6.conf.all.accept_ra      = 2" "$INSTALL_COMMAND_LOG" "dual sysctl must use accept_ra=2 with forwarding"
+	assert_contains "net.ipv6.conf.all.autoconf       = 1" "$INSTALL_COMMAND_LOG" "dual sysctl must enable autoconf"
+	assert_not_contains "net.ipv6.conf.all.accept_ra      = 0" "$INSTALL_COMMAND_LOG" "dual must not force accept_ra=0"
 }
 
 test_network_sysctl_ipv4_keeps_ra_off() {
@@ -1088,8 +1358,24 @@ test_network_sysctl_ipv4_keeps_ra_off() {
 	export HOST_IP_MODE=ipv4
 	printf 'HOST_IP_MODE=ipv4\n' >>"$INSTALL_STATE_DIR/install.env"
 	run_installer run network --apply --yes
-	assert_contains "net.ipv6.conf.all.accept_ra = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps accept_ra=0"
-	assert_contains "net.ipv6.conf.all.autoconf = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps autoconf=0"
+	assert_contains "net.ipv6.conf.all.disable_ipv6     = 1" "$INSTALL_COMMAND_LOG" "ipv4 profile disables host IPv6 (AAAA stall avoidance)"
+	assert_contains "net.ipv6.conf.all.accept_ra      = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps accept_ra=0"
+	assert_contains "net.ipv6.conf.all.autoconf       = 0" "$INSTALL_COMMAND_LOG" "ipv4 profile keeps autoconf=0"
+}
+
+test_network_sysctl_hardening_defaults() {
+	make_fixture
+	run_installer run network --apply --yes
+	assert_contains "net.ipv4.icmp_ratelimit              = 1000" "$INSTALL_COMMAND_LOG" "icmp_ratelimit must be ms interval (1000), not 1"
+	assert_contains "net.ipv4.tcp_syn_retries         = 3" "$INSTALL_COMMAND_LOG" "tcp_syn_retries=3 for ~15s connect timeout"
+	assert_contains "net.ipv4.tcp_mtu_probing         = 2" "$INSTALL_COMMAND_LOG" "tcp_mtu_probing=2 (active Path MTU)"
+	assert_contains "net.ipv4.conf.all.send_redirects          = 0" "$INSTALL_COMMAND_LOG" "forwarding hosts must not send ICMP redirects"
+	assert_contains "net.ipv6.conf.all.accept_source_route     = 0" "$INSTALL_COMMAND_LOG" "IPv6 source routing must stay disabled"
+	assert_contains "net.ipv4.ip_local_port_range     = 10240 65535" "$INSTALL_COMMAND_LOG" "ephemeral port range must be widened for proxy load"
+	assert_contains "fs.file-max                   = 1048576" "$INSTALL_COMMAND_LOG" "file-max must be raised for high connection counts"
+	assert_not_contains "net.ipv6.route.flush" "$INSTALL_COMMAND_LOG" "route.flush must not be a persistent sysctl"
+	assert_contains "network.modules.load.d" "$INSTALL_COMMAND_LOG" "network apply must persist nf_conntrack modules-load"
+	assert_contains "network.modprobe modprobe nf_conntrack" "$INSTALL_COMMAND_LOG" "network apply must modprobe nf_conntrack before sysctl"
 }
 
 test_network_apply_uses_runner() {
@@ -1103,6 +1389,7 @@ test_docker_networks_created_dual_stack() {
 	make_fixture
 	run_installer run docker --destroy-docker-data
 	assert_contains "--ipv6" "$INSTALL_COMMAND_LOG" "docker network create must pass --ipv6"
+	assert_contains "com.docker.network.driver.mtu=1500" "$INSTALL_COMMAND_LOG" "docker networks must inherit host MTU"
 	assert_contains "fd00:dead:beef:12::/64" "$INSTALL_COMMAND_LOG" "traefik-proxy must use ULA /64"
 	assert_contains "fd00:dead:beef:13::/64" "$INSTALL_COMMAND_LOG" "dns-net must use ULA /64"
 }
@@ -1121,13 +1408,21 @@ test_docker_repo_and_daemon_config_are_safe() {
 	make_fixture
 	run_installer run docker --destroy-docker-data
 	assert_contains "docker.repo.gpg printf" "$INSTALL_COMMAND_LOG" "docker repo key install must log a non-executing pipeline in mock mode"
-	assert_contains "curl\\ -fsSL\\ %s\\ \\|\\ gpg\\ --dearmor\\ -o\\ %s" "$INSTALL_COMMAND_LOG" "docker repo key install must show the intended pipeline"
+	assert_contains "gpg\\ --batch\\ --yes\\ --dearmor" "$INSTALL_COMMAND_LOG" "docker repo key install must show non-interactive gpg pipeline"
 	assert_contains "docker.repo.update apt-get update" "$INSTALL_COMMAND_LOG" "docker repo update must not pass -y"
 	assert_not_contains "docker.repo.update apt-get update -y" "$INSTALL_COMMAND_LOG" "docker repo update must not use unsupported -y"
 	assert_contains "docker.daemon.backup printf backup\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker daemon mock backup must not copy a missing host file"
 	assert_contains "docker.daemon.json.validate printf python3\\ -m\\ json.tool\\ %s\\\\n /etc/docker/daemon.json" "$INSTALL_COMMAND_LOG" "docker daemon mock validation must log validation target without reading it"
 	assert_contains '"live-restore": true' "$INSTALL_COMMAND_LOG" "docker daemon config must enable live restore"
 	assert_contains '"storage-driver": "overlay2"' "$INSTALL_COMMAND_LOG" "docker daemon config must force overlay2"
+	assert_contains "pigz docker-ce" "$INSTALL_COMMAND_LOG" "docker install must include pigz for parallel layer extract"
+	assert_contains '"max-concurrent-downloads": 8' "$INSTALL_COMMAND_LOG" "docker daemon must raise concurrent layer downloads"
+	assert_contains '"max-concurrent-uploads": 5' "$INSTALL_COMMAND_LOG" "docker daemon must raise concurrent uploads"
+	assert_contains '"mtu": 1500' "$INSTALL_COMMAND_LOG" "docker daemon must publish host MTU"
+	assert_contains '"registry-mirrors"' "$INSTALL_COMMAND_LOG" "docker daemon must set Hub registry mirror"
+	assert_contains 'mirror.gcr.io' "$INSTALL_COMMAND_LOG" "docker daemon must use mirror.gcr.io pull-through"
+	assert_contains "docker.gai.prefer_ipv4" "$INSTALL_COMMAND_LOG" "docker install must prefer IPv4 for registry getaddrinfo"
+	assert_contains "network.mtu.detect" "$INSTALL_COMMAND_LOG" "docker install must probe path MTU before pulls"
 	assert_contains '"compress": "true"' "$INSTALL_COMMAND_LOG" "docker daemon logs must be compressed"
 	assert_contains '"mode": "non-blocking"' "$INSTALL_COMMAND_LOG" "docker daemon logs must be non-blocking"
 	assert_contains '"max-buffer-size": "4m"' "$INSTALL_COMMAND_LOG" "docker daemon logs must cap non-blocking buffer"
@@ -1256,6 +1551,32 @@ test_wizard_offers_update_and_uses_same_dispatcher() {
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard env selection must use command dispatcher"
 }
 
+test_wizard_skips_self_update_check_when_git_missing() {
+	make_fixture
+	# Exercise the pre-apt skip path in isolation (full wizard needs many host tools).
+	bash -c '
+		set -Eeuo pipefail
+		SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/00_common.sh"
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/01_menu.sh"
+		# shellcheck source=/dev/null
+		. "$SCRIPT_DIR/modules/09_finalize.sh"
+		INSTALL_MOCK=0
+		command() {
+			if [[ "${1:-}" == "-v" && "${2:-}" == "git" ]]; then
+				return 1
+			fi
+			builtin command "$@"
+		}
+		wizard_offer_self_update
+	' "$ROOT_DIR/script/install.sh" >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Update check: skipped (git not installed; run apt step first)" "$tmpdir/stdout" "wizard must skip update check before apt installs git"
+	assert_not_contains "Update check: installer is up to date" "$tmpdir/stdout" "missing git must not report a false up-to-date status"
+	assert_not_contains "version file not found" "$tmpdir/stderr" "missing git must not emit remote VERSION errors"
+}
+
 test_wizard_offers_update_only_when_newer_version_exists() {
 	make_fixture
 	export INSTALL_MOCK_REMOTE_VERSION=$INSTALLER_NEWER_VERSION
@@ -1278,32 +1599,38 @@ test_wizard_offers_update_only_when_newer_version_exists() {
 
 test_wizard_menu_accepts_numbered_choices() {
 	make_fixture
-	printf '2\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	# Sequential menu: 6 = env (display order, not legacy step ids).
+	printf '6\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "0. dnscrypt" "$tmpdir/stdout" "wizard must show dnscrypt as first step"
 	assert_contains "1. apt" "$tmpdir/stdout" "wizard must show apt as numbered step"
-	assert_contains "2. env" "$tmpdir/stdout" "wizard must show numbered menu"
+	assert_contains "2. user" "$tmpdir/stdout" "wizard menu numbers follow display order"
+	assert_contains "6. env" "$tmpdir/stdout" "wizard must show env as menu item 6"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "wizard must dispatch numbered choices"
 }
 
 test_wizard_toggles_optional_feature_flags_and_renders_env() {
 	make_fixture
+	# t → toggles; 1-5 flip flags/UDP443; a → save+render env; Enter after env; x → quit.
 	printf 't\n1\n2\n3\n4\n5\na\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "t. toggles" "$tmpdir/stdout" "wizard must expose feature toggles"
-	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must have a clear heading"
-	assert_contains "1. ENABLE_LAMPAC" "$tmpdir/stdout" "toggle screen must show Lampac flag"
-	assert_contains "2. ENABLE_TELEMT" "$tmpdir/stdout" "toggle screen must show Telemt flag"
-	assert_contains "3. ENABLE_HYSTERIA2" "$tmpdir/stdout" "toggle screen must show Hysteria2 flag"
-	assert_contains "4. ENABLE_VLESS_GRPC" "$tmpdir/stdout" "toggle screen must show VLESS gRPC flag"
-	assert_contains "5. ENABLE_MIHOMO" "$tmpdir/stdout" "toggle screen must show Mihomo flag"
+	assert_contains "Optional Stack Features" "$tmpdir/stdout" "toggle screen heading"
+	assert_contains "1. Lampac" "$tmpdir/stdout" "human-readable Lampac"
+	assert_contains "2. Telemt" "$tmpdir/stdout" "human-readable Telemt"
+	assert_contains "3. UDP443" "$tmpdir/stdout" "UDP443 selector"
+	assert_contains "4. VLESS gRPC" "$tmpdir/stdout" "VLESS gRPC"
+	assert_contains "5. Mihomo" "$tmpdir/stdout" "Mihomo"
+	assert_contains "Save + render env" "$tmpdir/stdout" "toggles apply action must be save/render only"
 	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "applying toggles must render env through dispatcher"
+	assert_not_contains "Apply compose stack now?" "$tmpdir/stdout" "toggles must not prompt for compose"
+	assert_not_contains "compose.validate" "$INSTALL_COMMAND_LOG" "toggles must not run compose after env render"
 	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "Lampac toggle must persist true"
 	assert_contains "ENABLE_TELEMT=true" "$INSTALL_STATE_DIR/install.env" "Telemt toggle must persist true"
-	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_STATE_DIR/install.env" "Hysteria2 toggle must persist false"
+	assert_contains "UDP443_BACKEND=hysteria2" "$INSTALL_STATE_DIR/install.env" "UDP443 backend cycle must persist hysteria2"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_STATE_DIR/install.env" "VLESS gRPC toggle must persist true"
 	assert_contains "ENABLE_MIHOMO=true" "$INSTALL_STATE_DIR/install.env" "Mihomo toggle must persist true"
 	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_ROOT/compose.d/.env" "Lampac toggle must render compose env"
 	assert_contains "ENABLE_TELEMT=true" "$INSTALL_ROOT/compose.d/.env" "Telemt toggle must render compose env"
-	assert_contains "ENABLE_HYSTERIA2=false" "$INSTALL_ROOT/compose.d/.env" "Hysteria2 toggle must render compose env"
+	assert_contains "UDP443_BACKEND=hysteria2" "$INSTALL_ROOT/compose.d/.env" "UDP443 backend cycle must render compose env"
 	assert_contains "ENABLE_VLESS_GRPC=true" "$INSTALL_ROOT/compose.d/.env" "VLESS gRPC toggle must render compose env"
 	assert_contains "ENABLE_MIHOMO=true" "$INSTALL_ROOT/compose.d/.env" "Mihomo toggle must render compose env"
 	assert_contains "VISION_FALLBACK_HOST=telemt" "$INSTALL_ROOT/compose.d/.env" "enabled Telemt must rerender fallback target"
@@ -1311,19 +1638,99 @@ test_wizard_toggles_optional_feature_flags_and_renders_env() {
 
 test_wizard_toggle_exit_does_not_persist_changes() {
 	make_fixture
-	printf 't\n1\nx\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains "Feature toggles:" "$tmpdir/stdout" "toggle screen must render before exit"
-	assert_not_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "exiting toggles without apply must not persist changes"
-	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "exiting toggles without apply must not render env"
+	printf 't\n1\nx\nn\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Optional Stack Features" "$tmpdir/stdout" "toggle screen must render before exit"
+	assert_not_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "discard dirty exit must not persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "discard dirty exit must not render env"
+}
+
+test_wizard_toggle_dirty_exit_yes_saves_without_env() {
+	make_fixture
+	printf 't\n1\nx\ny\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "ENABLE_LAMPAC=true" "$INSTALL_STATE_DIR/install.env" "dirty-exit Yes must persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "dirty-exit Yes is save-only"
+}
+
+test_wizard_whiptail_sets_dark_newt_colors_when_unset() {
+	make_fixture
+	unset NEWT_COLORS
+	# shellcheck source=script/modules/01_menu.sh
+	source "$ROOT_DIR/script/modules/01_menu.sh"
+	wizard_apply_whiptail_theme
+	[[ -n "${NEWT_COLORS:-}" ]] || fail "NEWT_COLORS must be set by theme helper"
+	case "$NEWT_COLORS" in
+	*root=,black*) ;;
+	*) fail "dark theme must use root=,black; got: $NEWT_COLORS" ;;
+	esac
+	case "$NEWT_COLORS" in
+	*actbutton=black,brightcyan*) ;;
+	*) fail "dark theme must include actbutton=black,brightcyan" ;;
+	esac
+
+	export NEWT_COLORS='custom=white,red'
+	wizard_apply_whiptail_theme
+	[[ "$NEWT_COLORS" == "custom=white,red" ]] || fail "preset NEWT_COLORS must not be overwritten"
+}
+
+test_wizard_whiptail_main_menu_uses_notags_and_key_prefixes() {
+	make_fixture
+	# shellcheck source=script/modules/01_menu.sh
+	source "$ROOT_DIR/script/modules/01_menu.sh"
+	wizard_step_state_get() { printf 'PENDING\n'; }
+	local captured=$tmpdir/whiptail.args
+	whiptail() {
+		printf '%s\n' "$@" >"$captured"
+		# Emit selected tag on the redirected stdout path used by wizard_ui_menu.
+		printf 'x\n' >&2
+		return 1
+	}
+	export -f whiptail
+	WIZARD_UI_RESOLVED=whiptail
+	WIZARD_LAST_STATUS="No operation yet"
+	wizard_whiptail_main_menu >/dev/null || true
+	[[ -s "$captured" ]] || fail "whiptail must be invoked for main menu"
+	assert_contains "--notags" "$captured" "main menu must hide tag column to avoid duplicated keys"
+	# Newt isalpha-only: step tags must be letters (not 0-9).
+	grep -Fxq -- 'n' "$captured" || fail "dnscrypt tag must be letter n for newt hotkeys"
+	grep -Fq -- 'n  [ ] dnscrypt — DNSCrypt system DNS' "$captured" \
+		|| fail "dnscrypt item must start with letter hotkey + badge"
+	grep -Fq -- 'a  auto — Full install (recommended)' "$captured" \
+		|| fail "letter items must carry their hotkey prefix when --notags is set"
+	! grep -Fq -- '0  [ ] dnscrypt' "$captured" || fail "digit-prefixed dnscrypt label must not be used"
+
+	wizard_step_state_get() { printf 'OK\n'; }
+	wizard_whiptail_main_menu >/dev/null || true
+	grep -Fq -- 'n  [OK] dnscrypt — DNSCrypt system DNS' "$captured" \
+		|| fail "whiptail OK badge must be plain [OK] without ANSI escapes"
+	! grep -Fq $'\033' "$captured" || fail "whiptail menu items must not embed ANSI escapes"
+
+	# Defense: ANSI accidentally left in an item label must be stripped before whiptail.
+	wizard_step_badge_whiptail() { printf '\033[32m[OK]\033[0m'; }
+	wizard_whiptail_main_menu >/dev/null || true
+	grep -Fq -- 'n  [OK] dnscrypt — DNSCrypt system DNS' "$captured" \
+		|| fail "wizard_ui_menu must strip ANSI from item labels before whiptail"
+	! grep -Fq $'\033' "$captured" || fail "stripped menu args must not contain ESC"
+}
+
+test_wizard_normalize_accepts_whiptail_letter_step_keys() {
+	make_fixture
+	# shellcheck source=script/modules/01_menu.sh
+	source "$ROOT_DIR/script/modules/01_menu.sh"
+	[[ "$(wizard_normalize_step n)" == "dnscrypt" ]] || fail "n → dnscrypt"
+	[[ "$(wizard_normalize_step p)" == "apt" ]] || fail "p → apt"
+	[[ "$(wizard_normalize_step e)" == "env" ]] || fail "e → env"
+	[[ "$(wizard_normalize_step o)" == "docker" ]] || fail "o → docker"
+	[[ "$(wizard_normalize_step l)" == "final" ]] || fail "l → final"
+	[[ "$(wizard_normalize_step 6)" == "env" ]] || fail "text UI digit 6 → env still works"
 }
 
 test_wizard_removes_html_and_shows_last_status() {
 	make_fixture
-	printf '2\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '6\n\n9\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: OK env" "$tmpdir/stdout" "wizard must show final status for previous operation"
 	assert_contains "9. final" "$tmpdir/stdout" "wizard final step must be menu item 9"
 	assert_not_contains "html" "$tmpdir/stdout" "wizard must not show removed html step"
-	assert_contains "final.summary" "$INSTALL_COMMAND_LOG" "wizard must dispatch final as menu item 8"
+	assert_contains "final.summary" "$INSTALL_COMMAND_LOG" "wizard must dispatch final as menu item 9"
 }
 
 test_wizard_rejects_unknown_menu_choice_without_exit() {
@@ -1331,12 +1738,21 @@ test_wizard_rejects_unknown_menu_choice_without_exit() {
 	printf '99\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Last operation: INVALID 99" "$tmpdir/stdout" "wizard must report invalid menu choices"
 	assert_contains "Unknown menu item: 99" "$tmpdir/stdout" "wizard must explain invalid menu choice"
-	assert_contains "Available steps:" "$tmpdir/stdout" "wizard must continue after invalid menu choice"
+	assert_contains "Quick Actions" "$tmpdir/stdout" "wizard must continue after invalid menu choice"
+}
+
+test_wizard_step_state_records_ok_env() {
+	make_fixture
+	printf '6\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "env=OK" "$INSTALL_STATE_DIR/wizard-steps.state" "successful env must persist step state"
+	assert_contains "Last operation: OK env" "$tmpdir/stdout" "Last operation phrasing must stay"
+	assert_contains "No operation yet" "$tmpdir/stdout" "first paint must show No operation yet"
+	assert_contains "Quick Actions" "$tmpdir/stdout" "grouped menu marker required"
 }
 
 test_wizard_streams_output_and_waits_for_enter() {
 	make_fixture
-	printf '7\ny\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	printf '5\ny\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "Running network..." "$tmpdir/stdout" "wizard must start step output immediately"
 	assert_contains "net.ipv4.tcp_keepalive_time" "$tmpdir/stdout" "wizard must stream step output to the console"
 	assert_contains "Press Enter to continue..." "$tmpdir/stdout" "wizard must pause after completed operation"
@@ -1355,37 +1771,27 @@ test_wizard_apt_step_streams_and_uses_confirmation() {
 test_wizard_compose_output_filter_removes_pull_noise() {
 	make_fixture
 	source "$ROOT_DIR/script/modules/01_menu.sh"
-	wizard_filter_compose_output >"$tmpdir/filtered-compose.out" <<'OUT'
-[2026-05-08 23:52:53] [run-compose] Каталог с compose-файлами: /opt/docker-proxy/compose.d
-[2026-05-08 23:52:53] [run-compose] Используем env-файл: /opt/docker-proxy/compose.d/.env
-[2026-05-08 23:52:53] [run-compose] Project root: /opt/docker-proxy
-[2026-05-08 23:52:53] [run-compose] Lock file: /opt/state/docker-proxy-compose.lock
-[2026-05-08 23:52:53] [run-compose] Проверяем конфигурацию: docker compose --project-name docker-proxy --env-file /opt/docker-proxy/compose.d/.env -f /opt/docker-proxy/compose.d/00-base.yml config
-[2026-05-08 23:52:55] [run-compose] Попытка 1/3: docker compose --project-name docker-proxy --env-file /opt/docker-proxy/compose.d/.env -f /opt/docker-proxy/compose.d/00-base.yml up -d
-Created symlink '/etc/systemd/system/timers.target.wants/docker-proxy-maintenance.timer' → '/etc/systemd/system/docker-proxy-maintenance.timer'.
-NEXT                        LEFT LAST PASSED UNIT                           ACTIVATES
-Sat 2026-10-17 00:35:22 UTC   7h -         - docker-proxy-maintenance.timer docker-proxy-maintenance.service
-1 timers listed.
- Image torotin/caddy-l4:latest Pulling
- Image traefik:latest Pulling
- 59fccd767ac6 Preparing
- 5b40d9c3d03b Waiting 0B
- e2de96513ba9 Verifying Checksum 0B
- 59fccd767ac6 Pulling fs layer 0B
- a57ae2b1d9eb Downloading 10.49MB
- 59fccd767ac6 Pull complete 0B
- Image torotin/caddy-l4:latest Pulled
- Image traefik:latest Pulled
- Container caddy Starting
- Container caddy Healthy
-OUT
-	assert_contains "Pulling image: torotin/caddy-l4:latest" "$tmpdir/filtered-compose.out" "filter must emit per-image pull for caddy-l4"
-	assert_contains "Pulling image: traefik:latest" "$tmpdir/filtered-compose.out" "filter must emit per-image pull for traefik"
-	assert_contains "Validating compose configuration..." "$tmpdir/filtered-compose.out" "filter must keep concise validation status"
-	assert_contains "Starting compose stack: Попытка 1/3" "$tmpdir/filtered-compose.out" "filter must keep concise attempt status"
-	assert_contains "Docker images pulled" "$tmpdir/filtered-compose.out" "filter must summarize pulled images once"
-	assert_contains "Container caddy Healthy" "$tmpdir/filtered-compose.out" "filter must keep container status"
-	assert_not_contains "Pulling Docker images..." "$tmpdir/filtered-compose.out" "old collapse summary must be removed"
+	# Include \r progress noise and Compose v2 Creating/Starting spam.
+	printf '%s' $'[2026-05-08 23:52:53] [run-compose] Каталог с compose-файлами: /opt/docker-proxy/compose.d\n[2026-05-08 23:52:53] [run-compose] Используем env-файл: /opt/docker-proxy/compose.d/.env\n[2026-05-08 23:52:53] [run-compose] Project root: /opt/docker-proxy\n[2026-05-08 23:52:53] [run-compose] Lock file: /opt/state/docker-proxy-compose.lock\n[2026-05-08 23:52:53] [run-compose] Проверяем конфигурацию: docker compose --project-name docker-proxy config\n[2026-05-08 23:52:54] [run-compose] Проверяем и скачиваем обновления образов\n[2026-05-08 23:52:54] [run-compose] Образы уже актуальны\n[2026-05-08 23:52:55] [run-compose] Попытка 1/3: docker compose --project-name docker-proxy up -d --wait\n[2026-05-08 23:53:01] [run-compose] Попытка 1 неудачна, повтор через 5с\n[2026-05-08 23:53:06] [run-compose] WARN: flock unavailable\n[2026-05-08 23:53:07] [run-compose] ERROR: compose up failed\n[2026-05-08 23:53:08] [run-compose] Applying Telemt panel GeoIP sources in background (ensure-geoip.sh)\n[2026-05-08 23:53:08] [run-compose] Unhealthy контейнеров не обнаружено\nCreated symlink \'/etc/systemd/system/timers.target.wants/docker-proxy-maintenance.timer\' → \'/etc/systemd/system/docker-proxy-maintenance.timer\'.\nNEXT                        LEFT LAST PASSED UNIT                           ACTIVATES\nSat 2026-10-17 00:35:22 UTC   7h -         - docker-proxy-maintenance.timer docker-proxy-maintenance.service\n1 timers listed.\n Image torotin/caddy-l4:latest Pulling\n Image traefik:latest Pulling\n 59fccd767ac6 Preparing\r 5b40d9c3d03b Waiting 0B\r e2de96513ba9 Verifying Checksum 0B\n 59fccd767ac6 Pulling fs layer 0B\n a57ae2b1d9eb Downloading 10.49MB\n 59fccd767ac6 Pull complete 0B\n Image torotin/caddy-l4:latest Pulled\n Image traefik:latest Pulled\n Network docker-proxy_default Creating\n Network docker-proxy_default Created\n Volume docker-proxy_data Creating\n Volume docker-proxy_data Created\n Container caddy Creating\n Container caddy Created\n Container caddy Starting\n Container caddy Started\n Container caddy Waiting\n Container caddy Healthy\n Container bad Unhealthy\n' |
+		wizard_filter_compose_output >"$tmpdir/filtered-compose.out"
+	assert_contains "[+] Pulling image: torotin/caddy-l4:latest" "$tmpdir/filtered-compose.out" "filter must emit per-image pull for caddy-l4"
+	assert_contains "[+] Pulling image: traefik:latest" "$tmpdir/filtered-compose.out" "filter must emit per-image pull for traefik"
+	assert_contains "[+] Pulled image: torotin/caddy-l4:latest" "$tmpdir/filtered-compose.out" "filter must emit per-image pulled for caddy-l4"
+	assert_contains "[+] Validating compose configuration..." "$tmpdir/filtered-compose.out" "filter must keep concise validation status"
+	assert_contains "[+] Checking for image updates..." "$tmpdir/filtered-compose.out" "filter must surface pull_images stage"
+	assert_contains "[+] Docker images are up to date" "$tmpdir/filtered-compose.out" "filter must surface up-to-date images"
+	assert_contains "[+] Starting compose stack (attempt 1/3)..." "$tmpdir/filtered-compose.out" "filter must keep concise attempt status"
+	assert_contains "[!] Попытка 1 неудачна, повтор через 5с" "$tmpdir/filtered-compose.out" "filter must keep failed attempt warnings"
+	assert_contains "[!] WARN: flock unavailable" "$tmpdir/filtered-compose.out" "filter must keep run-compose WARN"
+	assert_contains "[!] ERROR: compose up failed" "$tmpdir/filtered-compose.out" "filter must keep run-compose ERROR"
+	assert_contains "[+] Updating Telemt GeoIP databases in background..." "$tmpdir/filtered-compose.out" "filter must surface Telemt GeoIP ensure"
+	assert_contains "[+] Preparing Docker networks and volumes..." "$tmpdir/filtered-compose.out" "filter must collapse network/volume chatter"
+	assert_contains "[+] Container caddy Started" "$tmpdir/filtered-compose.out" "filter must keep Started milestone"
+	assert_contains "[+] Container caddy Healthy" "$tmpdir/filtered-compose.out" "filter must keep Healthy milestone"
+	assert_contains "[+] Container bad Unhealthy" "$tmpdir/filtered-compose.out" "filter must keep Unhealthy status"
+	assert_not_contains "Container caddy Starting" "$tmpdir/filtered-compose.out" "filter must hide Starting intermediate state"
+	assert_not_contains "Network docker-proxy_default Creating" "$tmpdir/filtered-compose.out" "filter must hide per-network Creating lines"
+	assert_not_contains "Unhealthy контейнеров не обнаружено" "$tmpdir/filtered-compose.out" "filter must hide healthy-empty chatter"
 	assert_not_contains "docker compose --project-name" "$tmpdir/filtered-compose.out" "filter must hide full compose command"
 	assert_not_contains "Downloading 10.49MB" "$tmpdir/filtered-compose.out" "filter must hide download spam"
 	assert_not_contains "Pulling fs layer" "$tmpdir/filtered-compose.out" "filter must hide Pulling fs layer"
@@ -1440,12 +1846,33 @@ test_wizard_persists_required_variables_before_env_step() {
 	make_fixture
 	unset WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
 	printf 'persist.example.test\npersist-ssh\nssh-pass\npersist-web\nweb-pass\nssh-ed25519 persist-key\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
-	assert_contains 'WEBDOMAIN="persist.example.test"' "$INSTALL_STATE_DIR/install.env" "wizard must persist WEBDOMAIN immediately"
+	# After required collect, bootstrap renders install.env.template (WEBDOMAIN unquoted).
+	assert_contains 'WEBDOMAIN=persist.example.test' "$INSTALL_STATE_DIR/install.env" "wizard must persist WEBDOMAIN immediately"
 	assert_contains 'USER_SSH="persist-ssh"' "$INSTALL_STATE_DIR/install.env" "wizard must persist USER_SSH immediately"
 	assert_contains 'PASS_SSH="ssh-pass"' "$INSTALL_STATE_DIR/install.env" "wizard must persist PASS_SSH immediately"
 	assert_contains 'USER_WEB="persist-web"' "$INSTALL_STATE_DIR/install.env" "wizard must persist USER_WEB immediately"
 	assert_contains 'PASS_WEB="web-pass"' "$INSTALL_STATE_DIR/install.env" "wizard must persist PASS_WEB immediately"
 	assert_contains 'SSH_PBK="ssh-ed25519 persist-key"' "$INSTALL_STATE_DIR/install.env" "wizard must persist optional SSH key immediately"
+	grep -Eq '^PORT_REMOTE_SSH=[0-9]+$' "$INSTALL_STATE_DIR/install.env" \
+		|| fail "wizard bootstrap must auto-generate PORT_REMOTE_SSH after required persist"
+}
+
+test_wizard_bootstraps_install_env_defaults_before_menu() {
+	make_fixture
+	unset WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK PORT_REMOTE_SSH
+	# Sparse required-only state as on a fresh VPS before env step.
+	printf 'USER_SSH="sparse-ssh"\nPASS_SSH="s"\nUSER_WEB="w"\nPASS_WEB="w"\nWEBDOMAIN="sparse.example.test"\n' >"$INSTALL_STATE_DIR/install.env"
+	printf 'x\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "env.bootstrap" "$INSTALL_COMMAND_LOG" "wizard must bootstrap install.env defaults"
+	assert_contains "bootstrapped install.env" "$tmpdir/stdout" "wizard must report install.env bootstrap"
+	grep -Eq '^PORT_REMOTE_SSH=[0-9]+$' "$INSTALL_STATE_DIR/install.env" \
+		|| fail "bootstrap must write numeric PORT_REMOTE_SSH into install.env"
+	grep -Eq '^URI_PANEL_PATH=.+' "$INSTALL_STATE_DIR/install.env" \
+		|| fail "bootstrap must render template auto-vars (URI_PANEL_PATH)"
+	assert_contains 'USER_SSH="sparse-ssh"' "$INSTALL_STATE_DIR/install.env" "bootstrap must keep required USER_SSH"
+	# ssh must work without a prior full env step once bootstrapped.
+	run_installer run ssh --apply --yes
+	assert_contains "ssh.validate" "$INSTALL_COMMAND_LOG" "ssh apply must succeed after wizard bootstrap"
 }
 
 test_batch_requires_ssh_and_web_credentials() {
@@ -1476,10 +1903,44 @@ test_dnscrypt_mock_install_logs_intent_without_host_mutation() {
 	assert_contains "dnscrypt.config" "$INSTALL_COMMAND_LOG" "dnscrypt must log config write"
 	assert_contains "dnscrypt.unit" "$INSTALL_COMMAND_LOG" "dnscrypt must log unit write"
 	assert_contains "dnscrypt.resolved" "$INSTALL_COMMAND_LOG" "dnscrypt must log resolved drop-in"
+	assert_contains "dnscrypt.hosts.ensure" "$INSTALL_COMMAND_LOG" "dnscrypt must ensure local hostname in /etc/hosts"
 	assert_contains "dnscrypt.service.enable" "$INSTALL_COMMAND_LOG" "dnscrypt must log service enable"
 	assert_contains "dnscrypt.dig" "$INSTALL_COMMAND_LOG" "dnscrypt must log dig readiness check"
 	assert_not_contains "vendor/" "$INSTALL_COMMAND_LOG" "dnscrypt must not reference a vendor path"
 	assert_not_contains "chattr +i" "$INSTALL_COMMAND_LOG" "mock dnscrypt must not lock resolv.conf"
+}
+
+test_dnscrypt_ensure_local_hostname_writes_debian_hosts_line() {
+	make_fixture
+	local hosts="$tmpdir/hosts"
+	# Comment mentioning the short name must NOT count as a mapping.
+	printf '# Hostname: cyberdock-doarc\n127.0.0.1\tlocalhost\n' >"$hosts"
+	export INSTALL_MOCK=1
+	export DNSCRYPT_HOSTS_FILE="$hosts"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_dnscrypt.sh"
+	# Force a deterministic short name regardless of the test host.
+	hostname() {
+		case "${1:-}" in
+		-s) printf 'cyberdock-doarc\n' ;;
+		-f) printf 'cyberdock-doarc\n' ;;
+		*) printf 'cyberdock-doarc\n' ;;
+		esac
+	}
+	dnscrypt_hosts_has_local_entry "$hosts" cyberdock-doarc \
+		&& fail "helper must ignore comment-only hostname mentions"
+	dnscrypt_ensure_local_hostname >/dev/null
+	grep -Eq '^127\.0\.1\.1[[:space:]]+cyberdock-doarc([[:space:]]|$)' "$hosts" \
+		|| fail "ensure_local_hostname must append 127.0.1.1 cyberdock-doarc despite comment"
+	dnscrypt_hosts_has_local_entry "$hosts" cyberdock-doarc \
+		|| fail "helper must see loopback mapping after ensure"
+	# Idempotent: second call must not duplicate.
+	dnscrypt_ensure_local_hostname >/dev/null
+	local count
+	count="$(grep -cE '^127\.0\.[01]\.1[[:space:]]+.*[[:space:]]cyberdock-doarc([[:space:]]|$)|^127\.0\.[01]\.1[[:space:]]+cyberdock-doarc([[:space:]]|$)' "$hosts" || true)"
+	[[ "$count" == "1" ]] || fail "ensure_local_hostname must be idempotent (got $count loopback entries)"
 }
 
 test_dnscrypt_forwards_force_flag() {
@@ -1580,6 +2041,32 @@ test_apt_detects_country_specific_mirror_list() {
 	assert_contains "RU.txt" "$INSTALL_COMMAND_LOG" "apt must use country-specific mirror list"
 }
 
+test_apt_detect_country_forces_ipv4() {
+	make_fixture
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_apt.sh"
+	local args_file=$tmpdir/curl.args country
+	: >"$args_file"
+	curl() {
+		local arg has4=0
+		for arg in "$@"; do
+			[[ "$arg" == "-4" ]] && has4=1
+		done
+		printf '%s\n' "$*" >>"$args_file"
+		((has4)) || return 1
+		printf 'ru\n'
+	}
+	country=$(install_apt_detect_country) || fail "detect_country must succeed over mocked IPv4 curl"
+	[[ "$country" == "RU" ]] || fail "detect_country must uppercase ISO code; got: $country"
+	tr '\n' ' ' <"$args_file" | sed 's/^/ /; s/$/ /' >"$tmpdir/curl.args.line"
+	assert_contains " -4 " "$tmpdir/curl.args.line" "country detect must pass curl -4"
+	unset APT_COUNTRY
+	run_installer run apt --apply --yes
+	assert_contains "apt.country.detect curl -4" "$INSTALL_COMMAND_LOG" "mock apt path must log IPv4 country detect"
+}
+
 test_apt_installs_required_dependencies() {
 	make_fixture
 	run_installer run apt --apply --yes
@@ -1589,6 +2076,82 @@ test_apt_installs_required_dependencies() {
 	assert_contains "apt.locks.wait" "$INSTALL_COMMAND_LOG" "apt must wait for apt/dpkg locks"
 	assert_contains "apt.timer.enable" "$INSTALL_COMMAND_LOG" "apt must enable unattended-upgrades timers"
 	assert_contains "apt.unattended.dry-run" "$INSTALL_COMMAND_LOG" "apt must validate unattended-upgrades"
+	assert_contains "force-confdef" "$INSTALL_COMMAND_LOG" "apt install/upgrade must pass dpkg force-confdef"
+	assert_contains "force-confold" "$INSTALL_COMMAND_LOG" "apt install/upgrade must pass dpkg force-confold"
+}
+
+test_apt_apply_mirror_preserves_security_uri() {
+	make_fixture
+	local mirror=http://mirror.example/ubuntu/
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_apt.sh"
+
+	local sources=$tmpdir/sources.list
+	local missing_deb822=$tmpdir/no-ubuntu.sources
+	export APT_SOURCES_LIST="$sources" APT_UBUNTU_SOURCES="$missing_deb822"
+	cat >"$sources" <<'EOF'
+deb http://archive.ubuntu.com/ubuntu/ noble main
+deb http://security.ubuntu.com/ubuntu noble-security main
+deb http://mirror.yandex.ru/ubuntu/ noble-updates main
+EOF
+	INSTALL_MOCK=0 install_apt_apply_ubuntu_mirror noble "$mirror"
+	assert_contains "security.ubuntu.com/ubuntu" "$sources" "classic security URI must remain"
+	assert_contains "mirror.example/ubuntu" "$sources" "archive/updates lines must rewrite"
+	grep -Fq 'deb http://security.ubuntu.com/ubuntu noble-security' "$sources" \
+		|| fail "classic security line must be unchanged"
+	grep -Fq 'deb http://mirror.example/ubuntu/ noble main' "$sources" \
+		|| fail "classic archive line must use selected mirror"
+
+	local deb822=$tmpdir/ubuntu.sources
+	local missing_sources=$tmpdir/no-sources.list
+	export APT_SOURCES_LIST="$missing_sources" APT_UBUNTU_SOURCES="$deb822"
+	cat >"$deb822" <<'EOF'
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu/
+Suites: noble noble-updates
+Components: main
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu
+Suites: noble-security
+Components: main
+EOF
+	INSTALL_MOCK=0 install_apt_apply_ubuntu_mirror noble "$mirror"
+	assert_contains "URIs: http://security.ubuntu.com/ubuntu" "$deb822" "DEB822 security URIs must remain"
+	assert_contains "URIs: http://mirror.example/ubuntu/" "$deb822" "DEB822 archive URIs must rewrite"
+
+	local generated=$tmpdir/generated.sources.list
+	export APT_SOURCES_LIST="$generated" APT_UBUNTU_SOURCES="$missing_deb822"
+	INSTALL_MOCK=0 install_apt_apply_ubuntu_mirror noble "$mirror"
+	assert_contains "deb ${mirror} noble main" "$generated" "generated list must use mirror for main"
+	assert_contains "deb http://security.ubuntu.com/ubuntu noble-security" "$generated" \
+		"generated security must stay on security.ubuntu.com"
+}
+
+test_apt_unattended_origins_debian() {
+	make_fixture
+	cat >"$INSTALL_TEST_OS_RELEASE" <<'OS'
+ID=debian
+VERSION_CODENAME=bookworm
+OS
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/00_common.sh"
+	# shellcheck source=/dev/null
+	source "$ROOT_DIR/script/modules/04_apt.sh"
+	local unattended=$tmpdir/50unattended-upgrades
+	export APT_AUTO_UPGRADES_FILE="$tmpdir/20auto-upgrades"
+	export APT_UNATTENDED_FILE="$unattended"
+	INSTALL_MOCK=0 install_apt_write_auto_upgrades all
+	assert_contains 'origin=Debian,codename=${distro_codename}-security,label=Debian-Security' "$unattended" \
+		"Debian security origin must use Debian-Security label"
+	assert_contains 'origin=Debian,codename=${distro_codename},label=Debian' "$unattended" \
+		"Debian base origin must be present"
+	assert_contains 'origin=Debian,codename=${distro_codename}-updates,label=Debian' "$unattended" \
+		"Debian mode=all must include updates origin"
+	assert_not_contains '${distro_id}:${distro_codename}-security' "$unattended" \
+		"must not use Ubuntu origin form on Debian"
 }
 
 test_apt_falls_back_when_selected_mirror_update_fails() {
@@ -1600,6 +2163,15 @@ test_apt_falls_back_when_selected_mirror_update_fails() {
 	assert_contains "apt.lists.clean rm -rf /var/lib/apt/lists" "$INSTALL_COMMAND_LOG" "apt must clear stale package lists before retry"
 	assert_contains "apt.update apt-get update -y" "$INSTALL_COMMAND_LOG" "apt must retry update after fallback"
 	assert_contains "apt.install.deps" "$INSTALL_COMMAND_LOG" "apt must install dependencies only after retry"
+}
+
+test_wizard_yes_skips_apt_confirm_but_not_docker() {
+	make_fixture
+	# apt needs no "y"; Enter after apt pause; docker (7) still needs confirm; then Enter; exit
+	printf '1\n\n7\nn\n\nx\n' | bash "$INSTALLER" wizard --yes >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "wizard --yes must run apt without confirm y"
+	assert_not_contains "docker.destroy" "$INSTALL_COMMAND_LOG" "declined docker wipe must not destroy"
+	assert_contains "SKIPPED docker" "$tmpdir/stdout" "docker force_prompt decline must skip"
 }
 
 test_wizard_skips_docker_wipe_when_user_declines() {
@@ -1618,12 +2190,75 @@ test_wizard_confirms_apply_steps() {
 	assert_contains "network.apply" "$INSTALL_COMMAND_LOG" "wizard must pass apply confirmation to network"
 }
 
+test_wizard_doctor_from_menu() {
+	make_fixture
+	printf 'd\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "d. doctor" "$tmpdir/stdout" "menu must list doctor"
+	assert_contains "doctor: profile=" "$tmpdir/stdout" "doctor must run from wizard"
+	assert_contains "Last operation: OK doctor" "$tmpdir/stdout" "doctor success status"
+}
+
+test_wizard_config_menu_entry_exposed() {
+	make_fixture
+	printf 'x\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "c. config" "$tmpdir/stdout" "wizard must expose config quick action"
+	assert_contains "a/t/c/d" "$tmpdir/stdout" "keys hint must include c"
+}
+
+test_wizard_config_edits_and_persists_variables() {
+	make_fixture
+	# c → edit USER_SSH (item 2) → apply a → Enter after env stream → exit
+	printf 'c\n2\ndeployer2\na\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Installer variables" "$tmpdir/stdout" "config screen heading"
+	assert_contains "1. WEBDOMAIN" "$tmpdir/stdout" "must list WEBDOMAIN"
+	assert_contains "3. PASS_SSH" "$tmpdir/stdout" "must list PASS_SSH"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "apply must render env through dispatcher"
+	assert_contains 'USER_SSH="deployer2"' "$INSTALL_STATE_DIR/install.env" "edited USER_SSH must persist"
+}
+
+test_wizard_config_dirty_exit_save_only_and_discard() {
+	make_fixture
+	printf 'c\n2\ndeployer-discard\nx\nn\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Installer variables" "$tmpdir/stdout" "config screen must render"
+	assert_not_contains 'USER_SSH="deployer-discard"' "$INSTALL_STATE_DIR/install.env" "discard dirty exit must not persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "discard dirty exit must not render env"
+
+	make_fixture
+	printf 'c\n2\ndeployer-save\nx\ny\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains 'USER_SSH="deployer-save"' "$INSTALL_STATE_DIR/install.env" "dirty-exit Yes must persist"
+	assert_not_contains "env.render" "$INSTALL_COMMAND_LOG" "dirty-exit Yes is save-only"
+}
+
 test_wizard_prompts_for_missing_user() {
 	make_fixture
 	unset USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
 	printf 'wizard-user\nwizard-pass\nweb-user\nweb-pass\n\nuser\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
 	assert_contains "SSH username" "$tmpdir/stdout" "wizard must prompt for missing USER_SSH"
 	assert_contains "user.ensure useradd -m -d /home/wizard-user -s /bin/bash wizard-user" "$INSTALL_COMMAND_LOG" "wizard must pass prompted user to user step"
+}
+
+test_wizard_auto_runs_chain_with_docker_force_prompt() {
+	make_fixture
+	printf 'a\ny\n\n\ny\n\n\n\n\n\n\n\nx\n' | bash "$INSTALLER" wizard >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_contains "Run full install" "$tmpdir/stdout" "auto without --yes must show start confirm"
+	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "auto must run apt"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "auto must run env"
+	assert_contains "docker.system.prune" "$INSTALL_COMMAND_LOG" "auto must run docker after force confirm"
+	assert_contains "firewall.apply" "$INSTALL_COMMAND_LOG" "auto must run firewall"
+	assert_contains "ssh.apply" "$INSTALL_COMMAND_LOG" "auto must run ssh"
+	assert_contains "network.apply" "$INSTALL_COMMAND_LOG" "auto must run network"
+	assert_contains "OK auto" "$tmpdir/stdout" "auto must finish with OK status"
+}
+
+test_wizard_auto_yes_skips_start_but_asks_docker() {
+	make_fixture
+	printf 'a\n\n\nn\n\nx\n' | bash "$INSTALLER" wizard --yes >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	assert_not_contains "Run full install" "$tmpdir/stdout" "auto --yes must skip start confirm"
+	assert_contains "apt.update" "$INSTALL_COMMAND_LOG" "auto --yes must run apt"
+	assert_contains "env.render" "$INSTALL_COMMAND_LOG" "auto must render env before docker"
+	assert_not_contains "docker.system.prune" "$INSTALL_COMMAND_LOG" "declined docker must stop chain"
+	assert_not_contains "compose.up" "$INSTALL_COMMAND_LOG" "chain must stop before compose when docker declined"
+	assert_contains "SKIPPED docker" "$tmpdir/stdout" "declined docker must mark skip status"
 }
 
 test_user_loads_rendered_state_env() {
@@ -1644,10 +2279,20 @@ test_user_configures_ssh_sudo_groups_and_aliases() {
 	assert_contains "user.ssh.dir install -d -m 0700" "$INSTALL_COMMAND_LOG" "user step must prepare .ssh"
 	assert_contains "user.ssh.keygen ssh-keygen -t ed25519" "$INSTALL_COMMAND_LOG" "user step must generate ED25519 key"
 	assert_contains "user.ssh.authorized.add printf" "$INSTALL_COMMAND_LOG" "user step must add provided SSH public key"
+	assert_contains "user.groups.docker.ensure groupadd --system docker" "$INSTALL_COMMAND_LOG" "user step must ensure docker group exists"
 	assert_contains "user.groups usermod -aG sudo\\,docker deployer" "$INSTALL_COMMAND_LOG" "user step must add sudo/docker groups"
 	assert_contains "user.sudoers.write" "$INSTALL_COMMAND_LOG" "user step must configure sudoers"
 	assert_contains "user.aliases.install" "$INSTALL_COMMAND_LOG" "user step must install bash aliases"
 	assert_contains "user.home.chown chown -R deployer:deployer /home/deployer" "$INSTALL_COMMAND_LOG" "user step must restore home ownership"
+	assert_contains "newgrp docker" "$tmpdir/stdout" "user step must remind that docker group needs a new session"
+}
+
+test_docker_reapplies_service_user_docker_group() {
+	make_fixture
+	run_installer run docker --destroy-docker-data
+	assert_contains "user.groups.docker.ensure groupadd --system docker" "$INSTALL_COMMAND_LOG" "docker step must ensure docker group for USER_SSH"
+	assert_contains "user.groups usermod -aG sudo\\,docker deployer" "$INSTALL_COMMAND_LOG" "docker step must re-add USER_SSH to docker group"
+	assert_contains "re-login or newgrp docker" "$tmpdir/stdout" "docker step must remind about session refresh"
 }
 
 test_user_sudoers_content_uses_portable_defaults() {
@@ -1671,7 +2316,43 @@ test_compose_uses_installer_state_lock() {
 	assert_contains "COMPOSE_DIR=$INSTALL_ROOT/compose.d" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose directory"
 	assert_contains "ENV_FILE=$INSTALL_ROOT/compose.d/.env" "$INSTALL_COMMAND_LOG" "compose step must pass explicit compose env file"
 	assert_contains "LOCK_FILE=$INSTALL_STATE_DIR/docker-proxy-compose.lock" "$INSTALL_COMMAND_LOG" "compose step must avoid shared /tmp lock file"
+	assert_contains "PULL_BEFORE_UP=1" "$INSTALL_COMMAND_LOG" "installer compose up must pull images before wait"
 	assert_contains "compose.validate env -u HT_PASS_ENCODED -u ADGUARD_ADMIN_HASH -u URI_SUB_PATH -u URI_JSON_PATH -u URI_CLASH_PATH -u URI_VLESS_XHTTP" "$INSTALL_COMMAND_LOG" "compose validation must not inherit transformed values from installer environment"
+}
+
+test_network_path_mtu_clamp_when_probe_lower() {
+	make_fixture
+	export INSTALL_MOCK_PATH_MTU=eth0:1450
+	export INSTALL_MOCK_IFACE_MTU=1500
+	run_installer run network --apply --yes
+	assert_contains "network.mtu.detect" "$INSTALL_COMMAND_LOG" "network apply must probe path MTU"
+	assert_contains "network.mtu.apply ip link set dev eth0 mtu 1450" "$INSTALL_COMMAND_LOG" "network apply must clamp iface MTU"
+	assert_contains "network.mtu.sysctl sysctl -w net.ipv4.tcp_mtu_probing=2" "$INSTALL_COMMAND_LOG" "network apply must enable active tcp_mtu_probing"
+}
+
+test_docker_optional_ghcr_mirror_and_proxy() {
+	make_fixture
+	export DOCKER_GHCR_MIRROR=https://ghcr.example.mirror
+	export DOCKER_HTTP_PROXY=http://proxy.example:8080
+	run_installer run docker --destroy-docker-data
+	assert_contains "docker.ghcr.mirror.write" "$INSTALL_COMMAND_LOG" "docker must write GHCR hosts.toml when DOCKER_GHCR_MIRROR is set"
+	assert_contains "docker.proxy.write" "$INSTALL_COMMAND_LOG" "docker must write HTTP proxy drop-in when DOCKER_HTTP_PROXY is set"
+}
+
+test_compose_resyncs_project_files_when_runner_already_exists() {
+	make_fixture
+	mkdir -p "$INSTALL_ROOT/compose.d"
+	printf '#!/bin/sh\nexit 0\n' >"$INSTALL_ROOT/compose.d/run-compose.sh"
+	chmod +x "$INSTALL_ROOT/compose.d/run-compose.sh"
+	run_installer run compose
+	assert_contains "project.sync" "$INSTALL_COMMAND_LOG" "compose must rsync even when run-compose.sh already exists"
+}
+
+test_docker_repo_gpg_uses_batch_yes() {
+	make_fixture
+	run_installer run docker --destroy-docker-data
+	# %q logs spaces as '\ '; match the escaped form from mock printf pipeline.
+	assert_contains "gpg\\ --batch\\ --yes\\ --dearmor" "$INSTALL_COMMAND_LOG" "docker repo key must use non-interactive gpg --dearmor"
 }
 
 test_final_summary_prints_details() {
@@ -1681,13 +2362,22 @@ test_final_summary_prints_details() {
 	assert_contains "INSTALLATION SUMMARY" "$tmpdir/stdout" "final step must print summary"
 	assert_contains "Domain           : example.test" "$tmpdir/stdout" "final summary must include domain"
 	assert_contains "Target           : deployer@198.51.100.10:22022" "$tmpdir/stdout" "final summary must include SSH target"
-	assert_contains "Homepage         : https://example.test/" "$tmpdir/stdout" "final summary must include service URLs"
-	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include Mihomo UI URL"
+	assert_contains "Homepage         : https://homepage.example.test:9443/" "$tmpdir/stdout" "final summary must include admin Homepage URL"
+	assert_contains "Mihomo UI        : https://example.test/" "$tmpdir/stdout" "final summary must include public Mihomo UI URL"
 	assert_contains "Mihomo secret    :" "$tmpdir/stdout" "final summary must print Mihomo controller secret for copy-paste"
-	assert_contains "Traefik Dashboard: https://example.test/" "$tmpdir/stdout" "final summary must include dashboard URL"
+	assert_contains "Traefik Dashboard: https://traefik.example.test:9443/dashboard/#/" "$tmpdir/stdout" "final summary must include admin Traefik dashboard URL"
+	assert_contains "Subscriptions:" "$tmpdir/stdout" "final summary must include subscription URLs section"
+	assert_contains "Clash/Mihomo     : https://example.test/" "$tmpdir/stdout" "final summary must include Clash/Mihomo subscription URL"
+	assert_contains "Xray JSON        : https://example.test/" "$tmpdir/stdout" "final summary must include Xray JSON subscription URL"
+	assert_contains "Standard/base64  : https://example.test/" "$tmpdir/stdout" "final summary must include standard/base64 subscription URL"
+	assert_contains "Note             : Admin panels require Clash or JSON" "$tmpdir/stdout" "final summary must explain admin-compatible subscription formats"
+	assert_contains "Admin plane (personal Xray" "$tmpdir/stdout" "final summary must describe Xray admin plane"
 	assert_contains "Compose validate : $INSTALL_ROOT/compose.d/run-compose.sh validate" "$tmpdir/stdout" "final summary must include operational commands"
 	assert_contains "Summary saved: $INSTALL_STATE_DIR/install.summary" "$tmpdir/stdout" "final summary must print saved summary path"
 	assert_contains "INSTALLATION SUMMARY" "$INSTALL_STATE_DIR/install.summary" "final step must persist summary file"
+	assert_contains "Clash/Mihomo     : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Clash/Mihomo subscription URL"
+	assert_contains "Xray JSON        : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Xray JSON subscription URL"
+	assert_contains "Standard/base64  : https://example.test/" "$INSTALL_STATE_DIR/install.summary" "final summary file must include standard/base64 subscription URL"
 	assert_contains "Mihomo secret    :" "$INSTALL_STATE_DIR/install.summary" "final summary file must include Mihomo controller secret for copy-paste"
 	assert_contains "Password         : configured, not printed" "$INSTALL_STATE_DIR/install.summary" "final summary must not print web password"
 	assert_not_contains "Password         : $PASS_WEB" "$INSTALL_STATE_DIR/install.summary" "final summary must not leak web password"
@@ -1699,15 +2389,24 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 	# shellcheck source=script/modules/09_finalize.sh
 	. "$ROOT_DIR/script/modules/09_finalize.sh"
 	SUMMARY_DOMAIN=example.test
-	local panel doh traefik mihomo
-	panel=$(install_summary_url "nC4sRgYpwUgiad")
+	SUMMARY_PORT_LOCAL_ADMIN=9443
+	local panel doh traefik mihomo homepage clash json standard
+	panel=$(install_summary_admin_url 3x-ui "nC4sRgYpwUgiad")
+	homepage=$(install_summary_admin_url homepage)
 	doh=$(install_summary_url "3pDA9wdT58rg0aMC" "" noslash)
-	traefik=$(install_summary_url "UoAJFIMva4GETi" "dashboard/#/")
+	traefik=$(install_summary_admin_url traefik "dashboard/#/")
 	mihomo=$(install_summary_url "mihomoPath" "ui/")
-	[[ "$panel" == "https://example.test/nC4sRgYpwUgiad/" ]] || fail "panel summary URL must end with trailing slash; got: $panel"
+	clash=$(install_summary_url "clashPath" "" noslash)
+	json=$(install_summary_url "/jsonPath/" "" noslash)
+	standard=$(install_summary_url "/subPath/" "" noslash)
+	[[ "$panel" == "https://3x-ui.example.test:9443/nC4sRgYpwUgiad/" ]] || fail "admin panel summary URL must end with trailing slash; got: $panel"
+	[[ "$homepage" == "https://homepage.example.test:9443/" ]] || fail "admin homepage URL must end with trailing slash; got: $homepage"
 	[[ "$doh" == "https://example.test/3pDA9wdT58rg0aMC" ]] || fail "DoH summary URL must stay exact Path without slash; got: $doh"
-	[[ "$traefik" == "https://example.test/UoAJFIMva4GETi/dashboard/#/" ]] || fail "Traefik summary URL must keep dashboard fragment; got: $traefik"
+	[[ "$traefik" == "https://traefik.example.test:9443/dashboard/#/" ]] || fail "Traefik admin summary URL must keep dashboard fragment; got: $traefik"
 	[[ "$mihomo" == "https://example.test/mihomoPath/ui/" ]] || fail "Mihomo UI summary URL must keep ui/ suffix; got: $mihomo"
+	[[ "$clash" == "https://example.test/clashPath" ]] || fail "Clash subscription summary URL must stay exact Path without slash; got: $clash"
+	[[ "$json" == "https://example.test/jsonPath" ]] || fail "JSON subscription summary URL must stay exact Path without slash; got: $json"
+	[[ "$standard" == "https://example.test/subPath" ]] || fail "standard subscription summary URL must stay exact Path without slash; got: $standard"
 
 	export ENABLE_MIHOMO=true
 	run_installer run env final
@@ -1715,15 +2414,23 @@ test_final_summary_urls_use_trailing_slash_except_doh() {
 		local key=$1
 		grep -E "^${key}=" "$INSTALL_STATE_DIR/install.env" | head -n1 | cut -d= -f2- | tr -d '"'
 	}
-	local panel_path dozzle_path doh_path
+	local panel_path doh_path clash_path json_path sub_path
 	panel_path=$(uri_from_env URI_PANEL_PATH)
-	dozzle_path=$(uri_from_env URI_DOZZLE)
 	doh_path=$(uri_from_env URI_ADGUARD_DOH)
-	[[ -n "$panel_path" && -n "$dozzle_path" && -n "$doh_path" ]] || fail "install.env must define panel/dozzle/doh URI paths"
-	assert_contains "3X-UI Panel      : https://example.test/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted panel URL must include trailing slash"
-	assert_contains "Dozzle Logs      : https://example.test/${dozzle_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted Dozzle URL must include trailing slash"
+	clash_path=$(uri_from_env URI_CLASH_PATH)
+	json_path=$(uri_from_env URI_JSON_PATH)
+	sub_path=$(uri_from_env URI_SUB_PATH)
+	[[ -n "$panel_path" && -n "$doh_path" && -n "$clash_path" && -n "$json_path" && -n "$sub_path" ]] || fail "install.env must define panel/doh/subscription URI paths"
+	assert_contains "3X-UI Panel      : https://3x-ui.example.test:9443/${panel_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted admin panel URL must include trailing slash"
+	assert_contains "Arcane           : https://arcane.example.test:9443/" "$INSTALL_STATE_DIR/install.summary" "persisted Arcane admin URL must include trailing slash"
 	assert_contains "AdGuard DoH      : https://example.test/${doh_path}" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must omit trailing slash"
 	assert_not_contains "AdGuard DoH      : https://example.test/${doh_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted DoH URL must not gain a trailing slash"
+	assert_contains "Clash/Mihomo     : https://example.test/${clash_path}" "$INSTALL_STATE_DIR/install.summary" "persisted Clash subscription URL must omit trailing slash"
+	assert_contains "Xray JSON        : https://example.test/${json_path}" "$INSTALL_STATE_DIR/install.summary" "persisted JSON subscription URL must omit trailing slash"
+	assert_contains "Standard/base64  : https://example.test/${sub_path}" "$INSTALL_STATE_DIR/install.summary" "persisted standard subscription URL must omit trailing slash"
+	assert_not_contains "Clash/Mihomo     : https://example.test/${clash_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted Clash subscription URL must not gain a trailing slash"
+	assert_not_contains "Xray JSON        : https://example.test/${json_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted JSON subscription URL must not gain a trailing slash"
+	assert_not_contains "Standard/base64  : https://example.test/${sub_path}/" "$INSTALL_STATE_DIR/install.summary" "persisted standard subscription URL must not gain a trailing slash"
 }
 
 test_doctor_rejects_unsupported_os() {
@@ -1761,6 +2468,7 @@ test_exit_resets_script_and_project_permissions
 test_run_dispatches_named_steps_without_eval
 test_compose_installs_docker_maintenance_timer
 test_env_reports_permission_problem_before_backup
+test_env_defaults_missing_or_ip_webdomain_to_sslip
 test_env_preserves_existing_state_defaults
 test_env_renders_mihomo_config_with_generated_secret
 test_env_persists_generated_lampac_jacred_apikey
@@ -1768,6 +2476,15 @@ test_env_applies_lampac_jacred_secrets_when_enabled
 test_env_skips_lampac_jacred_secrets_when_disabled
 test_env_normalizes_global_boolean_values
 test_env_rejects_invalid_global_boolean_values
+test_udp443_backend_defaults_amneziawg_when_unset
+test_udp443_backend_legacy_hysteria2_when_hy2_true
+test_udp443_backend_legacy_amneziawg_when_hy2_false
+test_udp443_backend_explicit_off
+test_udp443_backend_explicit_hysteria2
+test_udp443_port_reads_legacy_hysteria_port
+test_udp443_port_prefers_udp443_over_legacy
+test_udp443_backend_rejects_invalid_value
+test_env_rejects_invalid_udp443_backend_on_run
 test_state_loader_preserves_literal_dollars
 test_env_prints_rendered_paths
 test_env_defaults_optional_services_disabled
@@ -1775,11 +2492,15 @@ test_env_writes_host_ip_mode_dual
 test_env_ipv4_only_does_not_copy_v4_into_v6
 test_ip_probe_sets_dual_mode_in_mock
 test_ip_probe_ipv4_only_leaves_ipv6_empty
-test_ip_probe_clears_stale_ipv6_when_unreachable
+test_ip_probe_keeps_valid_preset_ipv6_when_probe_fails
+test_ip_probe_clears_invalid_or_poisoned_preset_ipv6
+test_ip_probe_rejects_invalid_preset_ipv4_and_reprobes
+test_ip_probe_validators_reject_html_and_accept_hex_v6
 test_env_detects_public_ips_when_missing
 test_env_generates_adguard_hash_from_htpasswd
 test_env_writes_escaped_htpasswd_to_compose_env_for_labels
 test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state
+test_final_summary_includes_telemt_admin_when_enabled
 test_env_can_disable_telemt_rendering
 test_env_regenerates_stale_htpasswd_when_password_changes
 test_env_regenerates_existing_hash_when_verify_is_unsupported
@@ -1793,10 +2514,16 @@ test_firewall_ensures_ipv6_yes
 test_doctor_dual_mock_logs_host_probes
 test_ssh_rejects_invalid_port_before_apply
 test_ssh_restarts_when_listener_check_fails_after_reload
+test_ssh_socket_retries_when_listener_check_fails
 test_ssh_listener_mock_uses_realistic_address_pattern
+test_ssh_socket_omits_ipv6_listen_when_disabled
+test_ssh_restore_removes_socket_port_override
+test_ssh_auth_mode_follows_optional_public_key
+test_ssh_rejects_dual_auth_disabled_lockout
 test_docker_install_handles_missing_docker_binary
 test_network_sysctl_dual_preserves_slaac
 test_network_sysctl_ipv4_keeps_ra_off
+test_network_sysctl_hardening_defaults
 test_network_apply_uses_runner
 test_docker_networks_created_dual_stack
 test_docker_enable_ipv6_zero_dies_on_user_networks
@@ -1812,12 +2539,18 @@ test_self_update_apply_tolerates_diff_changes
 test_self_update_equal_version_does_not_apply_without_force
 test_self_update_force_applies_equal_version
 test_wizard_offers_update_and_uses_same_dispatcher
+test_wizard_skips_self_update_check_when_git_missing
 test_wizard_offers_update_only_when_newer_version_exists
 test_wizard_menu_accepts_numbered_choices
 test_wizard_toggles_optional_feature_flags_and_renders_env
+test_wizard_whiptail_sets_dark_newt_colors_when_unset
+test_wizard_whiptail_main_menu_uses_notags_and_key_prefixes
+test_wizard_normalize_accepts_whiptail_letter_step_keys
 test_wizard_toggle_exit_does_not_persist_changes
+test_wizard_toggle_dirty_exit_yes_saves_without_env
 test_wizard_removes_html_and_shows_last_status
 test_wizard_rejects_unknown_menu_choice_without_exit
+test_wizard_step_state_records_ok_env
 test_wizard_streams_output_and_waits_for_enter
 test_wizard_apt_step_streams_and_uses_confirmation
 test_wizard_compose_output_filter_removes_pull_noise
@@ -1825,9 +2558,11 @@ test_wizard_compose_step_ticker_emits_liveness
 test_html_step_is_removed_from_cli_dispatch
 test_wizard_collects_required_variables_before_menu
 test_wizard_persists_required_variables_before_env_step
+test_wizard_bootstraps_install_env_defaults_before_menu
 test_batch_requires_ssh_and_web_credentials
 test_dnscrypt_requires_apply_confirmation
 test_dnscrypt_mock_install_logs_intent_without_host_mutation
+test_dnscrypt_ensure_local_hostname_writes_debian_hosts_line
 test_dnscrypt_forwards_force_flag
 test_dnscrypt_pins_version_flag
 test_dnscrypt_detect_connectivity_uses_shared_probe_in_mock
@@ -1836,15 +2571,30 @@ test_dnscrypt_appears_in_usage_and_wizard
 test_uninstall_purge_dnscrypt_is_explicit
 test_final_summary_mentions_host_dnscrypt
 test_apt_detects_country_specific_mirror_list
+test_apt_detect_country_forces_ipv4
 test_apt_installs_required_dependencies
+test_apt_apply_mirror_preserves_security_uri
+test_apt_unattended_origins_debian
 test_apt_falls_back_when_selected_mirror_update_fails
+test_wizard_yes_skips_apt_confirm_but_not_docker
 test_wizard_skips_docker_wipe_when_user_declines
 test_wizard_confirms_apply_steps
+test_wizard_doctor_from_menu
+test_wizard_config_menu_entry_exposed
+test_wizard_config_edits_and_persists_variables
+test_wizard_config_dirty_exit_save_only_and_discard
 test_wizard_prompts_for_missing_user
+test_wizard_auto_runs_chain_with_docker_force_prompt
+test_wizard_auto_yes_skips_start_but_asks_docker
 test_user_loads_rendered_state_env
 test_user_configures_ssh_sudo_groups_and_aliases
+test_docker_reapplies_service_user_docker_group
 test_user_sudoers_content_uses_portable_defaults
 test_compose_uses_installer_state_lock
+test_network_path_mtu_clamp_when_probe_lower
+test_docker_optional_ghcr_mirror_and_proxy
+test_compose_resyncs_project_files_when_runner_already_exists
+test_docker_repo_gpg_uses_batch_yes
 test_final_summary_prints_details
 test_final_summary_urls_use_trailing_slash_except_doh
 test_doctor_rejects_unsupported_os

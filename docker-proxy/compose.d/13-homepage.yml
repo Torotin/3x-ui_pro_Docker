@@ -10,17 +10,17 @@ services:
       # PGID: 1000
       TZ: ${TZ}
       LOG_TARGETS: both
-      # Allow public host plus local probes. Traefik LB healthcheck Host is set
+      # Private admin Host plus local probes. Traefik LB healthcheck Host is set
       # explicitly below; without that, Traefik probes as <container-ip>:3000 and
       # Homepage returns 400 → Traefik marks the backend unhealthy (HTTP 503).
-      HOMEPAGE_ALLOWED_HOSTS: ${WEBDOMAIN},localhost:3000,127.0.0.1:3000
+      HOMEPAGE_ALLOWED_HOSTS: homepage.${WEBDOMAIN},telemt.${WEBDOMAIN},localhost:3000,127.0.0.1:3000
       HOMEPAGE_VAR_WEBDOMAIN: ${WEBDOMAIN}
+      HOMEPAGE_VAR_PORT_LOCAL_ADMIN: ${PORT_LOCAL_ADMIN}
       HOMEPAGE_VAR_URI_3X-UI_PATH: ${URI_PANEL_PATH}
       HOMEPAGE_VAR_URI_TRAEFIK_DASHBOARD: ${URI_TRAEFIK_DASHBOARD}
       HOMEPAGE_VAR_URI_ARCANE: ${URI_ARCANE}
       HOMEPAGE_VAR_URI_DOZZLE: ${URI_ARCANE}
       HOMEPAGE_VAR_URI_ADGUARD_PANEL: ${URI_ADGUARD_PANEL}
-      HOMEPAGE_VAR_URI_TELEMT_PANEL: ${URI_TELEMT_PANEL}
       HOMEPAGE_VAR_URI_MIHOMO: ${URI_MIHOMO}
       HOMEPAGE_VAR_MIHOMO_SECRET: ${MIHOMO_SECRET}
       HOMEPAGE_VAR_URI_HOMEPAGE: ${URI_HOMEPAGE}
@@ -41,9 +41,15 @@ services:
         ipv4_address: 172.19.0.13
         ipv6_address: fd00:dead:beef:13::13
     extra_hosts:
-      # Let server-side Homepage widgets call the Traefik websecure entrypoint
-      # by the public hostname while staying on the internal Docker network.
+      # Server-side widgets reach Traefik admin / websecure by hostname on docker net.
       - "${WEBDOMAIN}:172.18.0.6"
+      - "homepage.${WEBDOMAIN}:172.18.0.6"
+      - "traefik.${WEBDOMAIN}:172.18.0.6"
+      - "arcane.${WEBDOMAIN}:172.18.0.6"
+      - "adguard.${WEBDOMAIN}:172.18.0.6"
+      - "3x-ui.${WEBDOMAIN}:172.18.0.6"
+      - "lampac-admin.${WEBDOMAIN}:172.18.0.6"
+      - "telemt.${WEBDOMAIN}:172.18.0.6"
     security_opt:
       - no-new-privileges=true
     healthcheck:
@@ -57,61 +63,22 @@ services:
       - traefik.docker.network=traefik-proxy
       - traefik.tags=traefik
 
-      # ---------- Service ----------
       - traefik.http.services.homepage-svc.loadbalancer.server.port=3000
-      # Traefik probes by container IP; force Host to the public domain so
-      # Homepage host validation accepts the healthcheck (avoids 503).
-      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.hostname=${WEBDOMAIN}
+      - traefik.http.services.homepage-svc.loadbalancer.healthcheck.hostname=homepage.${WEBDOMAIN}
       - traefik.http.services.homepage-svc.loadbalancer.healthcheck.path=/api/healthcheck
       - traefik.http.services.homepage-svc.loadbalancer.healthcheck.interval=30s
       - traefik.http.services.homepage-svc.loadbalancer.healthcheck.timeout=5s
 
-      # ---------- Middleware ----------
       - traefik.http.middlewares.homepage-basic-auth.basicauth.users=${HT_PASS_ENCODED}
       - traefik.http.middlewares.homepage-basic-auth.basicauth.realm=Homepage
-      - traefik.http.middlewares.homepage-strip.stripPrefix.prefixes=/${URI_HOMEPAGE}
-      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.header=Location
-      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.regex=^/(.*)
-      - traefik.http.middlewares.homepage-rewrite.plugin.traefik-plugin-rewrite-headers.rewrites.0.replacement=/${URI_HOMEPAGE}/$$1
       - traefik.http.middlewares.homepage-compress.compress=true
       - traefik.http.middlewares.homepage-rate-limit.ratelimit.average=50
       - traefik.http.middlewares.homepage-rate-limit.ratelimit.burst=100
-      - traefik.http.middlewares.homepage-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rate-limit,admin-security-headers@file,homepage-strip,homepage-rewrite,homepage-compress
-      - traefik.http.middlewares.homepage-static-chain.chain.middlewares=bouncer@file,homepage-basic-auth,homepage-rate-limit,admin-security-headers@file,homepage-rewrite,homepage-compress
-      # Icons/manifest are auto-requested from domain root (e.g. Caddy portfolio
-      # fetching /favicon.ico). Basic Auth here pops a login dialog on public pages.
-      - traefik.http.middlewares.homepage-icons-chain.chain.middlewares=bouncer@file,homepage-rate-limit,admin-security-headers@file,homepage-rewrite,homepage-compress
+      - traefik.http.middlewares.homepage-admin-chain.chain.middlewares=homepage-basic-auth,homepage-rate-limit,admin-security-headers@file,homepage-compress
 
-      # ---------- Роутеры ----------
-      - traefik.http.routers.homepage-router.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_HOMEPAGE}`)
-      - traefik.http.routers.homepage-router.entrypoints=websecure
-      - traefik.http.routers.homepage-router.middlewares=homepage-chain
+      - traefik.http.routers.homepage-router.rule=Host(`homepage.${WEBDOMAIN}`)
+      - traefik.http.routers.homepage-router.entrypoints=admin
+      - traefik.http.routers.homepage-router.middlewares=homepage-admin-chain
       - traefik.http.routers.homepage-router.service=homepage-svc
-      - traefik.http.routers.homepage-router.tls.certresolver=le
-      - traefik.http.routers.homepage-router.priority=950
-
-      # NextAuth only (not PathPrefix(/api/auth)): Arcane owns /api/auth/login|me|refresh|...
-      # Broad /api/auth stole Arcane auth and triggered a second Basic Auth (realm Homepage).
-      - traefik.http.routers.homepage-static.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/_next/`) || PathPrefix(`/api/auth/signin`) || PathPrefix(`/api/auth/signout`) || PathPrefix(`/api/auth/session`) || PathPrefix(`/api/auth/csrf`) || PathPrefix(`/api/auth/providers`) || PathPrefix(`/api/auth/error`) || PathPrefix(`/api/auth/_log`) || PathPrefix(`/api/auth/callback`) || PathPrefix(`/api/bookmarks`) || PathPrefix(`/api/config`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/healthcheck`) || PathPrefix(`/api/hash`) || PathPrefix(`/api/ping`) || PathPrefix(`/api/revalidate`) || PathPrefix(`/api/releases`) || PathPrefix(`/api/search`) || PathPrefix(`/api/services`) || PathPrefix(`/api/siteMonitor`) || PathPrefix(`/api/theme`) || PathPrefix(`/api/validate`) || PathPrefix(`/api/widgets`))
-      - traefik.http.routers.homepage-static.entrypoints=websecure
-      - traefik.http.routers.homepage-static.middlewares=homepage-static-chain
-      - traefik.http.routers.homepage-static.service=homepage-svc
-      - traefik.http.routers.homepage-static.tls.certresolver=le
-      - traefik.http.routers.homepage-static.priority=949
-
-      # Browser still probes /favicon.ico; map it to Homepage's built-in icon.
-      - traefik.http.middlewares.homepage-favicon-map.replacepath.path=/homepage.ico
-      - traefik.http.middlewares.homepage-favicon-chain.chain.middlewares=bouncer@file,homepage-rate-limit,admin-security-headers@file,homepage-favicon-map,homepage-rewrite,homepage-compress
-      - traefik.http.routers.homepage-favicon.rule=Host(`${WEBDOMAIN}`) && Path(`/favicon.ico`)
-      - traefik.http.routers.homepage-favicon.entrypoints=websecure
-      - traefik.http.routers.homepage-favicon.middlewares=homepage-favicon-chain
-      - traefik.http.routers.homepage-favicon.service=homepage-svc
-      - traefik.http.routers.homepage-favicon.tls.certresolver=le
-      - traefik.http.routers.homepage-favicon.priority=951
-
-      - traefik.http.routers.homepage-icons.rule=Host(`${WEBDOMAIN}`) && (PathPrefix(`/favicon`) || PathPrefix(`/apple-touch-icon`) || PathPrefix(`/site.webmanifest`) || PathPrefix(`/homepage.ico`) || PathPrefix(`/safari-pinned-tab`) || PathPrefix(`/android-chrome`))
-      - traefik.http.routers.homepage-icons.entrypoints=websecure
-      - traefik.http.routers.homepage-icons.middlewares=homepage-icons-chain
-      - traefik.http.routers.homepage-icons.service=homepage-svc
-      - traefik.http.routers.homepage-icons.tls.certresolver=le
-      - traefik.http.routers.homepage-icons.priority=949
+      - traefik.http.routers.homepage-router.tls=true
+      - traefik.http.routers.homepage-router.priority=100

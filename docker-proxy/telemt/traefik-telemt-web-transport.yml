@@ -1,0 +1,10 @@
+# Long-poll / WebSocket friendly timeouts for Telemt WEB carriers.
+# Mounted into Traefik only when 15-telemt.yml is included (ENABLE_TELEMT).
+# Referenced by telemt service labels: telemt-web-svc.loadbalancer.serverstransport=telemt-web@file
+http:
+  serversTransports:
+    telemt-web:
+      forwardingTimeouts:
+        dialTimeout: 30s
+        responseHeaderTimeout: 65s
+        idleConnTimeout: 90s

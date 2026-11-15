@@ -38,7 +38,7 @@ DEFAULT_ASSETS = [
         "file": "adlist.dat",
     },
     {
-        "url": "https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat",
+        "url": "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat",
         "file": "geosite_RU.dat",
     },
 ]

@@ -36,6 +36,21 @@ require_tool yq
 assert_has_healthcheck "$COMPOSE_DIR/13-homepage.yml" homepage
 assert_has_healthcheck "$COMPOSE_DIR/14-lampac.yml" lampac
 assert_has_healthcheck "$COMPOSE_DIR/09-usque.yml" usque
+
+lampac_fix_perms_restart=$(compose_value '.services."lampac-fix-perms".restart // ""' "$COMPOSE_DIR/14-lampac.yml")
+[[ "$lampac_fix_perms_restart" == "no" ]] ||
+	fail "lampac-fix-perms must use restart: no so the oneshot exits; got '${lampac_fix_perms_restart:-<missing>}'"
+lampac_waits_fix_perms=$(compose_value '.services.lampac.depends_on."lampac-fix-perms".condition // ""' "$COMPOSE_DIR/14-lampac.yml")
+[[ "$lampac_waits_fix_perms" == "service_completed_successfully" ]] ||
+	fail "lampac must wait for lampac-fix-perms to complete successfully; got '${lampac_waits_fix_perms:-<missing>}'"
+
+telemt_fix_perms_restart=$(compose_value '.services."telemt-fix-perms".restart // ""' "$COMPOSE_DIR/15-telemt.yml")
+[[ "$telemt_fix_perms_restart" == "no" ]] ||
+	fail "telemt-fix-perms must use restart: no so the oneshot exits; got '${telemt_fix_perms_restart:-<missing>}'"
+telemt_waits_fix_perms=$(compose_value '.services.telemt.depends_on."telemt-fix-perms".condition // ""' "$COMPOSE_DIR/15-telemt.yml")
+[[ "$telemt_waits_fix_perms" == "service_completed_successfully" ]] ||
+	fail "telemt must wait for telemt-fix-perms to complete successfully; got '${telemt_waits_fix_perms:-<missing>}'"
+
 assert_has_healthcheck "$COMPOSE_DIR/11-tor-proxy.yml" tor-proxy
 [[ ! -e "$COMPOSE_DIR/08-warp.yml" ]] ||
 	fail "retired warp compose fragment must be absent"

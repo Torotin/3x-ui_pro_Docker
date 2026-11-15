@@ -1,25 +1,434 @@
 #!/usr/bin/env bash
 # Wizard/menu runtime. The wizard delegates to the same dispatcher as CLI run.
 
+: "${WIZARD_ASSUME_YES:=0}"
+: "${WIZARD_UI:=auto}"
+: "${WIZARD_UI_RESOLVED:=}"
+: "${WIZARD_UI_WARNED:=0}"
+: "${WIZARD_STEPS_STATE:=}"
+
+wizard_parse_args() {
+	local arg
+	WIZARD_ASSUME_YES=0
+	for arg in "$@"; do
+		case "$arg" in
+		--yes | -y) WIZARD_ASSUME_YES=1 ;;
+		*) die "wizard: unknown option: $arg" ;;
+		esac
+	done
+	export WIZARD_ASSUME_YES
+}
+
+wizard_resolve_ui_mode() {
+	local mode=${WIZARD_UI:-auto}
+	case "$mode" in
+	text)
+		WIZARD_UI_RESOLVED=text
+		;;
+	whiptail)
+		if command -v whiptail >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; then
+			WIZARD_UI_RESOLVED=whiptail
+		else
+			WIZARD_UI_RESOLVED=text
+			if [[ "$WIZARD_UI_WARNED" != "1" ]]; then
+				log WARN "WIZARD_UI=whiptail but whiptail/TTY unavailable; using text UI"
+				WIZARD_UI_WARNED=1
+			fi
+		fi
+		;;
+	auto | *)
+		if command -v whiptail >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; then
+			WIZARD_UI_RESOLVED=whiptail
+		else
+			WIZARD_UI_RESOLVED=text
+		fi
+		;;
+	esac
+	export WIZARD_UI_RESOLVED
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_apply_whiptail_theme
+	fi
+}
+
+wizard_apply_whiptail_theme() {
+	: "${NEWT_COLORS:=
+root=,black
+window=white,black
+border=gray,black
+shadow=black,black
+title=brightcyan,black
+button=black,cyan
+actbutton=black,brightcyan
+compactbutton=white,black
+checkbox=white,black
+actcheckbox=black,cyan
+entry=white,gray
+disentry=gray,black
+label=white,black
+listbox=white,black
+actlistbox=black,cyan
+sellistbox=brightcyan,black
+actsellistbox=black,brightcyan
+textbox=white,black
+acttextbox=black,cyan
+emptyscale=,gray
+fullscale=,cyan
+helpline=gray,black
+roottext=gray,black
+}"
+	export NEWT_COLORS
+}
+
+wizard_ui_size() {
+	local lines cols
+	lines=$(tput lines 2>/dev/null || echo 24)
+	cols=$(tput cols 2>/dev/null || echo 80)
+	WIZARD_UI_HEIGHT=$((lines < 20 ? 20 : (lines > 40 ? 40 : lines - 2)))
+	WIZARD_UI_WIDTH=$((cols < 60 ? 60 : (cols > 100 ? 100 : cols - 2)))
+	export WIZARD_UI_HEIGHT WIZARD_UI_WIDTH
+}
+
+wizard_ui_yesno() {
+	local prompt=$1 force_prompt=${2:-0} rc answer
+	if [[ "$force_prompt" != "1" && "$WIZARD_ASSUME_YES" == "1" ]]; then
+		return 0
+	fi
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_ui_size
+		set +e
+		whiptail --title "3x-ui wizard" --yesno "$prompt" --defaultno \
+			"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH"
+		rc=$?
+		set -e
+		if ((rc == 0)); then
+			return 0
+		fi
+		return 1
+	fi
+	printf '%s [y/N] ' "$prompt"
+	read -r answer || answer=n
+	case "$answer" in
+	y | Y | yes | YES) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+wizard_confirm() {
+	wizard_ui_yesno "$@"
+}
+
+wizard_ui_input() {
+	local prompt=$1 default=${2:-} result rc
+	if [[ "$WIZARD_UI_RESOLVED" != "whiptail" ]]; then
+		if [[ -n "$default" ]]; then
+			printf '%s [%s] ' "$prompt" "$default"
+		else
+			printf '%s ' "$prompt"
+		fi
+		read -r result || result=
+		[[ -z "$result" && -n "$default" ]] && result=$default
+		printf '%s\n' "$result"
+		return 0
+	fi
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --inputbox "$prompt" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$default" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		return 1
+	fi
+	printf '%s\n' "$result"
+}
+
+# Newt/whiptail prints CSI escapes as literal ^[[…; strip before TUI labels.
+wizard_strip_ansi() {
+	printf '%s' "${1-}" | sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g'
+}
+
+wizard_ui_menu() {
+	local result rc backtitle prompt
+	local -a opts=()
+	local -a items=("${@:4}")
+	local -a clean=()
+	local i
+	# Optional --notags after list-height: hide tag column when the hotkey
+	# character is already the first glyph of each item (avoids "0 0 …").
+	if [[ "${items[0]:-}" == "--notags" ]]; then
+		opts+=(--notags)
+		items=("${items[@]:1}")
+	fi
+	# Tags (even) keep return values; descriptions (odd) must be ANSI-free for newt.
+	for ((i = 0; i < ${#items[@]}; i++)); do
+		if ((i % 2 == 1)); then
+			clean+=("$(wizard_strip_ansi "${items[i]}")")
+		else
+			clean+=("${items[i]}")
+		fi
+	done
+	backtitle=$(wizard_strip_ansi "$1")
+	prompt=$(wizard_strip_ansi "$2")
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$backtitle" "${opts[@]}" --menu "$prompt" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${clean[@]}" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		printf 'x\n'
+		return 0
+	fi
+	printf '%s\n' "$result"
+}
+
+wizard_ui_checklist() {
+	local result rc
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" --checklist "$2" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${@:4}" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		return 1
+	fi
+	printf '%s\n' "$result" | tr -d '"'
+	return 0
+}
+
+wizard_ui_radiolist() {
+	local result rc
+	wizard_ui_size
+	set +e
+	result=$(whiptail --title "3x-ui wizard" --backtitle "$1" --radiolist "$2" \
+		"$WIZARD_UI_HEIGHT" "$WIZARD_UI_WIDTH" "$3" "${@:4}" \
+		3>&1 1>&2 2>&3)
+	rc=$?
+	set -e
+	if ((rc != 0)); then
+		return 1
+	fi
+	printf '%s\n' "$result" | tr -d '"'
+	return 0
+}
+
+wizard_step_badge_whiptail() {
+	# Plain ASCII for whiptail (newt has no ANSI; optional \Z colors need --colors).
+	# Text UI keeps colored badges via wizard_step_badge.
+	local st
+	st=$(wizard_step_state_get "$1")
+	case "$st" in
+	OK) printf '[OK]' ;;
+	FAIL) printf '[FAIL]' ;;
+	*) printf '[ ]' ;;
+	esac
+}
+
+wizard_whiptail_backtitle() {
+	local features status bt
+	features=$(wizard_features_summary)
+	status=${WIZARD_LAST_STATUS:-No operation yet}
+	bt="3x-ui installer | Features: ${features} | Last operation: ${status}"
+	if [[ "$WIZARD_ASSUME_YES" == "1" ]]; then
+		bt="${bt} | Mode: --yes"
+	fi
+	printf '%s' "$bt"
+}
+
+wizard_whiptail_main_menu() {
+	# Newt hotkeys match isalpha(tag) only — digits 0-9 are ignored. Use letter
+	# tags (avoid a/t/c/d/x). --notags + letter prefix in the item label.
+	# Text UI keeps 0-9; wizard_normalize_step accepts both.
+	local backtitle b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
+	backtitle=$(wizard_whiptail_backtitle)
+	b0=$(wizard_step_badge_whiptail dnscrypt)
+	b1=$(wizard_step_badge_whiptail apt)
+	b2=$(wizard_step_badge_whiptail user)
+	b3=$(wizard_step_badge_whiptail ssh)
+	b4=$(wizard_step_badge_whiptail firewall)
+	b5=$(wizard_step_badge_whiptail network)
+	b6=$(wizard_step_badge_whiptail env)
+	b7=$(wizard_step_badge_whiptail docker)
+	b8=$(wizard_step_badge_whiptail compose)
+	b9=$(wizard_step_badge_whiptail final)
+	wizard_ui_menu "$backtitle" "Choose an action (letter hotkeys)" 18 --notags \
+		a "a  auto — Full install (recommended)" \
+		t "t  toggles — Optional stack features" \
+		c "c  config — Edit installer variables" \
+		d "d  doctor — System / stack diagnostics" \
+		n "n  ${b0} dnscrypt — DNSCrypt system DNS" \
+		p "p  ${b1} apt — APT mirror and OS packages" \
+		u "u  ${b2} user — Service user" \
+		s "s  ${b3} ssh — SSH policy" \
+		f "f  ${b4} firewall — Firewall policy" \
+		w "w  ${b5} network — Network tuning" \
+		e "e  ${b6} env — Render env files" \
+		o "o  ${b7} docker — Docker (destructive)" \
+		m "m  ${b8} compose — Validate/start stack" \
+		l "l  ${b9} final — Final summary" \
+		x "x  Exit"
+}
+
+wizard_feature_toggles_whiptail() {
+	local backtitle selected backend l t g m
+	wizard_load_feature_toggles
+	backtitle=$(wizard_whiptail_backtitle)
+	[[ "${ENABLE_LAMPAC}" == true ]] && l=ON || l=OFF
+	[[ "${ENABLE_TELEMT}" == true ]] && t=ON || t=OFF
+	[[ "${ENABLE_VLESS_GRPC}" == true ]] && g=ON || g=OFF
+	[[ "${ENABLE_MIHOMO}" == true ]] && m=ON || m=OFF
+	selected=$(wizard_ui_checklist "$backtitle" "Optional stack features (Space toggles)" 4 \
+		ENABLE_LAMPAC "Lampac [$l]" "$l" \
+		ENABLE_TELEMT "Telemt [$t]" "$t" \
+		ENABLE_VLESS_GRPC "VLESS gRPC [$g]" "$g" \
+		ENABLE_MIHOMO "Mihomo [$m]" "$m") || {
+		WIZARD_LAST_STATUS="SKIPPED toggles"
+		return 0
+	}
+	ENABLE_LAMPAC=false
+	ENABLE_TELEMT=false
+	ENABLE_VLESS_GRPC=false
+	ENABLE_MIHOMO=false
+	for tag in $selected; do
+		case "$tag" in
+		ENABLE_LAMPAC) ENABLE_LAMPAC=true ;;
+		ENABLE_TELEMT) ENABLE_TELEMT=true ;;
+		ENABLE_VLESS_GRPC) ENABLE_VLESS_GRPC=true ;;
+		ENABLE_MIHOMO) ENABLE_MIHOMO=true ;;
+		esac
+	done
+	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_VLESS_GRPC ENABLE_MIHOMO
+	backend=$(wizard_ui_radiolist "$backtitle" "UDP443 backend" 3 \
+		amneziawg "amneziawg" "$([[ ${UDP443_BACKEND:-off} == amneziawg ]] && echo ON || echo OFF)" \
+		hysteria2 "hysteria2" "$([[ ${UDP443_BACKEND:-off} == hysteria2 ]] && echo ON || echo OFF)" \
+		off "off" "$([[ ${UDP443_BACKEND:-off} == off ]] && echo ON || echo OFF)") || {
+		WIZARD_LAST_STATUS="SKIPPED toggles"
+		return 0
+	}
+	UDP443_BACKEND=$backend
+	export UDP443_BACKEND
+	install_normalize_udp443_backend
+	wizard_save_feature_toggles
+	# Persist toggles/UDP443 into install.env + compose.d/.env, then return to main menu.
+	# Compose apply stays a separate menu step.
+	wizard_execute_step env dispatch_step env
+}
+
+wizard_step_state_file() {
+	WIZARD_STEPS_STATE="${INSTALL_STATE_DIR}/wizard-steps.state"
+	export WIZARD_STEPS_STATE
+	printf '%s\n' "$WIZARD_STEPS_STATE"
+}
+
+wizard_step_state_get() {
+	local step=$1 file
+	file=$(wizard_step_state_file)
+	[[ -f "$file" ]] || { printf '\n'; return 0; }
+	awk -F= -v s="$step" '$1==s { print $2; found=1; exit } END { if (!found) print "" }' "$file"
+}
+
+wizard_step_state_set() {
+	local step=$1 status=$2 file tmp
+	file=$(wizard_step_state_file)
+	tmp=$(mktemp)
+	mkdir -p "$INSTALL_STATE_DIR"
+	if [[ -f "$file" ]]; then
+		awk -F= -v s="$step" -v st="$status" '
+			$1==s { print s "=" st; seen=1; next }
+			{ print }
+			END { if (!seen) print s "=" st }
+		' "$file" >"$tmp"
+	else
+		printf '%s=%s\n' "$step" "$status" >"$tmp"
+	fi
+	mv "$tmp" "$file"
+}
+
+wizard_features_summary() {
+	local -a items=()
+	wizard_load_feature_toggles
+	[[ "${ENABLE_LAMPAC}" == true ]] && items+=(lampac)
+	[[ "${ENABLE_TELEMT}" == true ]] && items+=(telemt)
+	[[ "${ENABLE_VLESS_GRPC}" == true ]] && items+=(vless-grpc)
+	[[ "${ENABLE_MIHOMO}" == true ]] && items+=(mihomo)
+	if [[ "${UDP443_BACKEND:-off}" != off ]]; then
+		items+=("udp443:${UDP443_BACKEND}")
+	fi
+	if ((${#items[@]} == 0)); then
+		printf 'none'
+		return 0
+	fi
+	local IFS=,
+	printf '%s' "${items[*]}"
+}
+
+wizard_step_badge() {
+	local st
+	st=$(wizard_step_state_get "$1")
+	case "$st" in
+	OK)
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[✓]'
+		else
+			printf '\033[32m[✓]\033[0m'
+		fi
+		;;
+	FAIL)
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[!]'
+		else
+			printf '\033[31m[!]\033[0m'
+		fi
+		;;
+	*) printf '[ ]' ;;
+	esac
+}
+
+wizard_print_menu_step() {
+	local step=$1
+	shift
+	printf '  '
+	wizard_step_badge "$step"
+	printf ' %s\n' "$*"
+}
+
 install_wizard_print_menu() {
+	local features
 	if [[ -t 1 ]]; then
 		printf '\033[H\033[2J'
 	fi
+	features=$(wizard_features_summary)
+	printf '3x-ui installer · wizard\n'
+	printf 'Features: %s\n' "$features"
+	if [[ "$WIZARD_ASSUME_YES" == "1" ]]; then
+		printf 'Mode: --yes\n'
+	fi
+	printf '\n── Quick Actions ─────────────────────────\n'
 	cat <<'MENU'
-Available steps:
-  0. dnscrypt  Install DNSCrypt as system DNS (DoH/DNSCrypt)
-  1. apt       Select APT mirror and update OS packages
-  2. env       Render installer and compose env files
-  3. docker    Install/prepare Docker resources
-  4. user      Create or update service user
-  5. firewall  Apply firewall policy
-  6. ssh       Apply SSH policy
-  7. network   Apply sysctl/network tuning
-  8. compose   Validate/start compose stack
-  9. final     Render final summary
-  t. toggles   Enable/disable optional stack features
-  x. Exit
+  a. auto      Full install (recommended path)
+  t. toggles   Optional stack features
+  c. config    Edit installer variables
+  d. doctor    System / stack diagnostics
 MENU
+	printf '\n── 1. Host & Security Preparation ────────\n'
+	wizard_print_menu_step dnscrypt '0. dnscrypt   Install DNSCrypt as system DNS (DoH/DNSCrypt)'
+	wizard_print_menu_step apt '1. apt        Select APT mirror and update OS packages'
+	wizard_print_menu_step user '2. user       Create or update service user'
+	wizard_print_menu_step ssh '3. ssh        Apply SSH policy'
+	wizard_print_menu_step firewall '4. firewall  Apply firewall policy'
+	wizard_print_menu_step network '5. network    Apply sysctl/network tuning'
+	printf '\n── 2. Docker & Stack Deployment ──────────\n'
+	wizard_print_menu_step env '6. env        Render installer and compose env files'
+	wizard_print_menu_step docker '7. docker     Install/prepare Docker resources (destructive)'
+	wizard_print_menu_step compose '8. compose    Validate/start compose stack'
+	wizard_print_menu_step final '9. final      Render final summary'
+	printf '\n  x. Exit\n'
+	printf 'Keys: 0-9 step · a/t/c/d · names (apt, compose) · q quit\n'
+	printf 'Whiptail hotkeys: n/p/u/s/f/w/e/o/m/l (steps) · a/t/c/d/x\n'
 }
 
 install_wizard_print_status() {
@@ -28,18 +437,22 @@ install_wizard_print_status() {
 }
 
 wizard_normalize_step() {
+	# Text UI: 0-9. Whiptail: letter tags (newt isalpha-only hotkeys).
 	case "$1" in
-	0) printf 'dnscrypt\n' ;;
-	1) printf 'apt\n' ;;
-	2) printf 'env\n' ;;
-	3) printf 'docker\n' ;;
-	4) printf 'user\n' ;;
-	5) printf 'firewall\n' ;;
-	6) printf 'ssh\n' ;;
-	7) printf 'network\n' ;;
-	8) printf 'compose\n' ;;
-	9) printf 'final\n' ;;
+	0 | n) printf 'dnscrypt\n' ;;
+	1 | p) printf 'apt\n' ;;
+	2 | u) printf 'user\n' ;;
+	3 | s) printf 'ssh\n' ;;
+	4 | f) printf 'firewall\n' ;;
+	5 | w) printf 'network\n' ;;
+	6 | e) printf 'env\n' ;;
+	7 | o) printf 'docker\n' ;;
+	8 | m) printf 'compose\n' ;;
+	9 | l) printf 'final\n' ;;
 	t) printf 'toggles\n' ;;
+	c) printf 'config\n' ;;
+	a) printf 'auto\n' ;;
+	d) printf 'doctor\n' ;;
 	*) printf '%s\n' "$1" ;;
 	esac
 }
@@ -76,11 +489,13 @@ wizard_execute_step() {
 	fi
 	set -e
 	if ((rc == 0)); then
+		wizard_step_state_set "$label" OK
 		WIZARD_LAST_STATUS="OK $label"
 		printf '\nLast operation: OK %s\nLog: %s\n' "$label" "$output_file"
 		wizard_wait_continue
 		return 0
 	fi
+	wizard_step_state_set "$label" FAIL
 	WIZARD_LAST_STATUS="FAILED $label"
 	printf '\nLast operation: FAILED %s\nLog: %s\n' "$label" "$output_file"
 	wizard_wait_continue
@@ -98,13 +513,24 @@ wizard_load_feature_toggles() {
 	: "${ENABLE_LAMPAC:=false}"
 	: "${ENABLE_TELEMT:=false}"
 	: "${ENABLE_MIHOMO:=false}"
-	: "${ENABLE_HYSTERIA2:=true}"
 	: "${ENABLE_VLESS_GRPC:=false}"
 	install_normalize_bool_var ENABLE_LAMPAC
 	install_normalize_bool_var ENABLE_TELEMT
 	install_normalize_bool_var ENABLE_MIHOMO
-	install_normalize_bool_var ENABLE_HYSTERIA2
 	install_normalize_bool_var ENABLE_VLESS_GRPC
+	install_normalize_udp443_port_env
+	install_normalize_udp443_backend
+}
+
+wizard_cycle_udp443_backend() {
+	case "${UDP443_BACKEND:-amneziawg}" in
+	amneziawg) UDP443_BACKEND=hysteria2 ;;
+	hysteria2) UDP443_BACKEND=off ;;
+	off) UDP443_BACKEND=amneziawg ;;
+	*) UDP443_BACKEND=amneziawg ;;
+	esac
+	export UDP443_BACKEND
+	install_normalize_udp443_backend
 }
 
 wizard_toggle_bool_var() {
@@ -117,12 +543,39 @@ wizard_toggle_bool_var() {
 	export "${name?}"
 }
 
+wizard_state_set_env_literal() {
+	local key=$1 value=$2 file tmp
+	file="$INSTALL_STATE_DIR/install.env"
+	mkdir -p "$(dirname "$file")"
+	touch "$file"
+	tmp=$(mktemp)
+	awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" {print k "=" v; done=1; next} {print} END{if(!done) print k "=" v}' "$file" >"$tmp"
+	mv "$tmp" "$file"
+}
+
 wizard_save_feature_toggles() {
-	install_state_set_env ENABLE_LAMPAC "$ENABLE_LAMPAC"
-	install_state_set_env ENABLE_TELEMT "$ENABLE_TELEMT"
-	install_state_set_env ENABLE_MIHOMO "$ENABLE_MIHOMO"
-	install_state_set_env ENABLE_HYSTERIA2 "$ENABLE_HYSTERIA2"
-	install_state_set_env ENABLE_VLESS_GRPC "$ENABLE_VLESS_GRPC"
+	wizard_state_set_env_literal ENABLE_LAMPAC "$ENABLE_LAMPAC"
+	wizard_state_set_env_literal ENABLE_TELEMT "$ENABLE_TELEMT"
+	wizard_state_set_env_literal ENABLE_MIHOMO "$ENABLE_MIHOMO"
+	wizard_state_set_env_literal UDP443_BACKEND "$UDP443_BACKEND"
+	wizard_state_set_env_literal PORT_LOCAL_UDP443 "$PORT_LOCAL_UDP443"
+	wizard_state_set_env_literal ENABLE_VLESS_GRPC "$ENABLE_VLESS_GRPC"
+}
+
+wizard_bool_toggle_badge() {
+	if [[ "$1" == true ]]; then
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[ON ]'
+		else
+			printf '\033[32m[ON ]\033[0m'
+		fi
+	else
+		if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then
+			printf '[OFF]'
+		else
+			printf '\033[2m[OFF]\033[0m'
+		fi
+	fi
 }
 
 wizard_print_feature_toggles() {
@@ -130,19 +583,26 @@ wizard_print_feature_toggles() {
 		printf '\033[H\033[2J'
 	fi
 	cat <<MENU
-Feature toggles:
-  1. ENABLE_LAMPAC      $ENABLE_LAMPAC   Lampac compose service
-  2. ENABLE_TELEMT      $ENABLE_TELEMT   Telemt fallback/proxy stack
-  3. ENABLE_HYSTERIA2   $ENABLE_HYSTERIA2   Hysteria2 inbound in 3x-ui/Xray
-  4. ENABLE_VLESS_GRPC  $ENABLE_VLESS_GRPC   VLESS gRPC inbound in 3x-ui/Xray
-  5. ENABLE_MIHOMO      $ENABLE_MIHOMO   Mihomo compose service
+Optional Stack Features
+  1. Lampac         $(wizard_bool_toggle_badge "$ENABLE_LAMPAC")
+  2. Telemt         $(wizard_bool_toggle_badge "$ENABLE_TELEMT")
+  3. UDP443 backend [${UDP443_BACKEND}]
+  4. VLESS gRPC     $(wizard_bool_toggle_badge "$ENABLE_VLESS_GRPC")
+  5. Mihomo         $(wizard_bool_toggle_badge "$ENABLE_MIHOMO")
 
-Choose 1-5 to toggle, a to apply/render env, x to return:
+  a. Save + render env
+  x. Return
+
+Choose 1-5 to toggle, a to save/render env and return, x to return:
 MENU
 }
 
 wizard_feature_toggles() {
-	local input
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_feature_toggles_whiptail
+		return 0
+	fi
+	local input dirty=0
 	wizard_load_feature_toggles
 	while true; do
 		wizard_print_feature_toggles
@@ -151,26 +611,38 @@ wizard_feature_toggles() {
 		case "$input" in
 		1)
 			wizard_toggle_bool_var ENABLE_LAMPAC
+			dirty=1
 			;;
 		2)
 			wizard_toggle_bool_var ENABLE_TELEMT
+			dirty=1
 			;;
 		3)
-			wizard_toggle_bool_var ENABLE_HYSTERIA2
+			wizard_cycle_udp443_backend
+			dirty=1
 			;;
 		4)
 			wizard_toggle_bool_var ENABLE_VLESS_GRPC
+			dirty=1
 			;;
 		5)
 			wizard_toggle_bool_var ENABLE_MIHOMO
+			dirty=1
 			;;
 		a | apply)
 			wizard_save_feature_toggles
+			dirty=0
+			# Render full env only; compose remains a separate menu step.
 			wizard_execute_step env dispatch_step env
 			return 0
 			;;
 		x | q | quit)
-			WIZARD_LAST_STATUS="SKIPPED toggles"
+			if ((dirty == 0)); then
+				return 0
+			fi
+			if wizard_confirm "Save changes?"; then
+				wizard_save_feature_toggles
+			fi
 			return 0
 			;;
 		'')
@@ -189,56 +661,115 @@ wizard_filter_compose_output() {
 	if command -v stdbuf >/dev/null 2>&1; then
 		awk_bin=(stdbuf -oL awk)
 	fi
-	"${awk_bin[@]}" '
-		/^[[:space:]]*[[:xdigit:]]{12,}[[:space:]]+(Preparing|Waiting|Verifying Checksum|Already exists|Pulling fs layer|Downloading|Download complete|Extracting|Pull complete)([[:space:]].*)?$/ { next }
-
-		/^ Image .+ Pulling$/ {
-			ref=$0
-			sub(/^ Image /, "", ref)
-			sub(/ Pulling$/, "", ref)
-			print "Pulling image: " ref
-			next
+	# Compose/TTY progress often uses \r; normalize so awk sees line boundaries.
+	# Caller already merges streams (2>&1) and preserves rc via PIPESTATUS[0].
+	tr '\r' '\n' | "${awk_bin[@]}" '
+		function emit(msg) {
+			print msg
+			fflush()
 		}
 
-		/^ Image .+ Pulled$/ {
-			if (!pulled) {
-				print "Docker images pulled"
-				pulled=1
-			}
-			next
-		}
-
-		/\[run-compose\] Проверяем конфигурацию: / {
-			print "Validating compose configuration..."
-			next
-		}
-		/\[run-compose\] Попытка [0-9]+\/[0-9]+: / {
-			line=$0
-			sub(/^.*\[run-compose\] /, "", line)
-			sub(/: docker compose .*$/, "", line)
-			print "Starting compose stack: " line
-			next
-		}
-
-		/\[run-compose\] Каталог с compose-файлами:/ { next }
-		/\[run-compose\] Используем env-файл:/ { next }
-		/\[run-compose\] Project root:/ { next }
-		/\[run-compose\] Lock file:/ { next }
-
+		/^[[:space:]]*$/ { next }
+		/\[run-compose\] (Каталог с compose-файлами|Используем env-файл|Project root|Lock file):/ { next }
 		/^Created symlink / { next }
 		/^NEXT[[:space:]]+LEFT[[:space:]]+LAST[[:space:]]+PASSED[[:space:]]+UNIT[[:space:]]+ACTIVATES/ { next }
 		/docker-proxy-maintenance\.timer/ { next }
 		/^[0-9]+ timers? listed\.?$/ { next }
 
-		{ print }
+		/^[[:space:]]*[[:xdigit:]]{12,}[[:space:]]+(Preparing|Waiting|Verifying Checksum|Already exists|Pulling fs layer|Downloading|Download complete|Extracting|Pull complete)([[:space:]].*)?$/ { next }
+
+		/\[run-compose\] Проверяем конфигурацию:/ {
+			emit("[+] Validating compose configuration...")
+			next
+		}
+		/\[run-compose\] Проверяем и скачиваем обновления образов/ {
+			emit("[+] Checking for image updates...")
+			next
+		}
+		/\[run-compose\] Образы уже актуальны/ {
+			emit("[+] Docker images are up to date")
+			next
+		}
+		/\[run-compose\] Обновлены образы:/ {
+			emit("[+] Updated images:")
+			next
+		}
+		/\[run-compose\] Попытка [0-9]+\/[0-9]+:/ {
+			line = $0
+			sub(/^.*\[run-compose\] Попытка /, "", line)
+			sub(/:.*$/, "", line)
+			emit("[+] Starting compose stack (attempt " line ")...")
+			next
+		}
+		/\[run-compose\] Попытка [0-9]+ неудачна/ {
+			line = $0
+			sub(/^.*\[run-compose\] /, "[!] ", line)
+			emit(line)
+			next
+		}
+		/\[run-compose\] Applying Telemt panel GeoIP/ {
+			emit("[+] Updating Telemt GeoIP databases in background...")
+			next
+		}
+		/\[run-compose\] Unhealthy контейнеров не обнаружено/ { next }
+
+		/^[[:space:]]*Image .+ Pulling$/ {
+			ref = $0
+			sub(/^[[:space:]]*Image /, "", ref)
+			sub(/ Pulling$/, "", ref)
+			emit("[+] Pulling image: " ref)
+			next
+		}
+		/^[[:space:]]*Image .+ Pulled$/ {
+			ref = $0
+			sub(/^[[:space:]]*Image /, "", ref)
+			sub(/ Pulled$/, "", ref)
+			emit("[+] Pulled image: " ref)
+			next
+		}
+
+		/^[[:space:]]*(Network|Volume) .+ (Creating|Created|Removing|Removed)$/ {
+			if (!net_announced) {
+				emit("[+] Preparing Docker networks and volumes...")
+				net_announced = 1
+			}
+			next
+		}
+		/^[[:space:]]*Container .+ (Creating|Created|Starting|Waiting|Stopping|Stopped|Removing|Removed)$/ { next }
+		/^[[:space:]]*Container .+ (Started|Healthy|Unhealthy|Error)$/ {
+			line = $0
+			sub(/^[[:space:]]*Container /, "", line)
+			emit("[+] Container " line)
+			next
+		}
+
+		/\[run-compose\] (ERROR|WARN):/ {
+			line = $0
+			sub(/^.*\[run-compose\] /, "[!] ", line)
+			emit(line)
+			next
+		}
+
+		{ emit($0) }
 	'
 }
 
 wizard_offer_self_update() {
-	local branch result_file tmp local_version remote_version available answer
+	local branch result_file tmp local_version remote_version available answer prepare_rc
+	# Fresh hosts often lack git until the apt step; skip instead of a false "up to date".
+	if [[ "$INSTALL_MOCK" != "1" ]] && ! command -v git >/dev/null 2>&1; then
+		printf 'Update check: skipped (git not installed; run apt step first)\n'
+		return 0
+	fi
 	branch=$(config_get update.branch "$INSTALL_DEFAULT_BRANCH")
 	result_file=$(mktemp)
-	if ! (install_self_update_prepare "$branch" "$result_file"); then
+	# Do not wrap prepare in `if ! ( ... )`: bash disables set -e in if-conditions, so
+	# failed git/clone + die-inside-$(...) could falsely report "up to date".
+	set +e
+	install_self_update_prepare "$branch" "$result_file"
+	prepare_rc=$?
+	set -e
+	if ((prepare_rc != 0)); then
 		rm -f "$result_file"
 		log WARN "self-update check failed"
 		return 0
@@ -265,14 +796,276 @@ wizard_offer_self_update() {
 	esac
 }
 
-wizard_confirm() {
-	local prompt=$1 answer
-	printf '%s [y/N] ' "$prompt"
-	read -r answer || answer=n
-	case "$answer" in
-	y | Y | yes | YES) return 0 ;;
+wizard_config_is_secret() {
+	case "$1" in
+	PASS_SSH | PASS_WEB) return 0 ;;
 	*) return 1 ;;
 	esac
+}
+
+wizard_config_is_clearable() {
+	case "$1" in
+	WEBDOMAIN | SSH_PBK) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+wizard_config_display_value() {
+	local var=$1
+	local value=${!var-}
+	if [[ -z "$value" ]]; then
+		printf '<not set>'
+		return 0
+	fi
+	if wizard_config_is_secret "$var"; then
+		printf '********'
+		return 0
+	fi
+	printf '%s' "$value"
+}
+
+wizard_config_persist() {
+	export WEBDOMAIN USER_SSH PASS_SSH USER_WEB PASS_WEB SSH_PBK
+	install_persist_required_env
+}
+
+wizard_config_assign() {
+	local var=$1 raw=$2
+	if [[ -z "$raw" ]]; then
+		return 1
+	fi
+	if [[ "$raw" == "-" || "$raw" == "clear" ]]; then
+		if wizard_config_is_clearable "$var"; then
+			printf -v "$var" '%s' ""
+			export "${var?}"
+			return 0
+		fi
+		printf 'Cannot clear required variable %s\n' "$var"
+		return 1
+	fi
+	printf -v "$var" '%s' "$raw"
+	export "${var?}"
+	return 0
+}
+
+wizard_print_config_vars() {
+	cat <<MENU
+Installer variables
+  1. WEBDOMAIN   $(wizard_config_display_value WEBDOMAIN)
+  2. USER_SSH    $(wizard_config_display_value USER_SSH)
+  3. PASS_SSH    $(wizard_config_display_value PASS_SSH)
+  4. USER_WEB    $(wizard_config_display_value USER_WEB)
+  5. PASS_WEB    $(wizard_config_display_value PASS_WEB)
+  6. SSH_PBK     $(wizard_config_display_value SSH_PBK)
+
+  a. Save + render env
+  x. Return
+
+Choose 1-6 to edit, a to apply/render env, x to return:
+MENU
+}
+
+wizard_config_prompt_text() {
+	local var=$1 prompt=$2 value
+	if wizard_config_is_secret "$var"; then
+		printf '%s (empty=keep, -=clear if allowed): ' "$prompt"
+		read -rs value || value=
+		printf '\n'
+	else
+		printf '%s [%s] (empty=keep, -=clear if allowed): ' "$prompt" "${!var-}"
+		read -r value || value=
+	fi
+	if [[ -z "$value" ]]; then
+		return 1
+	fi
+	wizard_config_assign "$var" "$value"
+}
+
+wizard_edit_config_whiptail() {
+	local backtitle choice var prompt default raw dirty=0
+	install_load_state_env
+	backtitle=$(wizard_whiptail_backtitle)
+	while true; do
+		# Letter tags only: newt ignores digit hotkeys (isalpha).
+		choice=$(wizard_ui_menu "$backtitle" "Installer variables (letter hotkeys)" 10 --notags \
+			b "b  WEBDOMAIN — $(wizard_config_display_value WEBDOMAIN)" \
+			h "h  USER_SSH — $(wizard_config_display_value USER_SSH)" \
+			i "i  PASS_SSH — $(wizard_config_display_value PASS_SSH)" \
+			j "j  USER_WEB — $(wizard_config_display_value USER_WEB)" \
+			k "k  PASS_WEB — $(wizard_config_display_value PASS_WEB)" \
+			r "r  SSH_PBK — $(wizard_config_display_value SSH_PBK)" \
+			a "a  Save + render env" \
+			x "x  Back")
+		case "$choice" in
+		b | 1) var=WEBDOMAIN ;;
+		h | 2) var=USER_SSH ;;
+		i | 3) var=PASS_SSH ;;
+		j | 4) var=USER_WEB ;;
+		k | 5) var=PASS_WEB ;;
+		r | 6) var=SSH_PBK ;;
+		a)
+			if ! wizard_config_persist; then
+				continue
+			fi
+			dirty=0
+			if wizard_confirm "Render env files now?"; then
+				wizard_execute_step env dispatch_step env
+			fi
+			return 0
+			;;
+		x)
+			if ((dirty == 0)); then
+				WIZARD_LAST_STATUS="SKIPPED config"
+				return 0
+			fi
+			if wizard_confirm "Save changes?"; then
+				wizard_config_persist || true
+			fi
+			return 0
+			;;
+		*)
+			continue
+			;;
+		esac
+
+		prompt="$var (empty=keep"
+		wizard_config_is_clearable "$var" && prompt+=", -=clear"
+		prompt+="):"
+		if wizard_config_is_secret "$var"; then
+			default=
+		else
+			default=${!var-}
+		fi
+		if ! raw=$(wizard_ui_input "$prompt" "$default"); then
+			continue
+		fi
+		if [[ -z "$raw" ]]; then
+			continue
+		fi
+		if [[ "$raw" == "${!var-}" ]] && ! wizard_config_is_secret "$var"; then
+			continue
+		fi
+		if wizard_config_assign "$var" "$raw"; then
+			dirty=1
+		fi
+	done
+}
+
+wizard_edit_config_text() {
+	local input dirty=0
+	install_load_state_env
+	while true; do
+		wizard_print_config_vars
+		printf '> '
+		read -r input || return 0
+		case "$input" in
+		1)
+			if wizard_config_prompt_text WEBDOMAIN "WEBDOMAIN"; then dirty=1; fi
+			;;
+		2)
+			if wizard_config_prompt_text USER_SSH "USER_SSH"; then dirty=1; fi
+			;;
+		3)
+			if wizard_config_prompt_text PASS_SSH "PASS_SSH"; then dirty=1; fi
+			;;
+		4)
+			if wizard_config_prompt_text USER_WEB "USER_WEB"; then dirty=1; fi
+			;;
+		5)
+			if wizard_config_prompt_text PASS_WEB "PASS_WEB"; then dirty=1; fi
+			;;
+		6)
+			if wizard_config_prompt_text SSH_PBK "SSH_PBK"; then dirty=1; fi
+			;;
+		a | apply)
+			if wizard_config_persist; then
+				dirty=0
+				wizard_execute_step env dispatch_step env
+			else
+				printf 'Failed to persist installer variables\n'
+				wizard_wait_continue
+			fi
+			return 0
+			;;
+		x | q | quit)
+			if ((dirty == 0)); then
+				WIZARD_LAST_STATUS="SKIPPED config"
+				return 0
+			fi
+			if wizard_confirm "Save changes?"; then
+				wizard_config_persist || true
+			fi
+			return 0
+			;;
+		'')
+			;;
+		*)
+			WIZARD_LAST_STATUS="INVALID config $input"
+			printf '\nUnknown config item: %s\n' "$input"
+			wizard_wait_continue
+			;;
+		esac
+	done
+}
+
+wizard_auto_install() {
+	local step
+	install_load_state_env
+	if [[ -z "${USER_SSH:-}" ]]; then
+		if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+			if ! USER_SSH=$(wizard_ui_input "SSH username:" ""); then
+				WIZARD_LAST_STATUS="SKIPPED auto"
+				return 0
+			fi
+			export USER_SSH
+		else
+			printf 'SSH username: '
+			read -r USER_SSH || USER_SSH=
+			export USER_SSH
+		fi
+		[[ -n "$USER_SSH" ]] || {
+			WIZARD_LAST_STATUS="SKIPPED auto"
+			wizard_wait_continue
+			return 0
+		}
+	fi
+	if [[ "$WIZARD_ASSUME_YES" != "1" ]]; then
+		if ! wizard_confirm "Run full install (apt→env→docker→user→firewall→ssh→network→compose→final)? Docker wipe is destructive."; then
+			WIZARD_LAST_STATUS="SKIPPED auto"
+			wizard_wait_continue
+			return 0
+		fi
+	fi
+	for step in apt env docker user firewall ssh network compose final; do
+		case "$step" in
+		docker)
+			if ! wizard_confirm "Destroy Docker data and reinstall Docker?" 1; then
+				WIZARD_LAST_STATUS="SKIPPED docker"
+				wizard_wait_continue
+				return 0
+			fi
+			wizard_execute_step docker dispatch_step docker --destroy-docker-data || return $?
+			;;
+		apt)
+			wizard_execute_step apt dispatch_step apt --apply --yes || return $?
+			;;
+		firewall | ssh | network)
+			wizard_execute_step "$step" dispatch_step "$step" --apply --yes || return $?
+			;;
+		user | env | compose | final)
+			wizard_execute_step "$step" dispatch_step "$step" || return $?
+			;;
+		esac
+	done
+	WIZARD_LAST_STATUS="OK auto"
+}
+
+wizard_edit_config() {
+	if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+		wizard_edit_config_whiptail
+		return 0
+	fi
+	wizard_edit_config_text
 }
 
 wizard_dispatch_step() {
@@ -297,7 +1090,7 @@ wizard_dispatch_step() {
 		fi
 		;;
 	docker)
-		if wizard_confirm "Destroy Docker data and reinstall Docker?"; then
+		if wizard_confirm "Destroy Docker data and reinstall Docker?" 1; then
 			wizard_execute_step docker dispatch_step docker --destroy-docker-data
 		else
 			WIZARD_LAST_STATUS="SKIPPED docker"
@@ -317,9 +1110,14 @@ wizard_dispatch_step() {
 	user)
 		install_load_state_env
 		if [[ -z "${USER_SSH:-}" ]]; then
-			printf 'SSH username: '
-			read -r USER_SSH || USER_SSH=
-			export USER_SSH
+			if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+				USER_SSH=$(wizard_ui_input "SSH username:" "") || USER_SSH=
+				export USER_SSH
+			else
+				printf 'SSH username: '
+				read -r USER_SSH || USER_SSH=
+				export USER_SSH
+			fi
 		fi
 		wizard_execute_step user dispatch_step user
 		;;
@@ -328,6 +1126,15 @@ wizard_dispatch_step() {
 		;;
 	toggles)
 		wizard_feature_toggles
+		;;
+	config)
+		wizard_edit_config
+		;;
+	auto)
+		wizard_auto_install
+		;;
+	doctor)
+		wizard_execute_step doctor dispatch_step doctor
 		;;
 	*)
 		WIZARD_LAST_STATUS="INVALID $input"
@@ -339,19 +1146,32 @@ wizard_dispatch_step() {
 }
 
 install_wizard() {
+	wizard_parse_args "$@"
+	wizard_resolve_ui_mode
 	wizard_offer_self_update
 	install_require_required_env wizard
+	# Persist required keys alone leaves install.env sparse (no PORT_REMOTE_SSH / URIs).
+	# Bootstrap full install.env.template so ssh/firewall/user can run before `env`.
+	install_bootstrap_install_env
 
 	while true; do
-		install_wizard_print_menu
-		printf '> '
-		install_wizard_print_status
-		local input
-		read -r input || break
-		[[ -z "$input" ]] && continue
-		[[ "$input" == "x" ]] && break
-		[[ "$input" == "q" || "$input" == "quit" ]] && break
-		input=$(wizard_normalize_step "$input")
+		if [[ "$WIZARD_UI_RESOLVED" == "whiptail" ]]; then
+			local input
+			input=$(wizard_whiptail_main_menu)
+			[[ "$input" == "x" ]] && break
+			[[ -z "$input" ]] && continue
+			input=$(wizard_normalize_step "$input")
+		else
+			install_wizard_print_menu
+			install_wizard_print_status
+			printf '> '
+			local input
+			read -r input || break
+			[[ -z "$input" ]] && continue
+			[[ "$input" == "x" ]] && break
+			[[ "$input" == "q" || "$input" == "quit" ]] && break
+			input=$(wizard_normalize_step "$input")
+		fi
 		if ! wizard_dispatch_step "$input"; then
 			log WARN "wizard step failed: $input"
 		fi

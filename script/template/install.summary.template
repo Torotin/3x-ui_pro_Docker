@@ -20,29 +20,43 @@ ${SUMMARY_SSH_EXTRA}  User             : ${SUMMARY_USER_SSH}
   Auth             : ${SUMMARY_SSH_AUTH}
   Root login       : disabled by installer SSH policy
 
-Web credentials:
+Web credentials (Basic Auth on admin plane):
   User             : ${SUMMARY_USER_WEB}
   Password         : configured, not printed
 
-Service URLs:
+Admin plane (personal Xray → Traefik entrypoint admin):
+  Listen           : 127.0.0.1:${SUMMARY_PORT_LOCAL_ADMIN} (host); docker 172.18.0.6:${SUMMARY_PORT_LOCAL_ADMIN}
+  TLS              : self-signed (browser warning expected)
+  Access           : open URLs below through Xray/Clash; not on public websecure
   Homepage         : ${SUMMARY_URL_HOMEPAGE}
   3X-UI Panel      : ${SUMMARY_URL_3X_UI}
   AdGuard Home     : ${SUMMARY_URL_ADGUARD}
-  AdGuard DoH      : ${SUMMARY_URL_ADGUARD_DOH}
   Arcane           : ${SUMMARY_URL_ARCANE}
   Traefik Dashboard: ${SUMMARY_URL_TRAEFIK}
+  Lampac Admin     : ${SUMMARY_URL_LAMPAC_ADMIN}
   Telemt Panel     : ${SUMMARY_URL_TELEMT_PANEL}
+
+Public HTTPS (no admin panels):
+  AdGuard DoH      : ${SUMMARY_URL_ADGUARD_DOH}
+  Telemt Subpage   : ${SUMMARY_URL_TELEMT_SUB}
   Mihomo UI        : ${SUMMARY_URL_MIHOMO_UI}
   Mihomo secret    : ${SUMMARY_MIHOMO_SECRET}
 
+Subscriptions:
+  Clash/Mihomo     : ${SUMMARY_URL_SUB_CLASH}
+  Xray JSON        : ${SUMMARY_URL_SUB_JSON}
+  Standard/base64  : ${SUMMARY_URL_SUB_STD}
+  Note             : Admin panels require Clash or JSON (client routing). Standard may be disabled.
+
 Local service endpoints:
+  Traefik admin    : 127.0.0.1:${SUMMARY_PORT_LOCAL_ADMIN}
   Traefik HTTPS    : internal Docker websecure :${SUMMARY_PORT_LOCAL_TRAEFIK} (not public)
-  3X-UI panel      : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_PANEL}
+  3X-UI panel bind : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_PANEL}
   3X-UI subscribe  : 127.0.0.1:${SUMMARY_PORT_LOCAL_VLESS_SUBSCRIBE}
   XHTTP            : 127.0.0.1:${SUMMARY_PORT_LOCAL_XHTTP}
   Vision           : 127.0.0.1:${SUMMARY_PORT_LOCAL_VISION}
   gRPC TLS         : 127.0.0.1:${SUMMARY_PORT_LOCAL_GRPC}
-  Hysteria2        : 0.0.0.0:${SUMMARY_PORT_LOCAL_HYSTERIA}/udp
+  UDP443 backend (${SUMMARY_UDP443_BACKEND}) : 0.0.0.0:${SUMMARY_PORT_LOCAL_UDP443}/udp
   Telemt proxy     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PROXY} (not public)
   Telemt API       : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_API} (not public)
   Telemt panel     : internal Docker :${SUMMARY_PORT_LOCAL_TELEMT_PANEL} (Traefik routed)

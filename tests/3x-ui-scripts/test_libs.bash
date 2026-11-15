@@ -69,9 +69,9 @@ test_dns_replace_preserves_unknown_fields() {
 
 test_remove_managed_xray_artifacts_only_removes_our_tags() {
 	local input cleaned managed_count direct_count custom_count custom_subjects
-	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"},{"tag":"warp-custom"},{"tag":"tor-custom"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"blocked"},{"balancerTag":"custom-balancer"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"},{"tag":"warp-custom-balancer"},{"tag":"tor-custom-balancer"}]},"burstObservatory":{"subjectSelector":["warp-custom","tor-custom","custom-out","usque"]}}}'
+	input='{"xraySetting":{"outbounds":[{"tag":"direct"},{"tag":"warp-retired"},{"tag":"tor-proxy"},{"tag":"mihomo"},{"tag":"warp-custom"},{"tag":"tor-custom"}],"routing":{"rules":[{"outboundTag":"tor-proxy"},{"balancerTag":"warp-balancer"},{"outboundTag":"mihomo","network":"tcp,udp"},{"outboundTag":"blocked"},{"balancerTag":"custom-balancer"}],"balancers":[{"tag":"warp-balancer"},{"tag":"custom"},{"tag":"warp-custom-balancer"},{"tag":"tor-custom-balancer"}]},"burstObservatory":{"subjectSelector":["warp-custom","tor-custom","custom-out","usque"]}}}'
 	cleaned=$(json_remove_managed_xray_artifacts "$input")
-	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-retired" or $t == "tor-proxy" or $t == "warp-balancer")] | length')
+	managed_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-retired" or $t == "tor-proxy" or $t == "warp-balancer" or $t == "mihomo")] | length')
 	direct_count=$(printf '%s' "$cleaned" | jq '[.xraySetting.outbounds[]? | select(.tag=="direct")] | length')
 	custom_count=$(printf '%s' "$cleaned" | jq '[.. | objects | select((.tag? // .outboundTag? // .balancerTag? // "") as $t | $t == "warp-custom" or $t == "tor-custom" or $t == "custom-balancer" or $t == "custom" or $t == "warp-custom-balancer" or $t == "tor-custom-balancer")] | length')
 	custom_subjects=$(printf '%s' "$cleaned" | jq -r '.xraySetting.burstObservatory.subjectSelector | sort | join(",")')
@@ -94,25 +94,126 @@ test_desired_clients_are_deterministic() {
 	grpc_flow=$(printf '%s' "$desired" | jq -r '.clients.shared.grpcFlow')
 	assert_eq autogen "$shared_email" "shared client email default mismatch"
 	assert_eq stable-sub "$shared_sub" "shared client sub id mismatch"
-	assert_eq "" "$shared_flow" "shared first-class client flow must stay empty"
+	assert_eq "xtls-rprx-vision" "$shared_flow" "shared first-class client flow must match Vision (panel updateClient(flow=\"\") wipes inbound Vision flow)"
 	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision inbound client flow mismatch"
 	assert_eq "" "$xhttp_flow" "XHTTP VLESS client flow must stay empty"
 	assert_eq "" "$grpc_flow" "gRPC VLESS client flow must stay empty"
 }
 
 test_desired_inbound_remarks_use_country_flag() {
-	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark
+	local desired vision_remark xhttp_remark grpc_remark hysteria2_remark amneziawg_remark
 	export EMOJI_FLAG="🇩🇪"
 	desired=$(build_desired_state)
 	vision_remark=$(printf '%s' "$desired" | jq -r '.inbounds.vision.remark')
 	xhttp_remark=$(printf '%s' "$desired" | jq -r '.inbounds.xhttp.remark')
 	grpc_remark=$(printf '%s' "$desired" | jq -r '.inbounds.grpc.remark')
 	hysteria2_remark=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.remark')
+	amneziawg_remark=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.remark')
 	assert_eq "🇩🇪 vless-tcp-reality" "$vision_remark" "vision inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-xhttp" "$xhttp_remark" "xhttp inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 vless-grpc-tls" "$grpc_remark" "gRPC inbound remark must use the detected country flag"
 	assert_eq "🇩🇪 hysteria2" "$hysteria2_remark" "Hysteria2 inbound remark must use the detected country flag"
+	assert_eq "🇩🇪 amneziawg" "$amneziawg_remark" "AmneziaWG inbound remark must use the detected country flag"
 	unset EMOJI_FLAG
+}
+
+test_desired_state_includes_amneziawg_udp443_port() {
+	local desired awg_protocol awg_port hy2_port
+	export PORT_LOCAL_UDP443=5443
+	unset PORT_LOCAL_HYSTERIA
+	desired=$(build_desired_state)
+	awg_protocol=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.protocol')
+	awg_port=$(printf '%s' "$desired" | jq -r '.inbounds.amneziawg.port')
+	hy2_port=$(printf '%s' "$desired" | jq -r '.inbounds.hysteria2.port')
+	assert_eq amneziawg "$awg_protocol" "amneziawg desired inbound must use amneziawg protocol"
+	assert_eq 5443 "$awg_port" "amneziawg desired inbound port must read PORT_LOCAL_UDP443"
+	assert_eq 5443 "$hy2_port" "hysteria2 desired inbound port must share PORT_LOCAL_UDP443"
+	unset PORT_LOCAL_UDP443
+}
+
+test_build_amneziawg_inbound_components_use_minimal_shape() {
+	local desired components protocol stream_settings sniffing settings_mtu settings_subnet settings_dns1
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	components=$(build_inbound_components_json amneziawg "$desired")
+	protocol=$(printf '%s' "$components" | jq -r '.protocol')
+	stream_settings=$(printf '%s' "$components" | jq -c '.streamSettings')
+	sniffing=$(printf '%s' "$components" | jq -c '.sniffing')
+	settings_mtu=$(printf '%s' "$components" | jq -r '.settings.mtu')
+	settings_subnet=$(printf '%s' "$components" | jq -r '.settings.subnet')
+	settings_dns1=$(printf '%s' "$components" | jq -r '.settings.dns1')
+	assert_eq amneziawg "$protocol" "amneziawg components must use amneziawg protocol"
+	assert_eq '{}' "$stream_settings" "amneziawg create must use empty streamSettings"
+	assert_eq '{}' "$sniffing" "amneziawg create must use empty sniffing"
+	assert_eq 1280 "$settings_mtu" "amneziawg settings must include mtu 1280"
+	assert_eq true "$(printf '%s' "$components" | jq -r '.settings.server.randomTrailers')" "amneziawg must enable randomTrailers"
+	assert_eq 16 "$(printf '%s' "$components" | jq -r '.settings.server.s1')" "amneziawg S1 must be 16"
+	assert_eq 1280 "$(printf '%s' "$components" | jq -r '.settings.server.mtu')" "amneziawg server.mtu must match"
+	assert_eq "10.8.1.0/24" "$settings_subnet" "amneziawg settings must include subnet"
+	assert_eq "10.8.1.0" "$(printf '%s' "$components" | jq -r '.settings.subnetIp')" "amneziawg settings must include subnetIp"
+	assert_eq 24 "$(printf '%s' "$components" | jq -r '.settings.subnetCidr')" "amneziawg settings must include subnetCidr"
+	assert_eq "10.8.1.0" "$(printf '%s' "$components" | jq -r '.settings.server.subnetIp')" "amneziawg server.subnetIp required by panel 3.11"
+	assert_eq 24 "$(printf '%s' "$components" | jq -r '.settings.server.subnetCidr')" "amneziawg server.subnetCidr required by panel 3.11"
+	assert_eq "8.8.8.8" "$settings_dns1" "amneziawg settings must include dns1"
+	assert_eq "8.8.8.8" "$(printf '%s' "$components" | jq -r '.settings.server.primaryDns')" "amneziawg server.primaryDns must match dns1"
+	unset EMOJI_FLAG
+}
+
+test_managed_inbound_remarks_amneziawg_include_legacy_spike() {
+	local desired remarks has_desired has_legacy has_spike
+	export EMOJI_FLAG="🇩🇪"
+	desired=$(build_desired_state)
+	remarks=$(managed_inbound_remarks_json amneziawg "$desired")
+	has_desired=$(printf '%s' "$remarks" | jq -r 'index("🇩🇪 amneziawg") != null')
+	has_legacy=$(printf '%s' "$remarks" | jq -r 'index("managed:amneziawg") != null')
+	has_spike=$(printf '%s' "$remarks" | jq -r 'index("awg-spike-443") != null')
+	assert_eq true "$has_desired" "amneziawg managed remarks must include flag remark"
+	assert_eq true "$has_legacy" "amneziawg managed remarks must include managed:amneziawg"
+	assert_eq true "$has_spike" "amneziawg managed remarks must include awg-spike-443 alias"
+	unset EMOJI_FLAG
+}
+
+test_delete_managed_inbound_kind_plan_records_delete() {
+	local desired changes=() deleted_id=""
+	export MODE=plan EMOJI_FLAG="🇩🇪"
+	CHANGE_COUNT=0
+	desired=$(build_desired_state)
+	record_change() {
+		changes+=("$*")
+	}
+	inbounds_json() {
+		printf '%s\n' '[{"id":42,"remark":"🇩🇪 amneziawg","port":443,"protocol":"amneziawg","enable":true}]'
+	}
+	xui_del_inbound() {
+		deleted_id=$1
+		fail "plan mode must not call inbound delete API"
+	}
+	delete_managed_inbound_kind amneziawg "$desired"
+	unset -f record_change inbounds_json xui_del_inbound
+	unset MODE EMOJI_FLAG
+	grep -Fq 'PLAN: delete managed amneziawg inbound id=42' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must record managed amneziawg inbound delete"
+	assert_eq "" "$deleted_id" "plan mode must not delete inbound"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_runtime_env_normalizes_udp443_backend() {
+	local tmp old_pwd
+	tmp=$(mktemp -d)
+	old_pwd=$PWD
+	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
+	printf 'UDP443_BACKEND=off\n' >"$tmp/.env"
+	printf 'UDP443_BACKEND="${UDP443_BACKEND:-amneziawg}"\n' >"$tmp/3x-ui/3x-ui.env"
+	cd "$tmp"
+	load_runtime_env "$tmp/runtime"
+	cd "$old_pwd"
+	assert_eq off "$UDP443_BACKEND" "runtime env must load UDP443_BACKEND"
+	assert_eq false "$ENABLE_AMNEZIAWG" "UDP443_BACKEND=off must disable AWG"
+	assert_eq false "$ENABLE_HYSTERIA2" "UDP443_BACKEND=off must disable HY2"
+	rm -rf "$tmp"
 }
 
 test_runtime_env_preserves_explicit_optional_inbound_flags() {
@@ -130,7 +231,7 @@ test_runtime_env_preserves_explicit_optional_inbound_flags() {
 	assert_eq false "$ENABLE_VLESS_GRPC" "explicit gRPC flag must override env files"
 	assert_eq true "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag must override env files"
 	rm -rf "$tmp"
-	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 UDP443_BACKEND ENABLE_AMNEZIAWG
 }
 
 test_runtime_env_normalizes_explicit_optional_inbound_flags() {
@@ -140,6 +241,7 @@ test_runtime_env_normalizes_explicit_optional_inbound_flags() {
 	mkdir -p "$tmp/runtime" "$tmp/3x-ui"
 	printf 'ENABLE_VLESS_GRPC=false\nENABLE_HYSTERIA2=true\n' >"$tmp/.env"
 	printf 'ENABLE_VLESS_GRPC="${ENABLE_VLESS_GRPC:-false}"\nENABLE_HYSTERIA2="${ENABLE_HYSTERIA2:-true}"\n' >"$tmp/3x-ui/3x-ui.env"
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG
 	export ENABLE_VLESS_GRPC=YES
 	export ENABLE_HYSTERIA2=0
 	cd "$tmp"
@@ -148,7 +250,7 @@ test_runtime_env_normalizes_explicit_optional_inbound_flags() {
 	assert_eq true "$ENABLE_VLESS_GRPC" "explicit gRPC flag aliases must normalize to true"
 	assert_eq false "$ENABLE_HYSTERIA2" "explicit Hysteria2 flag aliases must normalize to false"
 	rm -rf "$tmp"
-	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2
+	unset ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 UDP443_BACKEND ENABLE_AMNEZIAWG
 }
 
 test_managed_inbound_remarks_include_legacy_names() {
@@ -408,6 +510,7 @@ test_panel_api_does_not_read_bearer_token_from_sqlite() {
 	local call_log auth_count
 	call_log=$(mktemp)
 	XUI_API_TOKEN=
+	# shellcheck disable=SC2034 # xui_api_auth_args reads this cached token global.
 	XUI_API_TOKEN_RESOLVED=
 	URL_BASE_RESOLVED=http://127.0.0.1:2053
 	sqlite3() {
@@ -505,6 +608,7 @@ test_panel_settings_fallback_to_legacy_route_on_404() {
 			printf '' >"$HTTP_BODY_FILE"
 			;;
 		*/panel/setting/all)
+			# shellcheck disable=SC2034 # http_success_json reads HTTP_CODE as shared HTTP state.
 			HTTP_CODE=200
 			HTTP_BODY_FILE=$(mktemp)
 			printf '{"success":true,"obj":{"webPort":2053}}' >"$HTTP_BODY_FILE"
@@ -568,12 +672,20 @@ test_panel_keys_restore_old_cert_fields() {
 	grep -qx panelOutbound <<<"$keys" || fail "panelOutbound is missing from desired panel keys"
 }
 
+test_desired_panel_keys_include_clash_routing() {
+	local keys
+	keys=$(desired_panel_keys)
+	grep -qx subClashEnableRouting <<<"$keys" || fail "subClashEnableRouting missing"
+	grep -qx subClashRules <<<"$keys" || fail "subClashRules missing"
+}
+
 test_panel_settings_json_defaults_panel_outbound() {
 	local body
 	unset panelOutbound
-	body=$(panel_settings_json '{"webPort":2053,"smtpPort":0,"tgBotEnable":false}')
-	assert_eq usque "$(printf '%s' "$body" | jq -r '.panelOutbound')" "panel settings JSON must default panelOutbound to usque"
+	body=$(panel_settings_json '{"webPort":2053,"smtpPort":0,"ldapPort":0,"tgBotEnable":false}')
+	assert_eq direct "$(printf '%s' "$body" | jq -r '.panelOutbound')" "panel settings JSON must default panelOutbound to direct"
 	assert_eq 587 "$(printf '%s' "$body" | jq -r '.smtpPort')" "panel settings JSON must normalize invalid smtpPort"
+	assert_eq 389 "$(printf '%s' "$body" | jq -r '.ldapPort')" "panel settings JSON must normalize invalid ldapPort"
 	assert_eq number "$(printf '%s' "$body" | jq -r '.webPort | type')" "webPort must remain a JSON number for 3.7 AllSetting"
 	assert_eq boolean "$(printf '%s' "$body" | jq -r '.tgBotEnable | type')" "boolean AllSetting fields must remain JSON booleans"
 }
@@ -643,7 +755,7 @@ test_managed_xray_restores_warp_tor_dns_without_missing_balancer_refs() {
 }
 
 test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
-	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls penetrate ep_sni ep_fp ep_alpn ep_insecure
+	local stream headers server content_type connection cache_control access_origin access_methods access_headers tproxy force_tls penetrate trusted_xff ep_sni ep_fp ep_alpn ep_insecure
 	stream=$(build_xhttp_stream_json /xhttp screenhub.linkpc.net)
 	headers=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers')
 	server=$(printf '%s' "$stream" | jq -r '.xhttpSettings.headers.Server')
@@ -656,6 +768,7 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	tproxy=$(printf '%s' "$stream" | jq -r '.sockopt.tproxy')
 	force_tls=$(printf '%s' "$stream" | jq -r '.externalProxy[0].forceTls')
 	penetrate=$(printf '%s' "$stream" | jq -r '.sockopt.penetrate')
+	trusted_xff=$(printf '%s' "$stream" | jq -r '.sockopt.trustedXForwardedFor | join(",")')
 	ep_sni=$(printf '%s' "$stream" | jq -r '.externalProxy[0].sni')
 	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
 	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
@@ -671,6 +784,7 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 	assert_eq tproxy "$tproxy" "old XHTTP sockopt tproxy was not restored"
 	assert_eq tls "$force_tls" "XHTTP externalProxy must publish TLS subscription links through Traefik"
 	assert_eq null "$penetrate" "XHTTP sockopt must not emit removed penetrate field"
+	assert_eq X-Xray-Trusted-Proxy "$trusted_xff" "XHTTP sockopt must trust Traefik XFF via marker header"
 	assert_eq screenhub.linkpc.net "$ep_sni" "XHTTP externalProxy must publish SNI for TLS subscriptions"
 	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "XHTTP externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
 	assert_eq h2,http/1.1 "$ep_alpn" "XHTTP externalProxy must publish modern TLS ALPN hints"
@@ -678,7 +792,7 @@ test_xhttp_stream_uses_minimal_context_headers_and_sockopt() {
 }
 
 test_grpc_stream_uses_tls_backend_settings() {
-	local stream network security service_name alpn cert_file key_file scheme fp ep_sni ep_fp ep_alpn insecure
+	local stream network security service_name alpn cert_file key_file scheme fp ep_sni ep_fp ep_alpn insecure trusted_xff
 	stream=$(build_grpc_stream_json /grpc screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key)
 	network=$(printf '%s' "$stream" | jq -r '.network')
 	security=$(printf '%s' "$stream" | jq -r '.security')
@@ -692,6 +806,7 @@ test_grpc_stream_uses_tls_backend_settings() {
 	ep_fp=$(printf '%s' "$stream" | jq -r '.externalProxy[0].fingerprint')
 	ep_alpn=$(printf '%s' "$stream" | jq -r '(.externalProxy[0].alpn // []) | join(",")')
 	insecure=$(printf '%s' "$stream" | jq -r '[.. | objects | select(has("allowInsecure"))] | length')
+	trusted_xff=$(printf '%s' "$stream" | jq -r '.sockopt.trustedXForwardedFor | join(",")')
 	assert_eq grpc "$network" "gRPC stream must use grpc network"
 	assert_eq tls "$security" "gRPC stream must use TLS backend security"
 	assert_eq grpc "$service_name" "gRPC serviceName must strip the leading slash"
@@ -704,10 +819,14 @@ test_grpc_stream_uses_tls_backend_settings() {
 	[[ "$ep_fp" =~ ^(random|firefox|safari)$ ]] || fail "gRPC externalProxy fingerprint must be random/firefox/safari; got '$ep_fp'"
 	assert_eq h2 "$ep_alpn" "gRPC externalProxy must publish h2 ALPN"
 	assert_eq 0 "$insecure" "gRPC stream must not contain removed allowInsecure anywhere"
+	assert_eq X-Xray-Trusted-Proxy "$trusted_xff" "gRPC sockopt must trust Traefik XFF via marker header"
 }
 
 test_hysteria2_stream_and_settings_use_required_auth() {
 	local stream settings components network security alpn masq_type masq_url auth stream_auth email protocol tg_id group comment
+	unset HYSTERIA2_MASQ_URL
+	WEBDOMAIN=screenhub.linkpc.net
+	export WEBDOMAIN
 	stream=$(build_hysteria2_stream_json screenhub.linkpc.net /etc/x-ui/xray.crt /etc/x-ui/xray.key transport-auth)
 	settings=$(build_hysteria2_settings_json '' "$(build_desired_state)")
 	components=$(build_inbound_components_json hysteria2 "$(build_desired_state)")
@@ -727,7 +846,8 @@ test_hysteria2_stream_and_settings_use_required_auth() {
 	assert_eq tls "$security" "Hysteria2 stream must use TLS"
 	assert_eq h3 "$alpn" "Hysteria2 TLS ALPN must use h3"
 	assert_eq proxy "$masq_type" "Hysteria2 masquerade must proxy the public site"
-	assert_eq https://screenhub.linkpc.net/ "$masq_url" "Hysteria2 masquerade URL mismatch"
+	assert_eq https://screenhub.linkpc.net:4443/ "$masq_url" "Hysteria2 masquerade URL mismatch"
+	unset WEBDOMAIN
 	[[ -n "$auth" ]] || fail "Hysteria2 client auth must be generated"
 	[[ -n "$stream_auth" ]] || fail "Hysteria2 transport auth must match the managed client auth"
 	assert_eq "$(printf '%s' "$components" | jq -r '.settings.clients[0].auth')" "$stream_auth" "Hysteria2 transport auth must mirror inbound client auth"
@@ -862,13 +982,17 @@ test_shared_client_create_still_syncs_vless_inbounds_without_grpc() {
 	ensure_vless_stream() {
 		return 0
 	}
-	ensure_shared_client 1 2 "" 4 "$desired"
+	ensure_shared_client 1 2 "" 4 "" "$desired"
 	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
 	assert_eq "1,2,4" "$add_inbounds" "shared client create must target Vision, XHTTP and Hysteria2 when gRPC is disabled"
 	assert_eq "1:xtls-rprx-vision:Vision" "${synced[0]}" "Vision inbound client must be explicitly synchronized after shared client create"
 	assert_eq "2::XHTTP" "${synced[1]}" "XHTTP inbound client must be explicitly synchronized after shared client create"
 	assert_eq 2 "${#synced[@]}" "only VLESS inbounds are synchronized inside ensure_shared_client"
 	[[ -n "$ENSURE_SHARED_CLIENT_ID" ]] || fail "shared client id must be available after create"
+	synced=()
+	ensure_shared_client 1 2 "" "" 13 "$desired"
+	add_inbounds=$(printf '%s' "$add_payload" | jq -r '.inboundIds | join(",")')
+	assert_eq "1,2,13" "$add_inbounds" "shared client create must attach AmneziaWG inbound id when UDP443 backend is amneziawg"
 	unset -f clients_json xui_add_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
 	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
 	# shellcheck source=/dev/null
@@ -912,7 +1036,7 @@ test_existing_shared_client_with_invalid_uuid_is_repaired() {
 	ensure_vless_stream() {
 		return 0
 	}
-	ensure_shared_client 1 2 "" 4 "$desired"
+	ensure_shared_client 1 2 "" 4 "" "$desired"
 	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.id')" "invalid first-class UUID must be replaced with a valid UUID"
 	assert_eq "87853b09-32fc-49e0-95ad-2651948b7e3e" "$(printf '%s' "$update_payload" | jq -r '.uuid')" "update payload must carry matching uuid"
 	assert_eq 2 "${#synced[@]}" "repaired UUID must be synced to VLESS inbounds"
@@ -920,6 +1044,38 @@ test_existing_shared_client_with_invalid_uuid_is_repaired() {
 	unset -f clients_json inbound_vless_client_uuid new_uuid xui_update_client xui_attach_client http_success_json repair_shared_client_db ensure_vless_inbound_client ensure_vless_stream
 	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID
 	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_repair_inbound_vless_client_flows_db_sets_vision_only() {
+	local tmp db desired vision_flow xhttp_flow
+	command -v python3 >/dev/null 2>&1 || {
+		printf 'SKIP: python3 unavailable for inbound flow repair test\n'
+		return 0
+	}
+	command -v sqlite3 >/dev/null 2>&1 || {
+		printf 'SKIP: sqlite3 unavailable for inbound flow repair test\n'
+		return 0
+	}
+	tmp=$(mktemp -d)
+	db="$tmp/x-ui.db"
+	sqlite3 "$db" 'create table inbounds(id integer primary key, settings text);'
+	sqlite3 "$db" "insert into inbounds(id, settings) values
+          (1, '{\"clients\":[{\"email\":\"autogen\",\"flow\":\"\"}]}'),
+          (2, '{\"clients\":[{\"email\":\"autogen\",\"flow\":\"xtls-rprx-vision\"}]}');"
+	export MODE=apply
+	export CLIENT_EMAIL_PREFIX=autogen
+	export CLIENT_SUB_ID=stable-sub
+	# shellcheck disable=SC2034 # repair_inbound_vless_client_flows_db mutates this runtime global
+	RESTART_XRAY_REQUIRED=0
+	desired=$(build_desired_state)
+	XUI_DB_PATH="$db" repair_inbound_vless_client_flows_db 1 2 "" "$desired"
+	vision_flow=$(sqlite3 "$db" "select json_extract(settings, '\$.clients[0].flow') from inbounds where id=1;")
+	xhttp_flow=$(sqlite3 "$db" "select json_extract(settings, '\$.clients[0].flow') from inbounds where id=2;")
+	assert_eq "xtls-rprx-vision" "$vision_flow" "Vision inbound flow must be repaired in SQLite"
+	assert_eq "" "$xhttp_flow" "XHTTP inbound flow must be cleared in SQLite"
+	assert_eq 1 "$RESTART_XRAY_REQUIRED" "flow repair must request Xray restart"
+	rm -rf "$tmp"
+	unset MODE CLIENT_EMAIL_PREFIX CLIENT_SUB_ID XUI_DB_PATH
 }
 
 test_vless_inbound_client_sync_writes_uuid() {
@@ -1009,8 +1165,36 @@ test_existing_mihomo_outbound_and_rule_are_preserved() {
 	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
 
 	assert_eq 17890 "$port" "existing Mihomo outbound must not be overwritten"
-	assert_eq 0 "$rule_index" "existing Mihomo routing rule must not be moved"
+	assert_eq 2 "$rule_index" "existing Mihomo routing rule stays after prepended admin-traefik"
 	assert_eq blocked "$last_rule_tag" "existing terminal rule order must be preserved when Mihomo rule already exists"
+}
+
+test_stale_mihomo_artifacts_removed_when_disabled() {
+	local base updated mihomo_outbounds mihomo_rules last_rule_tag
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}},{"tag":"mihomo","protocol":"socks","settings":{"servers":[{"address":"mihomo","port":7890,"users":[]}]}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]},{"type":"field","network":"tcp,udp","outboundTag":"mihomo"}]}}}'
+
+	updated=$(json_apply_managed_xray_state "$(json_remove_managed_xray_artifacts "$base")" '[]' false false false '[]' "screenhub.linkpc.net" '[]' '' false '[]')
+	mihomo_outbounds=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="mihomo")] | length')
+	mihomo_rules=$(printf '%s' "$updated" | jq '[.xraySetting.routing.rules[]? | select((.outboundTag // "")=="mihomo")] | length')
+	last_rule_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[-1].outboundTag')
+
+	assert_eq 0 "$mihomo_outbounds" "stale Mihomo outbound must be removed when ENABLE_MIHOMO is false"
+	assert_eq 0 "$mihomo_rules" "stale Mihomo catch-all rule must be removed when ENABLE_MIHOMO is false"
+	assert_eq blocked "$last_rule_tag" "without Mihomo, terminal rule must stay the previous unmanaged rule"
+}
+
+test_admin_traefik_route_prepended_for_webdomain_hosts() {
+	local base updated ob_count first_tag domains
+	base='{"xraySetting":{"outbounds":[{"tag":"direct","protocol":"freedom","settings":{}}],"routing":{"rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]}}}'
+	updated=$(json_apply_managed_xray_state "$base" '[]' false false false '[]' "screenhub.linkpc.net")
+	ob_count=$(printf '%s' "$updated" | jq '[.xraySetting.outbounds[]? | select(.tag=="admin-traefik" and .protocol=="freedom" and .settings.redirect=="172.18.0.6:9443" and ((.settings.finalRules // []) | map(select(.action=="allow")) | length) > 0)] | length')
+	first_tag=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[0].outboundTag')
+	port_rule=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[1] | "\(.outboundTag):\(.port):\(.network)"')
+	domains=$(printf '%s' "$updated" | jq -r '.xraySetting.routing.rules[0].domain | sort | join(",")')
+	assert_eq 1 "$ob_count" "admin-traefik freedom outbound must redirect to 172.18.0.6:9443 with finalRules allow"
+	assert_eq admin-traefik "$first_tag" "admin-traefik rule must be first so WARP cannot steal admin Hosts"
+	assert_eq "admin-traefik:9443:tcp" "$port_rule" "companion port:9443 rule must follow domain rule"
+	assert_eq "full:3x-ui.screenhub.linkpc.net,full:adguard.screenhub.linkpc.net,full:arcane.screenhub.linkpc.net,full:homepage.screenhub.linkpc.net,full:lampac-admin.screenhub.linkpc.net,full:telemt.screenhub.linkpc.net,full:traefik.screenhub.linkpc.net" "$domains" "admin Host FQDNs mismatch"
 }
 
 test_managed_burst_observatory_preserves_custom_subjects() {
@@ -1160,7 +1344,7 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
 test_afterstart_entrypoint_loads_runtime_modules() {
 	local script module function
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
-	for module in runtime_common panel_runtime inbound_runtime xray_runtime; do
+	for module in runtime_common panel_runtime inbound_runtime xray_runtime sub_balancer; do
 		[[ -f "$SCRIPTS_DIR/lib/$module.bash" ]] ||
 			fail "after-start runtime module is missing: $module.bash"
 		grep -Fq ". \"\$LIB_DIR/$module.bash\"" "$script" ||
@@ -1195,12 +1379,15 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'ensure_inbound xhttp "$desired"' \
 		'ensure_inbound grpc "$desired"' \
 		'ensure_inbound hysteria2 "$desired"' \
-		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$desired"' \
+		'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' \
 		'ensure_grpc_client "$grpc_id" "$ENSURE_SHARED_CLIENT_ID" "$desired"' \
 		'ensure_hysteria2_client "$hysteria2_id" "$desired"' \
-		'repair_shared_client_after_inbound_sync "$desired"' \
+		'repair_shared_client_after_inbound_sync "$desired" "$vision_id" "$xhttp_id" "$grpc_id"' \
+		'ensure_auto_sub_balancer "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id"' \
 		'update_builtin_geofiles_if_enabled' \
-		'restart_panel_if_needed'; do
+		'restart_panel_if_needed' \
+		'log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"' \
+		'log_shared_autogen_subscription_urls "$desired"'; do
 		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
 		[[ -n "$line" && "$line" -gt "$previous" ]] ||
 			fail "after-start pipeline order changed near: $expression"
@@ -1216,8 +1403,258 @@ test_afterstart_entrypoint_initializes_optional_inbound_ids() {
 		fail "gRPC inbound id must be initialized for ENABLE_VLESS_GRPC=false"
 	grep -Fq 'hysteria2_id=' <<<"$main_decl" ||
 		fail "Hysteria2 inbound id must be initialized for ENABLE_HYSTERIA2=false"
+	grep -Fq 'amneziawg_id=' <<<"$main_decl" ||
+		fail "AmneziaWG inbound id must be initialized before UDP443 backend orchestration"
 	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
 		fail "gRPC must default to disabled in the runtime entrypoint"
+}
+
+test_afterstart_exports_admin_clash_routing_only() {
+	local script
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	grep -Fq '. "$LIB_DIR/sub_admin_routing.bash"' "$script" ||
+		fail "after-start entrypoint must source admin subscription routing builder"
+	grep -Fq 'subClashEnableRouting=true' "$script" ||
+		fail "after-start entrypoint must enable native Clash routing"
+	grep -Fq 'mihomo_client_routing_file' "$script" ||
+		fail "after-start entrypoint must prefer local mihomo client routing overlay"
+	grep -Fq 'build_mihomo_client_sub_clash_rules' "$script" ||
+		fail "after-start entrypoint must build Clash rules from mihomo overlay"
+	grep -Fq 'discover_clash_proxy_node_names' "$script" ||
+		fail "after-start entrypoint must discover Clash proxy node names as fallback"
+	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
+		fail "Clash node discovery must gate grpc remarks on ENABLE_VLESS_GRPC"
+	grep -Fq 'ENABLE_AMNEZIAWG:-false' "$script" ||
+		fail "Clash node discovery must gate amneziawg remarks on ENABLE_AMNEZIAWG"
+	grep -Fq 'ENABLE_HYSTERIA2:-false' "$script" ||
+		fail "Clash node discovery must gate hysteria2 remarks on ENABLE_HYSTERIA2"
+	grep -Fq 'build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file"' "$script" ||
+		fail "after-start entrypoint must fall back to admin Clash rules with discovered nodes"
+	if grep -Eq '(^|[[:space:]])(export[[:space:]].*subEnableRouting|subEnableRouting=|subRoutingRules=)' "$script"; then
+		fail "after-start entrypoint must not export Happ routing fields for this feature"
+	fi
+}
+
+test_afterstart_exports_json_sub_rules_and_clears_legacy_routing() {
+	local script
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	grep -Fq 'subJsonRules=$(build_admin_sub_json_rules "${WEBDOMAIN}")' "$script" ||
+		fail "after-start must compute subJsonRules"
+	grep -Fq 'build_admin_sub_json_dns "${WEBDOMAIN}" "${PUBLIC_IPV4:-}"' "$script" ||
+		fail "after-start must compute subJsonDns"
+	grep -Fq 'export subJsonRules' "$script" ||
+		fail "after-start must export subJsonRules"
+	grep -Fq 'CLEAR_SUB_JSON_ROUTING_RULES=true' "$script" ||
+		fail "after-start must force-clear legacy subJsonRoutingRules"
+	grep -Fq 'export CLEAR_SUB_JSON_ROUTING_RULES' "$script" ||
+		fail "after-start must export legacy subJsonRoutingRules clear flag"
+	if grep -Eq '(^|[[:space:]])subJsonRoutingRules=|export[[:space:]].*subJsonRoutingRules' "$script"; then
+		fail "after-start must not compute or export deprecated subJsonRoutingRules"
+	fi
+}
+
+test_afterstart_exports_json_sub_observatory() {
+	local script
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	grep -Fq 'subJsonObservatory=$(build_admin_sub_json_observatory)' "$script" ||
+		fail "after-start must compute subJsonObservatory"
+	grep -Fq 'export subJsonObservatory' "$script" ||
+		fail "after-start must export subJsonObservatory"
+}
+
+test_desired_panel_keys_include_json_routing() {
+	local keys
+	keys=$(desired_panel_keys)
+	grep -qx subJsonRules <<<"$keys" || fail "subJsonRules missing"
+	grep -qx subJsonRoutingRules <<<"$keys" || fail "subJsonRoutingRules missing"
+	grep -qx subJsonDns <<<"$keys" || fail "subJsonDns missing"
+}
+
+test_desired_panel_keys_include_sub_json_observatory() {
+	local keys
+	keys=$(desired_panel_keys)
+	grep -qx subJsonObservatory <<<"$keys" || fail "subJsonObservatory must be managed"
+}
+
+test_ensure_panel_settings_force_clears_sub_json_routing_rules() {
+	local updated_body cleared
+	export CLEAR_SUB_JSON_ROUTING_RULES=true
+	# shellcheck disable=SC2034 # ensure_panel_settings reads MODE through plan_or_apply fixtures.
+	MODE=apply
+	xui_get_panel_settings() {
+		return 0
+	}
+	http_success_json() {
+		return 0
+	}
+	api_obj_json() {
+		printf '%s' '{"webPort":2053,"smtpPort":587,"ldapPort":389,"tgBotEnable":false,"panelOutbound":"usque","subJsonRoutingRules":"{\"RouteOrder\":\"proxy-direct-block\"}"}'
+	}
+	plan_or_apply() {
+		return 0
+	}
+	xui_update_panel_settings() {
+		updated_body=$1
+	}
+	ensure_panel_settings
+	cleared=$(printf '%s' "$updated_body" | jq -r '.subJsonRoutingRules')
+	unset -f xui_get_panel_settings http_success_json api_obj_json plan_or_apply xui_update_panel_settings
+	unset CLEAR_SUB_JSON_ROUTING_RULES MODE
+	assert_eq "" "$cleared" "CLEAR_SUB_JSON_ROUTING_RULES must force empty subJsonRoutingRules into update body"
+}
+
+test_build_admin_sub_json_routing_rules() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(build_admin_sub_json_routing_rules "example.test" "198.51.100.10")
+	assert_eq "" "$out" "subJsonRoutingRules must be cleared, not populated with Happ-style routing"
+}
+
+test_build_admin_sub_json_rules_admin_then_direct() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(build_admin_sub_json_rules "example.test")
+	assert_eq field "$(jq -r '.[0].type' <<<"$out")" "rule type field"
+	assert_eq proxy "$(jq -r '.[0].outboundTag' <<<"$out")" "admin to proxy"
+	assert_eq full:arcane.example.test "$(jq -r '.[0].domain[0]' <<<"$out")" "full: domain"
+	assert_eq proxy "$(jq -r '.[1].outboundTag' <<<"$out")" "port 9443 to proxy"
+	assert_eq 9443 "$(jq -r '.[1].port' <<<"$out")" "admin entrypoint port"
+	assert_eq tcp "$(jq -r '.[1].network' <<<"$out")" "port rule tcp"
+	assert_eq direct "$(jq -r '.[-1].outboundTag' <<<"$out")" "catch-all direct"
+	assert_eq 'tcp,udp' "$(jq -r '.[-1].network' <<<"$out")" "catch-all network"
+}
+
+test_build_admin_sub_json_dns() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(build_admin_sub_json_dns "example.test" "")
+	assert_eq "" "$out" "empty PUBLIC_IPV4 must omit subJsonDns"
+	out=$(build_admin_sub_json_dns "example.test" "198.51.100.10")
+	assert_eq dns_out "$(jq -r '.tag' <<<"$out")" "dns tag must be dns_out"
+	assert_eq UseIP "$(jq -r '.queryStrategy' <<<"$out")" "dns queryStrategy must be UseIP"
+	assert_eq 198.51.100.10 "$(jq -r '.hosts["lampac-admin.example.test"]' <<<"$out")" "dns hosts must include all admin FQDNs"
+	assert_eq 198.51.100.10 "$(jq -r '.hosts["telemt.example.test"]' <<<"$out")" "dns hosts must include telemt admin FQDN"
+	assert_eq 8 "$(jq -r '.hosts | length' <<<"$out")" "dns hosts = apex + 7 admin labels"
+}
+
+test_build_admin_sub_json_observatory() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local out
+	out=$(build_admin_sub_json_observatory)
+	jq -e '.destination and .interval and .timeout and .httpMethod' <<<"$out" >/dev/null ||
+		fail "observatory fields"
+	assert_eq 'https://www.gstatic.com/generate_204' "$(jq -r .destination <<<"$out")" "probe destination"
+	assert_eq '300s' "$(jq -r .interval <<<"$out")" "probe interval"
+	assert_eq '5s' "$(jq -r .timeout <<<"$out")" "probe timeout"
+	assert_eq 'HEAD' "$(jq -r .httpMethod <<<"$out")" "probe method"
+	assert_eq '2' "$(jq -r .sampling <<<"$out")" "probe sampling"
+}
+
+test_sub_balancer_api_wrappers_use_documented_routes() {
+	local observed=()
+	xui_api_get() {
+		observed+=("GET:$1")
+	}
+	xui_api_post() {
+		observed+=("POST:$1:$2:$3")
+	}
+	xui_list_sub_balancers
+	xui_add_sub_balancer --data-urlencode remark=AUTO-example.test
+	xui_update_sub_balancer 7 --data-urlencode strategy=leastPing
+	unset -f xui_api_get xui_api_post
+	assert_eq "GET:/panel/api/sub-balancers" "${observed[0]}" "sub balancer list route mismatch"
+	assert_eq "POST:/panel/api/sub-balancers:--data-urlencode:remark=AUTO-example.test" "${observed[1]}" "sub balancer create route mismatch"
+	assert_eq "POST:/panel/api/sub-balancers/7:--data-urlencode:strategy=leastPing" "${observed[2]}" "sub balancer update route mismatch"
+}
+
+test_ensure_auto_sub_balancer_plan_does_not_call_api() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local changes=()
+	export MODE=plan WEBDOMAIN=example.test
+	CHANGE_COUNT=0
+	record_change() {
+		changes+=("$*")
+	}
+	xui_list_sub_balancers() {
+		fail "plan mode must not call sub balancer list API"
+	}
+	ensure_auto_sub_balancer 1 "" 2 || fail "plan mode must return success"
+	unset -f record_change xui_list_sub_balancers
+	unset MODE WEBDOMAIN
+	grep -Fq 'PLAN: AUTO-example.test sub balancer ensured inboundIds=1,2' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must log intended AUTO-<domain> sub balancer ensure"
+}
+
+test_ensure_auto_sub_balancer_updates_existing_auto() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local updated_id update_args=()
+	export MODE=apply WEBDOMAIN=example.test
+	CHANGE_COUNT=0
+	record_change() {
+		return 0
+	}
+	xui_list_sub_balancers() {
+		HTTP_BODY_FILE=$(mktemp)
+		printf '%s\n' '{"success":true,"obj":[{"id":7,"remark":"AUTO","strategy":"random","enabled":false,"inboundIds":[2]}]}' >"$HTTP_BODY_FILE"
+	}
+	http_success_json() {
+		return 0
+	}
+	xui_add_sub_balancer() {
+		fail "existing AUTO balancer must be updated, not created"
+	}
+	xui_update_sub_balancer() {
+		updated_id=$1
+		shift
+		update_args=("$@")
+		HTTP_BODY_FILE=$(mktemp)
+		printf '%s\n' '{"success":true,"obj":{"id":7}}' >"$HTTP_BODY_FILE"
+	}
+	ensure_auto_sub_balancer 1 2 || fail "apply update must return success"
+	rm -f "${HTTP_BODY_FILE:-}"
+	unset -f record_change xui_list_sub_balancers http_success_json xui_add_sub_balancer xui_update_sub_balancer
+	unset MODE WEBDOMAIN
+	assert_eq 7 "$updated_id" "AUTO balancer id mismatch"
+	grep -Fq -- '--data-urlencode remark=AUTO-example.test' <<<"${update_args[*]}" || fail "update must rename remark to AUTO-<domain>"
+	grep -Fq -- '--data-urlencode strategy=leastPing' <<<"${update_args[*]}" || fail "update must include leastPing strategy"
+	grep -Fq -- '--data-urlencode inboundIds=1' <<<"${update_args[*]}" || fail "update must include inbound 1"
+	grep -Fq -- '--data-urlencode inboundIds=2' <<<"${update_args[*]}" || fail "update must include inbound 2"
+	grep -Fq -- '--data-urlencode enabled=true' <<<"${update_args[*]}" || fail "update must enable AUTO balancer"
+}
+
+test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local logs=()
+	export MODE=apply WEBDOMAIN=example.test
+	# shellcheck disable=SC2034 # plan_or_apply mutates this runtime global when the API call reaches apply mode.
+	CHANGE_COUNT=0
+	log() {
+		logs+=("$1:$2")
+	}
+	record_change() {
+		return 0
+	}
+	xui_list_sub_balancers() {
+		return 1
+	}
+	ensure_auto_sub_balancer 1 || fail "API failure must not fail after-start flow"
+	unset -f log record_change xui_list_sub_balancers
+	unset MODE WEBDOMAIN
+	grep -Fq 'WARN:' <<<"$(printf '%s\n' "${logs[@]}")" ||
+		fail "API failure must log WARN"
 }
 
 test_afterstart_check_mode_bootstraps_without_apply() {
@@ -1226,6 +1663,32 @@ test_afterstart_check_mode_bootstraps_without_apply() {
 		fail "MODE=check entrypoint startup failed"
 	grep -Fq 'Dependency and environment check passed.' <<<"$output" ||
 		fail "MODE=check must complete before panel or Xray mutations"
+	grep -Fq 'Shared client subscriptions' <<<"$output" ||
+		fail "MODE=check must always print shared/autogen subscription URLs"
+}
+
+test_subscription_url_for_sub_id_joins_base() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	assert_eq 'https://example.test/sub/abcd' "$(subscription_url_for_sub_id 'https://example.test/sub/' abcd)" "trailing slash base"
+	assert_eq 'https://example.test/sub/abcd' "$(subscription_url_for_sub_id 'https://example.test/sub' abcd)" "no trailing slash base"
+}
+
+test_log_shared_autogen_subscription_urls_prints_three() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/log.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local desired output
+	desired='{"clients":{"shared":{"email":"example.test-autogen","subId":"deadbeefcafebabe"}}}'
+	subURI='https://example.test/std/'
+	subJsonURI='https://example.test/json/'
+	subClashURI='https://example.test/clash/'
+	output=$(log_shared_autogen_subscription_urls "$desired" 2>&1)
+	grep -Fq 'email=example.test-autogen subId=deadbeefcafebabe' <<<"$output" || fail "missing email/subId line"
+	grep -Fq 'STD   https://example.test/std/deadbeefcafebabe' <<<"$output" || fail "missing STD URL"
+	grep -Fq 'JSON  https://example.test/json/deadbeefcafebabe' <<<"$output" || fail "missing JSON URL"
+	grep -Fq 'CLASH https://example.test/clash/deadbeefcafebabe' <<<"$output" || fail "missing CLASH URL"
 }
 
 test_xray_template_update_requests_core_restart() {
@@ -1250,11 +1713,18 @@ test_panel_restart_does_not_suppress_xray_restart() {
 test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
 	local checks joined
 	checks=()
+	export UDP443_BACKEND=hysteria2
 	export ENABLE_HYSTERIA2=true
+	export ENABLE_AMNEZIAWG=false
 	export PORT_LOCAL_VISION=1443
 	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=3443
 	export PORT_LOCAL_HYSTERIA=3443
 	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[{"id":1,"port":1443,"protocol":"vless"},{"id":2,"port":2443,"protocol":"vless"},{"id":3,"port":3443,"protocol":"hysteria"}]}' >"$HTTP_BODY_FILE"
 	wait_tcp_port() {
 		checks+=("tcp:$2:$4")
 		return 0
@@ -1268,8 +1738,180 @@ test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled() {
 
 	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
 	assert_eq "tcp:1443:Vision inbound 1443 tcp:2443:XHTTP inbound 2443 udp:3443:Hysteria2 inbound 3443/udp" "$joined" "managed port wait must include Hysteria2 UDP listener"
-	unset -f wait_tcp_port wait_udp_port_listener
-	unset ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset UDP443_BACKEND ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
+test_wait_managed_xray_ports_checks_amneziawg_udp_when_backend_active() {
+	local checks joined
+	checks=()
+	export UDP443_BACKEND=amneziawg
+	export ENABLE_AMNEZIAWG=true
+	export ENABLE_HYSTERIA2=false
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=4443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[{"id":1,"port":1443,"protocol":"vless"},{"id":2,"port":2443,"protocol":"vless"},{"id":4,"port":4443,"protocol":"amneziawg"}]}' >"$HTTP_BODY_FILE"
+	wait_tcp_port() {
+		checks+=("tcp:$2:$4")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1:$3")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
+	assert_eq "tcp:1443:Vision inbound 1443 tcp:2443:XHTTP inbound 2443 udp:4443:AmneziaWG inbound 4443/udp" "$joined" \
+		"managed port wait must include AmneziaWG UDP listener for active backend"
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
+test_wait_managed_xray_ports_skips_hysteria_udp_when_amneziawg_backend() {
+	local checks joined
+	checks=()
+	export UDP443_BACKEND=amneziawg
+	export ENABLE_AMNEZIAWG=true
+	export ENABLE_HYSTERIA2=false
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=3443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[{"id":1,"port":1443,"protocol":"vless"},{"id":2,"port":2443,"protocol":"vless"},{"id":3,"port":3443,"protocol":"hysteria"}]}' >"$HTTP_BODY_FILE"
+	wait_tcp_port() {
+		checks+=("tcp:$2")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	joined=$(printf '%s\n' "${checks[@]}" | paste -sd ' ' -)
+	assert_eq "tcp:1443 tcp:2443" "$joined" "amneziawg backend must not wait on hysteria UDP port"
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset UDP443_BACKEND ENABLE_AMNEZIAWG ENABLE_HYSTERIA2 PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
+}
+
+test_ensure_amneziawg_client_plan_records_add() {
+	local desired changes=() captured_payload="" add_called=false
+	export MODE=plan EMOJI_FLAG="🇩🇪"
+	CHANGE_COUNT=0
+	desired=$(build_desired_state)
+	record_change() {
+		changes+=("$*")
+	}
+	inbound_by_id_json() {
+		printf '%s' '{"settings":{"mtu":1280,"subnet":"10.8.1.0/24","dns1":"8.8.8.8","dns2":"8.8.4.4"}}'
+	}
+	xui_add_client() {
+		captured_payload=$1
+		add_called=true
+		fail "plan mode must not call clients/add API"
+	}
+	ensure_amneziawg_client 77 "$desired"
+	unset -f record_change inbound_by_id_json xui_add_client
+	unset MODE EMOJI_FLAG
+	grep -Fq 'PLAN: AmneziaWG client created email=' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must record AmneziaWG client create"
+	assert_eq false "$add_called" "plan mode must not invoke clients/add"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/inbound_runtime.bash"
+}
+
+test_afterstart_entrypoint_selects_udp443_backend() {
+	local script block script_main
+	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	block=$(sed -n '/case "$udp_backend" in/,/^[\t ]*esac/p' "$script")
+	grep -Fq 'delete_managed_inbound_kind hysteria2' <<<"$block" ||
+		fail "AfterStart must delete hysteria2 when amneziawg backend is active"
+	grep -Fq 'ensure_inbound amneziawg' <<<"$block" ||
+		fail "AfterStart must ensure amneziawg inbound for amneziawg backend"
+	grep -Fq 'delete_managed_inbound_kind amneziawg' <<<"$block" ||
+		fail "AfterStart must delete inactive UDP443 backend inbounds"
+	script_main=$(sed -n '/^main()/,/^}/p' "$script")
+	grep -Fq 'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' <<<"$script_main" ||
+		fail "shared client must attach active amneziawg inbound for subscription parity"
+}
+
+test_clash_managed_inbound_remark_slug_includes_amneziawg() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local pattern
+	pattern=$(_clash_managed_inbound_remark_slug_pattern)
+	printf '%s' "$pattern" | grep -Eq 'amneziawg' ||
+		fail "Clash discovery pattern must include amneziawg slug"
+}
+
+test_wait_managed_xray_ports_skips_missing_inbounds_on_first_boot() {
+	local checks
+	checks=()
+	export UDP443_BACKEND=hysteria2
+	export ENABLE_HYSTERIA2=true
+	export ENABLE_AMNEZIAWG=false
+	export PORT_LOCAL_VISION=1443
+	export PORT_LOCAL_XHTTP=2443
+	export PORT_LOCAL_UDP443=3443
+	export PORT_LOCAL_HYSTERIA=3443
+	export XRAY_RESTART_PORT_TIMEOUT=1
+	xui_list_inbounds() { return 0; }
+	http_success_json() { return 0; }
+	HTTP_BODY_FILE=$(mktemp)
+	printf '%s\n' '{"success":true,"obj":[]}' >"$HTTP_BODY_FILE"
+	wait_tcp_port() {
+		checks+=("tcp:$2")
+		return 0
+	}
+	wait_udp_port_listener() {
+		checks+=("udp:$1")
+		return 0
+	}
+
+	wait_managed_xray_ports
+
+	assert_eq "" "$(printf '%s' "${checks[*]-}")" "first-boot port wait must skip when no managed inbounds exist yet"
+	rm -f "$HTTP_BODY_FILE"
+	unset -f wait_tcp_port wait_udp_port_listener xui_list_inbounds http_success_json
+	unset UDP443_BACKEND ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG PORT_LOCAL_VISION PORT_LOCAL_XHTTP PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA XRAY_RESTART_PORT_TIMEOUT HTTP_BODY_FILE
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/http.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/3xui_api.bash"
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/xray_runtime.bash"
 }
@@ -1298,6 +1940,227 @@ test_xray_api_inbound_uses_documented_dokodemo_protocol() {
 	assert_eq dokodemo-door "$protocol" "Xray API inbound must use documented dokodemo-door protocol"
 }
 
+test_admin_sub_hostnames_list() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(admin_sub_hostnames | sort | tr '\n' ',')
+	assert_eq "3x-ui,adguard,arcane,homepage,lampac-admin,telemt,traefik," "$out" "admin host label set mismatch"
+}
+
+test_build_admin_sub_clash_rules_proxy_mode() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "203.0.113.9" "rules-proxy")
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" || fail "missing arcane DOMAIN→PROXY"
+	grep -Fq 'DOMAIN,3x-ui.example.test,PROXY' <<<"$yaml" || fail "missing 3x-ui DOMAIN→PROXY"
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "missing MATCH,DIRECT"
+	grep -Fq 'MATCH,PROXY' <<<"$yaml" && fail "MATCH,PROXY must not remain"
+	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN group" || true
+}
+
+test_admin_sub_clash_default_mode_is_rules_proxy() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local mode
+	mode=$(admin_sub_clash_default_mode)
+	assert_eq rules-proxy "$mode" "admin Clash default mode must avoid unsafe proxy-groups"
+}
+
+test_build_admin_sub_clash_rules_proxy_mode_with_ipv4_adds_hosts_dns_only() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "203.0.113.9" "rules-proxy")
+	grep -Fq 'hosts:' <<<"$yaml" || fail "rules-proxy with IPv4 must include hosts"
+	grep -Fq '  example.test: 203.0.113.9' <<<"$yaml" || fail "rules-proxy must include apex host"
+	grep -Fq '  arcane.example.test: 203.0.113.9' <<<"$yaml" || fail "rules-proxy must include admin host"
+	grep -Fq 'dns:' <<<"$yaml" || fail "rules-proxy with IPv4 must include dns"
+	grep -Fq '  fake-ip-filter:' <<<"$yaml" || fail "rules-proxy must include fake-ip-filter"
+	grep -Fq '    - example.test' <<<"$yaml" || fail "rules-proxy must filter webdomain"
+	grep -Fq '    - "+.example.test"' <<<"$yaml" || fail "rules-proxy must filter webdomain wildcard"
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" || fail "rules-proxy must route admin domains to PROXY"
+	grep -Fq 'proxy-groups:' <<<"$yaml" && fail "rules-proxy must not emit proxy-groups" || true
+	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN group" || true
+	grep -Fq ',ADMIN' <<<"$yaml" && fail "rules-proxy must not emit ADMIN rules" || true
+}
+
+test_build_admin_sub_clash_rules_skips_hosts_without_ipv4() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "" "full")
+	grep -Fq 'hosts:' <<<"$yaml" && fail "empty PUBLIC_IPV4 must omit hosts" || true
+}
+
+test_build_admin_sub_clash_rules_match_direct() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "198.51.100.10" "rules-proxy")
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "residual must be MATCH,DIRECT"
+	grep -Fq 'MATCH,PROXY' <<<"$yaml" && fail "MATCH,PROXY must not remain"
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" || fail "admin still PROXY"
+}
+
+test_build_admin_sub_clash_rules_with_nodes_emits_auto() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local nodes yaml
+	nodes=$(mktemp)
+	printf '%s\n' 'node-a' 'node-b' >"$nodes"
+	yaml=$(build_admin_sub_clash_rules "example.test" "198.51.100.10" "rules-proxy" "$nodes")
+	rm -f "$nodes"
+	grep -Fq 'name: AUTO-example.test' <<<"$yaml" || fail "missing AUTO-<domain> group"
+	grep -Fq 'type: url-test' <<<"$yaml" || fail "AUTO must be url-test"
+	grep -Fq 'hidden: true' <<<"$yaml" || fail "AUTO must be hidden in mihomo UI"
+	grep -Fq 'https://www.gstatic.com/generate_204' <<<"$yaml" || fail "missing probe URL"
+	grep -Fq 'name: PROXY-example.test' <<<"$yaml" || fail "missing PROXY-<domain> group"
+	grep -Fq 'AUTO-example.test' <<<"$yaml" || fail "PROXY must list AUTO-<domain>"
+	grep -Fq 'node-a' <<<"$yaml" || fail "PROXY must list discovered nodes"
+	grep -Fq 'DOMAIN,arcane.example.test,PROXY-example.test' <<<"$yaml" ||
+		fail "with nodes admin rules must target PROXY-<domain>"
+	if grep -Eq 'DOMAIN,arcane\.example\.test,PROXY$' <<<"$yaml"; then
+		fail "with nodes must not target bare PROXY"
+	fi
+}
+
+test_build_admin_sub_clash_rules_without_nodes_omits_groups() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml
+	yaml=$(build_admin_sub_clash_rules "example.test" "" "rules-proxy" "")
+	grep -Fq 'proxy-groups:' <<<"$yaml" && fail "no nodes => no custom proxy-groups"
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "still MATCH,DIRECT"
+}
+
+test_build_admin_sub_clash_rules_admin_modes_domain_proxy() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local yaml mode
+	for mode in rules-admin full; do
+		yaml=$(build_admin_sub_clash_rules "example.test" "203.0.113.9" "$mode")
+		grep -Fq 'DOMAIN,arcane.example.test,PROXY' <<<"$yaml" ||
+			fail "$mode must route admin domains to PROXY"
+		grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "$mode must end with MATCH,DIRECT"
+		grep -Fq 'name: ADMIN' <<<"$yaml" && fail "$mode must not emit ADMIN group" || true
+		grep -Fq ',ADMIN' <<<"$yaml" && fail "$mode must not route to ADMIN" || true
+	done
+}
+
+test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local nodes yaml count
+	nodes=$(mktemp)
+	printf '%s\n' 'node-a' >"$nodes"
+	yaml=$(build_admin_sub_clash_rules "example.test" "198.51.100.10" "full" "$nodes")
+	rm -f "$nodes"
+	count=$(grep -c '^proxy-groups:' <<<"$yaml" || true)
+	assert_eq 1 "$count" "with nodes must emit exactly one proxy-groups block"
+	grep -Fq 'name: ADMIN' <<<"$yaml" && fail "full+nodes must not emit ADMIN group" || true
+}
+
+test_mihomo_client_routing_file_resolves_repo_overlay() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local f
+	unset MIHOMO_CLIENT_ROUTING_FILE || true
+	f=$(mihomo_client_routing_file) || fail "expected repo client-routing/mihomo-client.yaml"
+	[[ -f "$f" ]] || fail "resolved path missing: $f"
+	grep -Fq 'client-routing/mihomo-client.yaml' <<<"$f" || fail "unexpected path $f"
+}
+
+test_build_mihomo_client_sub_clash_rules_injects_admin() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local f yaml
+	f=$(mihomo_client_routing_file) || fail "routing overlay missing"
+	yaml=$(build_mihomo_client_sub_clash_rules "$f" "example.test" "203.0.113.9")
+	grep -Fq "DOMAIN,example.test,PROXY" <<<"$yaml" || fail "missing apex DOMAIN→PROXY"
+	grep -Fq "DOMAIN,arcane.example.test,PROXY" <<<"$yaml" || fail "missing admin DOMAIN→PROXY"
+	grep -Fq "DOMAIN,3x-ui.example.test,PROXY" <<<"$yaml" || fail "missing 3x-ui DOMAIN→PROXY"
+	grep -Fq "'example.test': 203.0.113.9" <<<"$yaml" || fail "missing dns.hosts apex"
+	grep -Fq "'arcane.example.test': 203.0.113.9" <<<"$yaml" || fail "missing dns.hosts admin"
+	grep -Fq "DOMAIN,example.test,real-ip" <<<"$yaml" || fail "missing fake-ip-filter apex"
+	grep -Fq "DOMAIN-SUFFIX,example.test,real-ip" <<<"$yaml" || fail "missing fake-ip-filter suffix"
+	grep -Fq 'include-all: true' <<<"$yaml" || fail "PROXY/AUTO must use include-all"
+	grep -Fq 'MATCH,DIRECT' <<<"$yaml" || fail "missing MATCH,DIRECT"
+	grep -Fq 'proxy-providers:' <<<"$yaml" && fail "overlay must not ship proxy-providers" || true
+	grep -Eq '^tun:' <<<"$yaml" && fail "overlay must not ship tun" || true
+	grep -Fq '# >>> ADMIN_RULES' <<<"$yaml" || fail "markers must remain as anchors"
+	# injected rules sit between markers; empty marker pair must not remain empty of rules
+	grep -Fq 'tun:' <<<"$yaml" && fail "tun key must be absent" || true
+}
+
+test_discover_clash_proxy_node_names_from_remarks() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(
+		printf '%s\n' '🇩🇪 vless-tcp-reality-example-autogen' 'vless-xhttp' 'DIRECT' |
+			discover_clash_proxy_node_names_from_lines
+	)
+	grep -Fq 'vless-xhttp' <<<"$out" || fail "must keep remark lines as node names"
+	grep -Fq 'DIRECT' <<<"$out" && fail "must not invent DIRECT" || true
+}
+
+test_clash_subscription_proxy_name_for_vision_appends_host_email() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local out
+	out=$(clash_subscription_proxy_name_for_kind vision '🇩🇪 vless-tcp-reality' 'streambase.linkpc.net' 'streambase.linkpc.net-autogen')
+	assert_eq '🇩🇪 vless-tcp-reality-streambase.linkpc.net-autogen' "$out" \
+		"Vision Clash name must append shared client email"
+	out=$(clash_subscription_proxy_name_for_kind xhttp '🇩🇪 vless-xhttp' 'streambase.linkpc.net' autogen)
+	assert_eq '🇩🇪 vless-xhttp' "$out" "non-Vision Clash names keep inbound remark"
+}
+
+test_map_clash_remarks_to_published_proxy_names_prefix() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local body remarks out
+	body=$(mktemp)
+	remarks=$(mktemp)
+	cat >"$body" <<'EOF'
+proxies:
+  - name: 🇩🇪 vless-tcp-reality-streambase.linkpc.net-autogen
+    type: vless
+  - name: 🇩🇪 vless-xhttp
+    type: vless
+EOF
+	printf '%s\n' '🇩🇪 vless-tcp-reality' '🇩🇪 vless-xhttp' >"$remarks"
+	out=$(map_clash_remarks_to_published_proxy_names "$remarks" "$body")
+	rm -f "$body" "$remarks"
+	grep -Fx '🇩🇪 vless-tcp-reality-streambase.linkpc.net-autogen' <<<"$out" ||
+		fail "must map Vision remark to published Reality proxy name"
+	grep -Fx '🇩🇪 vless-xhttp' <<<"$out" || fail "must keep exact-match remarks"
+}
+
+test_discover_clash_proxy_node_names_from_clash_body() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_admin_routing.bash"
+	local body out
+	body=$(mktemp)
+	cat >"$body" <<'EOF'
+proxies:
+  - name: node-alpha
+    type: vless
+  - name: DIRECT
+    type: direct
+proxy-groups:
+  - name: PROXY
+    proxies:
+      - AUTO
+      - DIRECT
+EOF
+	out=$(discover_clash_proxy_node_names_from_clash_body "$body")
+	rm -f "$body"
+	grep -Fx 'node-alpha' <<<"$out" || fail "must parse proxy names from Clash body"
+	grep -Fq 'DIRECT' <<<"$out" && fail "must not emit DIRECT from Clash body" || true
+}
+
 test_redaction_masks_secrets
 test_upsert_outbound_by_tag_is_idempotent
 test_dns_replace_preserves_unknown_fields
@@ -1306,6 +2169,11 @@ test_desired_clients_are_deterministic
 test_runtime_env_preserves_explicit_optional_inbound_flags
 test_runtime_env_normalizes_explicit_optional_inbound_flags
 test_desired_inbound_remarks_use_country_flag
+test_desired_state_includes_amneziawg_udp443_port
+test_build_amneziawg_inbound_components_use_minimal_shape
+test_managed_inbound_remarks_amneziawg_include_legacy_spike
+test_delete_managed_inbound_kind_plan_records_delete
+test_runtime_env_normalizes_udp443_backend
 test_managed_inbound_remarks_include_legacy_names
 test_country_flag_sources_include_iso_code_fallbacks
 test_country_code_to_flag_converts_iso_alpha2
@@ -1326,6 +2194,7 @@ test_panel_settings_fallback_to_legacy_route_on_404
 test_custom_geo_resources_default_to_requested_dat_files
 test_custom_geo_resources_parse_custom_entries
 test_panel_keys_restore_old_cert_fields
+test_desired_panel_keys_include_clash_routing
 test_panel_settings_json_defaults_panel_outbound
 test_geodata_block_uses_usque_outbound
 test_inbound_components_json_preserves_nested_objects
@@ -1347,6 +2216,7 @@ test_warp_balancer_uses_usque_without_console_warp
 test_warp_balancer_can_opt_in_console_warp
 test_mihomo_outbound_and_terminal_rule_are_added_when_available
 test_existing_mihomo_outbound_and_rule_are_preserved
+test_admin_traefik_route_prepended_for_webdomain_hosts
 test_managed_burst_observatory_preserves_custom_subjects
 test_managed_xray_preserves_unmanaged_balancers_and_rules
 test_unhealthy_external_proxies_create_no_managed_xray_artifacts
@@ -1358,11 +2228,50 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable
 test_afterstart_entrypoint_loads_runtime_modules
 test_afterstart_entrypoint_preserves_pipeline_order
 test_afterstart_entrypoint_initializes_optional_inbound_ids
+test_afterstart_exports_admin_clash_routing_only
+test_mihomo_client_routing_file_resolves_repo_overlay
+test_build_mihomo_client_sub_clash_rules_injects_admin
+test_afterstart_exports_json_sub_rules_and_clears_legacy_routing
+test_afterstart_exports_json_sub_observatory
+test_desired_panel_keys_include_json_routing
+test_desired_panel_keys_include_sub_json_observatory
+test_ensure_panel_settings_force_clears_sub_json_routing_rules
 test_afterstart_check_mode_bootstraps_without_apply
+test_subscription_url_for_sub_id_joins_base
+test_log_shared_autogen_subscription_urls_prints_three
 test_xray_template_update_requests_core_restart
 test_panel_restart_does_not_suppress_xray_restart
 test_wait_managed_xray_ports_checks_hysteria_udp_when_enabled
+test_wait_managed_xray_ports_checks_amneziawg_udp_when_backend_active
+test_wait_managed_xray_ports_skips_hysteria_udp_when_amneziawg_backend
+test_ensure_amneziawg_client_plan_records_add
+test_afterstart_entrypoint_selects_udp443_backend
+test_clash_managed_inbound_remark_slug_includes_amneziawg
+test_wait_managed_xray_ports_skips_missing_inbounds_on_first_boot
+test_repair_inbound_vless_client_flows_db_sets_vision_only
 test_warp_outbound_from_registration_prefers_panel_host_endpoint
 test_existing_warp_outbound_endpoint_is_normalized
 test_xray_api_inbound_uses_documented_dokodemo_protocol
+test_admin_sub_hostnames_list
+test_build_admin_sub_clash_rules_proxy_mode
+test_admin_sub_clash_default_mode_is_rules_proxy
+test_build_admin_sub_clash_rules_proxy_mode_with_ipv4_adds_hosts_dns_only
+test_build_admin_sub_clash_rules_skips_hosts_without_ipv4
+test_build_admin_sub_clash_rules_match_direct
+test_build_admin_sub_clash_rules_with_nodes_emits_auto
+test_build_admin_sub_clash_rules_without_nodes_omits_groups
+test_build_admin_sub_clash_rules_admin_modes_domain_proxy
+test_build_admin_sub_clash_rules_with_nodes_single_proxy_groups_block
+test_discover_clash_proxy_node_names_from_remarks
+test_clash_subscription_proxy_name_for_vision_appends_host_email
+test_map_clash_remarks_to_published_proxy_names_prefix
+test_discover_clash_proxy_node_names_from_clash_body
+test_build_admin_sub_json_routing_rules
+test_build_admin_sub_json_rules_admin_then_direct
+test_build_admin_sub_json_dns
+test_build_admin_sub_json_observatory
+test_sub_balancer_api_wrappers_use_documented_routes
+test_ensure_auto_sub_balancer_plan_does_not_call_api
+test_ensure_auto_sub_balancer_updates_existing_auto
+test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success
 printf 'test_libs.bash: OK\n'

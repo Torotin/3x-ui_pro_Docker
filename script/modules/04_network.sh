@@ -6,24 +6,33 @@ install_network_load_ip_mode() {
 	: "${HOST_IP_MODE:=ipv4}"
 	case "$HOST_IP_MODE" in
 	dual)
+		IPV6_DISABLE=0
 		IPV6_FORWARDING=1
 		IPV6_AUTOCONF=1
 		IPV6_ACCEPT_RA=2
 		;;
 	ipv4)
+		# Disable host IPv6 when no public v6 route (avoids AAAA stalls). Docker bridges
+		# still re-enable per-iface IPv6 when created with --ipv6.
+		IPV6_DISABLE=1
 		IPV6_FORWARDING=0
 		IPV6_AUTOCONF=0
 		IPV6_ACCEPT_RA=0
 		;;
 	*) die "unsupported HOST_IP_MODE=$HOST_IP_MODE for network apply" ;;
 	esac
-	export IPV6_FORWARDING IPV6_AUTOCONF IPV6_ACCEPT_RA
+	# Opt-out: keep stack up on ipv4-only hosts (Docker ULA / diagnostics).
+	if [[ "${INSTALL_KEEP_IPV6:-0}" == "1" ]]; then
+		IPV6_DISABLE=0
+	fi
+	export IPV6_DISABLE IPV6_FORWARDING IPV6_AUTOCONF IPV6_ACCEPT_RA
 }
 
 install_network_render_sysctl_file() {
 	local template=$1 dest=$2
 	install_network_load_ip_mode
-	sed -e "s|__IPV6_FORWARDING__|${IPV6_FORWARDING}|g" \
+	sed -e "s|__IPV6_DISABLE__|${IPV6_DISABLE}|g" \
+		-e "s|__IPV6_FORWARDING__|${IPV6_FORWARDING}|g" \
 		-e "s|__IPV6_AUTOCONF__|${IPV6_AUTOCONF}|g" \
 		-e "s|__IPV6_ACCEPT_RA__|${IPV6_ACCEPT_RA}|g" \
 		"$template" >"$dest"
@@ -32,6 +41,8 @@ install_network_render_sysctl_file() {
 install_network_command() {
 	require_opt_in --apply "$@"
 	require_apply_confirmation "$@"
+	# Clamp overlay/cloud Path MTU before sysctl render (also runs early from docker/apt).
+	install_network_fix_path_mtu
 	local template="$SCRIPT_DIR/template/99-xray-network.conf.template"
 	local target="${INSTALL_SYSCTL_CONF:-/etc/sysctl.d/99-xray.conf}"
 	local rendered
@@ -40,6 +51,7 @@ install_network_command() {
 	if [[ "$INSTALL_MOCK" == "1" ]]; then
 		run_cmd network.apply printf '%s\n' "$(cat "$rendered")"
 		cat "$rendered"
+		install_network_ensure_modules
 		run_cmd network.sysctl sysctl -p "$target"
 		rm -f -- "$rendered"
 		return 0
@@ -54,8 +66,7 @@ install_network_command() {
 	backup_file "$target"
 	install -m 0644 "$rendered" "$target"
 	rm -f -- "$rendered"
-	run_cmd network.modprobe modprobe tcp_bbr
-	run_cmd network.modprobe modprobe nf_conntrack
+	install_network_ensure_modules
 	if ! run_cmd network.sysctl sysctl -p "$target"; then
 		if ((had_previous)); then
 			cp -- "$previous" "$target"
@@ -66,4 +77,20 @@ install_network_command() {
 		die "network sysctl apply failed; previous config restored"
 	fi
 	rm -f -- "$previous"
+}
+
+# Persist + load modules that own /proc/sys/net/netfilter/* and BBR before sysctl -p.
+install_network_ensure_modules() {
+	local modules_file=/etc/modules-load.d/nf_conntrack.conf
+	if [[ "$INSTALL_MOCK" == "1" ]]; then
+		run_cmd network.modules.load.d printf '%s\n' nf_conntrack
+		run_cmd network.modprobe modprobe tcp_bbr
+		run_cmd network.modprobe modprobe nf_conntrack
+		return 0
+	fi
+	run_cmd network.modules.load.d sh -c '
+		printf "%s\n" "nf_conntrack" >"$1"
+	' _ "$modules_file"
+	run_cmd network.modprobe.tcp_bbr modprobe tcp_bbr || true
+	run_cmd network.modprobe.nf_conntrack modprobe nf_conntrack || true
 }

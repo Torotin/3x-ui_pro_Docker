@@ -63,6 +63,139 @@ escape_toml_basic_string_value() {
 	printf '%s' "$value"
 }
 
+normalize_uri_segment() {
+	local segment=${1:-}
+	segment=${segment#/}
+	segment=${segment%/}
+	printf '%s' "$segment"
+}
+
+install_normalize_udp443_port_env() {
+	if [[ -z "${PORT_LOCAL_UDP443:-}" && -n "${PORT_LOCAL_HYSTERIA:-}" ]]; then
+		PORT_LOCAL_UDP443=$PORT_LOCAL_HYSTERIA
+	fi
+	: "${PORT_LOCAL_UDP443:=443}"
+	PORT_LOCAL_HYSTERIA=$PORT_LOCAL_UDP443
+	export PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA
+}
+
+install_normalize_udp443_backend() {
+	local raw=${UDP443_BACKEND:-}
+	if [[ -z "$raw" ]]; then
+		if [[ "${ENABLE_HYSTERIA2+x}" == x ]]; then
+			install_normalize_bool_var ENABLE_HYSTERIA2
+			if [[ "$ENABLE_HYSTERIA2" == "true" ]]; then
+				UDP443_BACKEND=hysteria2
+			else
+				UDP443_BACKEND=amneziawg
+			fi
+		else
+			UDP443_BACKEND=amneziawg
+		fi
+	else
+		UDP443_BACKEND=${raw,,}
+	fi
+	case "$UDP443_BACKEND" in
+	amneziawg | hysteria2 | off) ;;
+	*) die "UDP443_BACKEND must be amneziawg|hysteria2|off (got: $UDP443_BACKEND)" ;;
+	esac
+	case "$UDP443_BACKEND" in
+	amneziawg)
+		ENABLE_AMNEZIAWG=true
+		ENABLE_HYSTERIA2=false
+		;;
+	hysteria2)
+		ENABLE_AMNEZIAWG=false
+		ENABLE_HYSTERIA2=true
+		;;
+	off)
+		ENABLE_AMNEZIAWG=false
+		ENABLE_HYSTERIA2=false
+		;;
+	esac
+	export UDP443_BACKEND ENABLE_AMNEZIAWG ENABLE_HYSTERIA2
+}
+
+assert_uri_telemt_sub_unique() {
+	local sub peer normalized
+	sub=$(normalize_uri_segment "${URI_TELEMT_SUB:-}")
+	if [[ -z "$sub" ]]; then
+		die "URI_TELEMT_SUB is required"
+	fi
+	local peers=(
+		"${URI_TELEMT_WEB:-}"
+		"${URI_SUB_PATH:-}"
+		"${URI_JSON_PATH:-}"
+		"${URI_CLASH_PATH:-}"
+		"${URI_PANEL_PATH:-}"
+		"${URI_MIHOMO:-}"
+		"${URI_ADGUARD_DOH:-}"
+	)
+	for peer in "${peers[@]}"; do
+		normalized=$(normalize_uri_segment "$peer")
+		if [[ -z "$normalized" ]]; then
+			continue
+		fi
+		if [[ "$sub" == "$normalized" ]]; then
+			die "URI_TELEMT_SUB must be unique (conflicts with ${normalized})"
+		fi
+	done
+	return 0
+}
+
+install_webdomain_is_ipv4() {
+	[[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+install_webdomain_is_ipv6() {
+	local domain=${1:-}
+	[[ "$domain" == *:* ]] && ! install_webdomain_is_ipv4 "$domain"
+}
+
+# WEBDOMAIN must be a hostname, never a bare IP: Let's Encrypt rejects IP
+# identifiers, Telemt rejects IP web.vhosts hosts, and Traefik Host() rules
+# need a name that can obtain certs (use sslip.io or a real DNS name).
+assert_webdomain_is_hostname() {
+	local domain=${1:-${WEBDOMAIN:-}}
+	[[ -n "$domain" ]] || die "WEBDOMAIN is required"
+	if install_webdomain_is_ipv4 "$domain"; then
+		die "WEBDOMAIN must be a DNS hostname, not an IPv4 address (got: $domain). Use a real domain or <ipv4>.sslip.io"
+	fi
+	if install_webdomain_is_ipv6 "$domain"; then
+		die "WEBDOMAIN must be a DNS hostname, not an IPv6 address (got: $domain)"
+	fi
+	return 0
+}
+
+# When WEBDOMAIN is unset/placeholder/IP, derive <PUBLIC_IPV4>.sslip.io so LE + Telemt
+# still get a resolvable FQDN after an IP-only bootstrap (admin Hosts also resolve).
+ensure_webdomain_or_sslip() {
+	local ipv4=${PUBLIC_IPV4:-}
+	[[ -n "$ipv4" ]] || die "PUBLIC_IPV4 is required before WEBDOMAIN defaulting"
+	if [[ -z "${WEBDOMAIN:-}" || "$WEBDOMAIN" == "example.invalid" ]] \
+		|| install_webdomain_is_ipv4 "$WEBDOMAIN" || install_webdomain_is_ipv6 "$WEBDOMAIN"; then
+		WEBDOMAIN="${ipv4}.sslip.io"
+		export WEBDOMAIN
+		printf 'WEBDOMAIN defaulted to %s (sslip.io)\n' "$WEBDOMAIN"
+	fi
+	assert_webdomain_is_hostname "$WEBDOMAIN"
+}
+
+# Traefik PEM paths must track WEBDOMAIN; stale IP-based paths abort AfterStart
+# before Vision/XHTTP are created (public :443 stays dark).
+sync_xray_traefik_pem_paths() {
+	local domain=${WEBDOMAIN:-localhost}
+	if [[ -z "${XRAY_TLS_CERT_FILE:-}" || "$XRAY_TLS_CERT_FILE" == /etc/traefik/pem/* ]]; then
+		XRAY_TLS_CERT_FILE="/etc/traefik/pem/${domain}-cert.pem"
+	fi
+	if [[ -z "${XRAY_TLS_KEY_FILE:-}" || "$XRAY_TLS_KEY_FILE" == /etc/traefik/pem/* ]]; then
+		XRAY_TLS_KEY_FILE="/etc/traefik/pem/${domain}-key.pem"
+	fi
+	# Stack contract: Hysteria2 masquerade hits Traefik websecure via WEBDOMAIN.
+	HYSTERIA2_MASQ_URL="https://${domain}:4443/"
+	export XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
+}
+
 detect_docker_socket_gid() {
 	if getent group docker >/dev/null 2>&1; then
 		getent group docker | awk -F: '{print $3}'
@@ -74,10 +207,10 @@ detect_docker_socket_gid() {
 }
 
 ensure_env_defaults() {
-	: "${WEBDOMAIN:=example.invalid}"
 	ip_probe_resolve_host_mode
 	# PUBLIC_IPV4 is required for this product; probe already died if missing.
 	: "${PUBLIC_IPV4:?PUBLIC_IPV4 required}"
+	ensure_webdomain_or_sslip
 	# PUBLIC_IPV6 may be empty when HOST_IP_MODE=ipv4 — do not default to PUBLIC_IPV4
 	if [[ "${HOST_IP_MODE}" == "dual" ]]; then
 		TOR_IPV6_AVAILABLE=true
@@ -110,8 +243,9 @@ ensure_env_defaults() {
 	: "${URI_ADGUARD_DOH:=$(generate_random_string 12 16)}"
 	: "${URI_HOMEPAGE:=$(generate_random_string 12 16)}"
 	: "${URI_TELEMT_PANEL:=$(generate_random_string 12 16)}"
+	: "${URI_TELEMT_WEB:=$(generate_random_string 12 16)}"
+	: "${URI_TELEMT_SUB:=$(generate_random_string 12 16)}"
 	: "${URI_MIHOMO:=$(generate_random_string 12 16)}"
-	: "${URI_TEST:=$(generate_random_string 12 16)}"
 	: "${PORT_LOCAL_CADDYWEB:=$(generate_random_port)}"
 	: "${PORT_LOCAL_SUB2SING:=$(generate_random_port)}"
 	: "${PORT_LOCAL_DOZZLE:=$(generate_random_port)}"
@@ -120,16 +254,23 @@ ensure_env_defaults() {
 	: "${PORT_LOCAL_XHTTP:=$(generate_random_port)}"
 	: "${PORT_LOCAL_VISION:=$(generate_random_port)}"
 	: "${PORT_LOCAL_GRPC:=$(generate_random_port)}"
-	: "${PORT_LOCAL_HYSTERIA:=443}"
+	install_normalize_udp443_port_env
+	: "${PORT_LOCAL_ADMIN:=9443}"
 	: "${PORT_LOCAL_TELEMT_PROXY:=9443}"
 	: "${PORT_LOCAL_TELEMT_API:=9091}"
 	: "${PORT_LOCAL_TELEMT_METRICS:=9090}"
 	: "${PORT_LOCAL_TELEMT_PANEL:=8080}"
+	: "${PORT_LOCAL_TELEMT_SUB:=8081}"
+	: "${PORT_LOCAL_TELEMT_WEB:=18080}"
+	: "${PORT_LOCAL_XRAY_MIXED:=10808}"
+	: "${TELEMT_WEB_USER:=web}"
+	: "${TELEMT_WEB_SECRET_HEX:=$(generate_hex_secret 16)}"
+	: "${TELEMT_WEB_CARRIER:=https}"
+	: "${TELEMT_WEB_DECOY_UPSTREAM:=}"
 	: "${PORT_LOCAL_CROWDSEC_API:=$(generate_random_port)}"
 	: "${PORT_LOCAL_CROWDSEC_CADDY:=$(generate_random_port)}"
 	: "${PORT_LOCAL_CROWDSEC_APPSEC:=$(generate_random_port)}"
 	: "${PORT_LOCAL_CROWDSEC_PROMETHEUS:=$(generate_random_port)}"
-	: "${PORT_TEST:=$(generate_random_port)}"
 	: "${CROWDSEC_API_KEY_CADDY:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_TRAEFIK:=$(generate_random_string 32 48)}"
 	: "${CROWDSEC_API_KEY_FIREWALL:=$(generate_random_string 32 48)}"
@@ -139,12 +280,26 @@ ensure_env_defaults() {
 	: "${MIHOMO_SECRET:=$(generate_hex_secret 32)}"
 	: "${LAMPAC_JACRED_APIKEY:=$(generate_hex_secret 16)}"
 	: "${TELEMT_API_AUTH_HEADER:=$(generate_random_string 48 64)}"
-	: "${TELEMT_PANEL_JWT_SECRET:=$(generate_random_string 48 64)}"
+	: "${TELEMT_SUBPAGE_SECRET:=$(generate_hex_secret 32)}"
 	: "${TELEMT_PANEL_PASSWORD_HASH:=}"
 	: "${TELEMT_BOOTSTRAP_USER:=bootstrap}"
 	: "${TELEMT_BOOTSTRAP_SECRET_HEX:=$(generate_hex_secret 16)}"
 	: "${TELEMT_STACK_IMAGE:=torotin/telemt-stack:latest}"
-	: "${DOCKER_SOCKET_GID:=$(detect_docker_socket_gid)}"
+	# Panel GeoIP (stored via API into panel-state; not TOML). Default: P3TERX GeoLite.mmdb direct HTTPS .mmdb.
+	: "${TELEMT_GEOIP_ENABLED:=true}"
+	: "${TELEMT_GEOIP_SCHEDULE:=weekly}"
+	: "${TELEMT_GEOIP_CITY_URL:=https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb}"
+	: "${TELEMT_GEOIP_ASN_URL:=https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-ASN.mmdb}"
+	: "${TELEMT_GEOIP_COUNTRY_URL:=https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-Country.mmdb}"
+	# 0 means "unset/misdetected" for compose group_add; re-probe the real socket GID.
+	if [[ -z "${DOCKER_SOCKET_GID:-}" || "${DOCKER_SOCKET_GID}" == "0" ]]; then
+		DOCKER_SOCKET_GID=$(detect_docker_socket_gid)
+	fi
+	# Optional: empty DOCKER_MTU = read host iface MTU; mirrors/proxy only if set.
+	: "${DOCKER_MTU:=}"
+	: "${DOCKER_GHCR_MIRROR:=}"
+	: "${DOCKER_HTTP_PROXY:=}"
+	: "${DOCKER_NO_PROXY:=localhost,127.0.0.1,::1}"
 	: "${TELEMT_TUNING_PROFILE:=balanced}"
 	: "${TELEMT_MIDDLE_PROXY_NAT_PROBE:=true}"
 	: "${TELEMT_STUN_NAT_PROBE_CONCURRENCY:=16}"
@@ -196,37 +351,42 @@ ensure_env_defaults() {
 	: "${HT_PASS_ENCODED:=}"
 	: "${ADGUARD_ADMIN_HASH:=}"
 	: "${ENABLE_VLESS_GRPC:=false}"
-	: "${ENABLE_HYSTERIA2:=true}"
 	install_normalize_global_bool_env
-	: "${XRAY_TLS_CERT_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}"
-	: "${XRAY_TLS_KEY_FILE:=/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
-	: "${HYSTERIA2_MASQ_URL:=https://${WEBDOMAIN}/}"
+	install_normalize_udp443_backend
+	# Prefer Traefik inside docker-net. https://${WEBDOMAIN}/ self-loops when
+	# the 3x-ui container hostname is WEBDOMAIN (no TCP :443 inside).
+	sync_xray_traefik_pem_paths
+	# Force-sync derived Xray targets from ENABLE_TELEMT. Bootstrap/env may have
+	# already written traefik defaults into install.env; := would sticky-lock them.
 	if install_telemt_enabled; then
-		: "${VISION_FALLBACK_HOST:=telemt}"
-		: "${VISION_FALLBACK_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
-		: "${VISION_FALLBACK_XVER:=1}"
-		: "${REALITY_TARGET_HOST:=telemt}"
-		: "${REALITY_TARGET_PORT:=$PORT_LOCAL_TELEMT_PROXY}"
-		: "${REALITY_TARGET_XVER:=1}"
+		VISION_FALLBACK_HOST=telemt
+		VISION_FALLBACK_PORT=$PORT_LOCAL_TELEMT_PROXY
+		VISION_FALLBACK_XVER=1
+		REALITY_TARGET_HOST=telemt
+		REALITY_TARGET_PORT=$PORT_LOCAL_TELEMT_PROXY
+		REALITY_TARGET_XVER=1
 	else
-		: "${VISION_FALLBACK_HOST:=traefik}"
-		: "${VISION_FALLBACK_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
-		: "${VISION_FALLBACK_XVER:=1}"
-		: "${REALITY_TARGET_HOST:=traefik}"
-		: "${REALITY_TARGET_PORT:=${PORT_LOCAL_TRAEFIK:-4443}}"
-		: "${REALITY_TARGET_XVER:=1}"
+		VISION_FALLBACK_HOST=traefik
+		VISION_FALLBACK_PORT=${PORT_LOCAL_TRAEFIK:-4443}
+		VISION_FALLBACK_XVER=1
+		REALITY_TARGET_HOST=traefik
+		REALITY_TARGET_PORT=${PORT_LOCAL_TRAEFIK:-4443}
+		REALITY_TARGET_XVER=1
 	fi
 	export WEBDOMAIN HOST_IP_MODE PUBLIC_IPV4 PUBLIC_IPV6 TOR_IPV6_AVAILABLE USER_WEB PASS_WEB USER_SSH PASS_SSH SSH_PBK PORT_REMOTE_SSH
 	export ADMIN_ROUTING_MODE STRICT_DNS_CHECK STRICT_ACME_CHECK
 	export URI_TRAEFIK_DASHBOARD URI_ARCANE URI_DOZZLE URI_PANEL_PATH URI_SUB_PATH URI_JSON_PATH URI_CLASH_PATH
-	export URI_VLESS_XHTTP URI_VLESS_GRPC URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_MIHOMO URI_TEST
+	export URI_VLESS_XHTTP URI_VLESS_GRPC URI_SUB2SING URI_ADGUARD_PANEL URI_ADGUARD_DOH URI_HOMEPAGE URI_TELEMT_PANEL URI_TELEMT_WEB URI_TELEMT_SUB URI_MIHOMO
 	export ARCANE_ENCRYPTION_KEY
 	export PORT_LOCAL_CADDYWEB PORT_LOCAL_SUB2SING PORT_LOCAL_DOZZLE PORT_LOCAL_VLESS_SUBSCRIBE
-	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_GRPC PORT_LOCAL_HYSTERIA PORT_LOCAL_TELEMT_PROXY
-	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_CROWDSEC_API
-	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS PORT_TEST
+	export PORT_LOCAL_VLESS_PANEL PORT_LOCAL_XHTTP PORT_LOCAL_VISION PORT_LOCAL_GRPC PORT_LOCAL_UDP443 PORT_LOCAL_HYSTERIA PORT_LOCAL_ADMIN PORT_LOCAL_TELEMT_PROXY
+	export PORT_LOCAL_TELEMT_API PORT_LOCAL_TELEMT_METRICS PORT_LOCAL_TELEMT_PANEL PORT_LOCAL_TELEMT_SUB PORT_LOCAL_TELEMT_WEB PORT_LOCAL_XRAY_MIXED PORT_LOCAL_CROWDSEC_API
+	export PORT_LOCAL_CROWDSEC_CADDY PORT_LOCAL_CROWDSEC_APPSEC PORT_LOCAL_CROWDSEC_PROMETHEUS
 	export CROWDSEC_API_KEY_CADDY CROWDSEC_API_KEY_TRAEFIK CROWDSEC_API_KEY_FIREWALL HT_PASS_ENCODED ADGUARD_ADMIN_HASH
-	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET LAMPAC_JACRED_APIKEY TELEMT_API_AUTH_HEADER TELEMT_PANEL_JWT_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export ENABLE_LAMPAC ENABLE_TELEMT ENABLE_MIHOMO MIHOMO_SECRET LAMPAC_JACRED_APIKEY TELEMT_API_AUTH_HEADER TELEMT_SUBPAGE_SECRET TELEMT_PANEL_PASSWORD_HASH TELEMT_BOOTSTRAP_USER TELEMT_BOOTSTRAP_SECRET_HEX TELEMT_STACK_IMAGE DOCKER_SOCKET_GID
+	export DOCKER_MTU DOCKER_GHCR_MIRROR DOCKER_HTTP_PROXY DOCKER_NO_PROXY
+	export TELEMT_GEOIP_ENABLED TELEMT_GEOIP_SCHEDULE TELEMT_GEOIP_CITY_URL TELEMT_GEOIP_ASN_URL TELEMT_GEOIP_COUNTRY_URL
+	export TELEMT_WEB_USER TELEMT_WEB_SECRET_HEX TELEMT_WEB_CARRIER TELEMT_WEB_DECOY_UPSTREAM
 	export TELEMT_TUNING_PROFILE TELEMT_MIDDLE_PROXY_NAT_PROBE TELEMT_STUN_NAT_PROBE_CONCURRENCY TELEMT_MIDDLE_PROXY_POOL_SIZE
 	export TELEMT_ME_KEEPALIVE_ENABLED TELEMT_ME_KEEPALIVE_INTERVAL_SECS TELEMT_ME_KEEPALIVE_JITTER_SECS
 	export TELEMT_ME_RECONNECT_MAX_CONCURRENT_PER_DC TELEMT_ME_RECONNECT_BACKOFF_BASE_MS TELEMT_ME_RECONNECT_BACKOFF_CAP_MS TELEMT_ME_RECONNECT_FAST_RETRY_COUNT
@@ -239,8 +399,9 @@ ensure_env_defaults() {
 	export TELEMT_MAX_CONNECTIONS TELEMT_ACCEPT_PERMIT_TIMEOUT_MS TELEMT_MASK_SHAPE_HARDENING TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE
 	export TELEMT_MASK_SHAPE_BUCKET_FLOOR_BYTES TELEMT_MASK_SHAPE_BUCKET_CAP_BYTES TELEMT_MASK_SHAPE_ABOVE_CAP_BLUR TELEMT_MASK_RELAY_MAX_BYTES
 	export TELEMT_MASK_RELAY_TIMEOUT_MS TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS
-	export ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
+	export ENABLE_VLESS_GRPC ENABLE_HYSTERIA2 ENABLE_AMNEZIAWG UDP443_BACKEND XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE HYSTERIA2_MASQ_URL
 	export VISION_FALLBACK_HOST VISION_FALLBACK_PORT VISION_FALLBACK_XVER REALITY_TARGET_HOST REALITY_TARGET_PORT REALITY_TARGET_XVER
+	assert_uri_telemt_sub_unique
 }
 
 generate_htpasswd_if_needed() {
@@ -343,6 +504,25 @@ render_telemt_configs() {
 	backup_file "$telemt_panel_config"
 	TELEMT_PANEL_PASSWORD_HASH_RAW=${TELEMT_PANEL_PASSWORD_HASH//\$\$/\$}
 	export TELEMT_PANEL_PASSWORD_HASH_RAW
+	if [[ -z "${TELEMT_WEB_DECOY_UPSTREAM:-}" ]]; then
+		if install_lampac_enabled; then
+			TELEMT_WEB_DECOY_UPSTREAM="http://172.18.0.14:9118"
+		else
+			TELEMT_WEB_DECOY_UPSTREAM="http://172.18.0.5:${PORT_LOCAL_CADDYWEB}"
+		fi
+	fi
+	export TELEMT_WEB_DECOY_UPSTREAM
+	: "${TELEMT_WEB_USER:=web}"
+	: "${TELEMT_WEB_SECRET_HEX:=$(generate_hex_secret 16)}"
+	: "${TELEMT_WEB_CARRIER:=https}"
+	: "${URI_TELEMT_WEB:=$(generate_random_string 12 16)}"
+	: "${PORT_LOCAL_TELEMT_WEB:=18080}"
+	: "${URI_TELEMT_SUB:=$(generate_random_string 12 16)}"
+	: "${PORT_LOCAL_TELEMT_SUB:=8081}"
+	: "${TELEMT_SUBPAGE_SECRET:=$(generate_hex_secret 32)}"
+	export TELEMT_WEB_USER TELEMT_WEB_SECRET_HEX TELEMT_WEB_CARRIER URI_TELEMT_WEB PORT_LOCAL_TELEMT_WEB
+	export URI_TELEMT_SUB PORT_LOCAL_TELEMT_SUB TELEMT_SUBPAGE_SECRET
+	assert_uri_telemt_sub_unique
 	render_env_template "$templates/telemt.config.toml.template" "$telemt_config"
 	render_env_template "$templates/telemt-panel.config.toml.template" "$telemt_panel_config"
 	chmod 0600 "$telemt_config" "$telemt_panel_config" 2>/dev/null || true
@@ -359,6 +539,22 @@ render_mihomo_config() {
 		die "Mihomo config still contains an unsubstituted MIHOMO_SECRET placeholder"
 	fi
 	chmod 0600 "$mihomo_config" 2>/dev/null || true
+}
+
+# Render install.env from template after ensure_env_defaults (PORT_REMOTE_SSH, URIs, …).
+# Does not touch compose.d — safe before docker/compose exist. Idempotent.
+install_bootstrap_install_env() {
+	require_writable_target "$INSTALL_STATE_DIR" "installer state directory"
+	mkdir -p "$INSTALL_STATE_DIR/backups" 2>/dev/null || true
+	install_load_state_env
+	ensure_env_defaults
+	local templates install_env
+	templates=$(template_dir)
+	install_env="$INSTALL_STATE_DIR/install.env"
+	backup_file "$install_env"
+	render_env_template "$templates/install.env.template" "$install_env"
+	run_cmd env.bootstrap printf 'bootstrapped install.env defaults\n'
+	printf 'bootstrapped install.env: %s\n' "$install_env"
 }
 
 install_env_command() {

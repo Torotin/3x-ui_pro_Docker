@@ -19,6 +19,8 @@ plugin_config:
   user: nobody
   group: nobody
 cscli:
+  # Skip version.crowdsec.net lookup (often broken under DPI/IPv4 TLS interference).
+  hub_branch: master
   output: human
   color: auto
 

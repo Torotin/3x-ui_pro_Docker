@@ -17,7 +17,7 @@ fi
 
 : "${XUI_BIN_FOLDER:=/app/bin}"
 : "${URL_LIST_FILE:=}"
-: "${DOWNLOAD_GEO_DIRECT:=false}"
+: "${DOWNLOAD_GEO_DIRECT:=true}"
 
 URL_LIST_DEFAULT='https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geosite.dat|geosite_refilter.dat
 https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat|geosite_v2fly.dat
@@ -26,7 +26,7 @@ https://github.com/jameszeroX/zkeen-ip/releases/latest/download/zkeenip.dat|geoi
 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat|geoip_v2fly.dat
 https://github.com/1andrevich/Re-filter-lists/releases/latest/download/geoip.dat|geoip_refilter.dat
 https://github.com/zxc-rv/ad-filter/releases/latest/download/adlist.dat|adlist.dat
-https://github.com/runetfreedom/russia-v2ray-rules/releases/latest/download/geosite_RU.dat|geosite_RU.dat'
+https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat|geosite_RU.dat'
 
 # При разрешенном прямом режиме обновляет локальные dat-файлы геобаз до старта панели.
 main() {
@@ -50,13 +50,21 @@ main() {
 	fi
 
 	# Пустые строки и комментарии разрешают расширять список без изменения сценария.
+	# Ошибка одного URL не валит BeforeStart: оставляем существующий файл или идём дальше без него.
 	while IFS= read -r entry || [[ -n "$entry" ]]; do
 		entry=${entry#"${entry%%[![:space:]]*}"}
 		entry=${entry%"${entry##*[![:space:]]}"}
 		[[ -n "$entry" && "${entry:0:1}" != "#" ]] || continue
 		parse_download_entry "$entry"
 		dest="$XUI_BIN_FOLDER/$DOWNLOAD_NAME"
-		download_file_atomic "$DOWNLOAD_URL" "$dest" "$DOWNLOAD_SHA256"
+		if download_file_atomic "$DOWNLOAD_URL" "$dest" "$DOWNLOAD_SHA256"; then
+			continue
+		fi
+		if [[ -s "$dest" ]]; then
+			log WARN "Keeping existing $dest after download failure"
+		else
+			log WARN "Missing $dest and download failed; continuing without this geodata asset"
+		fi
 	done <"$source_file"
 
 	log INFO "Data files are up to date."

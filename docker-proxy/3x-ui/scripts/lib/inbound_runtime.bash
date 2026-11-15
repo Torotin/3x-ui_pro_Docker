@@ -247,12 +247,22 @@ ensure_xray_tls_certificate() {
 	if [[ -s "$cert_file" && -s "$key_file" ]]; then
 		return 0
 	fi
+	# Traefik PEM is usually RO in-container. Missing LE export (rate-limit /
+	# domain change) must not abort Before Vision — that leaves public :443 dark.
 	if [[ "$cert_file" == /etc/traefik/pem/* || "$key_file" == /etc/traefik/pem/* ]]; then
 		if [[ "$MODE" == "plan" ]]; then
-			record_change "PLAN: Traefik PEM certificate required for Xray TLS backend"
+			record_change "PLAN: Traefik PEM missing; self-signed fallback under /etc/x-ui"
 			return 0
 		fi
-		die "Traefik PEM certificate files are missing: cert=$cert_file key=$key_file"
+		log WARN "Traefik PEM missing (cert=$cert_file key=$key_file); using self-signed /etc/x-ui/xray-managed.{crt,key}"
+		cert_file=/etc/x-ui/xray-managed.crt
+		key_file=/etc/x-ui/xray-managed.key
+		XRAY_TLS_CERT_FILE=$cert_file
+		XRAY_TLS_KEY_FILE=$key_file
+		export XRAY_TLS_CERT_FILE XRAY_TLS_KEY_FILE
+		if [[ -s "$cert_file" && -s "$key_file" ]]; then
+			return 0
+		fi
 	fi
 	if [[ "$MODE" == "plan" ]]; then
 		record_change "PLAN: Xray TLS certificate generated at configured paths"
@@ -353,9 +363,53 @@ build_inbound_stream_json() {
 		build_grpc_stream_json "${URI_VLESS_GRPC:-/grpc}" "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}"
 	elif [[ "$kind" == "hysteria2" ]]; then
 		build_hysteria2_stream_json "$WEBDOMAIN" "${XRAY_TLS_CERT_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-cert.pem}" "${XRAY_TLS_KEY_FILE:-/etc/traefik/pem/${WEBDOMAIN:-localhost}-key.pem}" "${HYSTERIA2_STREAM_AUTH:-}"
+	elif [[ "$kind" == "amneziawg" ]]; then
+		jq -nc '{}'
+	elif [[ "$kind" == "mixed" ]]; then
+		jq -nc '{network:"tcp",security:"none"}'
 	else
 		die "Unsupported inbound kind: $kind"
 	fi
+}
+
+# Формирует settings AmneziaWG для create.
+# MTU 1280 — запас под path MTU 1400 (streambase) + AWG overhead.
+# Panel 3.11+ validates server.subnetIp + server.subnetCidr (CIDR-only "subnet"
+# yields empty subnetIp and fails: ParsePrefix("/24")).
+# server.* — equal S + RandomTrailers=on; панель дополняет ключи при create.
+build_amneziawg_settings_json() {
+	local desired=$1
+	jq -nc --argjson d "$desired" '
+      ($d.inbounds.amneziawg.mtu // 1280) as $mtu
+      | ($d.inbounds.amneziawg.subnet // "10.8.1.0/24") as $subnet
+      | ($d.inbounds.amneziawg.dns1 // "8.8.8.8") as $dns1
+      | ($d.inbounds.amneziawg.dns2 // "8.8.4.4") as $dns2
+      | ($subnet | capture("^(?<ip>[0-9a-fA-F:.]+)/(?<cidr>[0-9]+)$")) as $parts
+      | ($parts.ip // "10.8.1.0") as $subnet_ip
+      | (($parts.cidr // "24") | tonumber) as $subnet_cidr
+      | {
+          mtu: $mtu,
+          subnet: $subnet,
+          subnetIp: $subnet_ip,
+          subnetCidr: $subnet_cidr,
+          dns1: $dns1,
+          dns2: $dns2,
+          server: {
+            mtu: $mtu,
+            subnetIp: $subnet_ip,
+            subnetCidr: $subnet_cidr,
+            primaryDns: $dns1,
+            secondaryDns: $dns2,
+            s1: 16, s2: 16, s3: 16, s4: 16,
+            h1: "1", h2: "2", h3: "3", h4: "4",
+            jc: 4, jmin: 50, jmax: 120,
+            contentPaddingAddition: "0-16",
+            keepaliveTimeout: "9-17",
+            randomTrailers: true,
+            disableCookies: false,
+            i1: "<r 55>"
+          }
+        }'
 }
 
 # Формирует settings для Hysteria2, сохраняя существующий auth клиента.
@@ -403,6 +457,11 @@ build_inbound_components_json() {
 	if [[ "$kind" == "hysteria2" ]]; then
 		settings=$(build_hysteria2_settings_json "$current" "$desired")
 		HYSTERIA2_STREAM_AUTH=$(jq -r '.clients[0].auth // ""' <<<"$settings")
+	elif [[ "$kind" == "amneziawg" ]]; then
+		settings=$(build_amneziawg_settings_json "$desired")
+	elif [[ "$kind" == "mixed" ]]; then
+		# Docker-local Telemt egress: SOCKS+HTTP, no auth, all interfaces.
+		settings=$(jq -nc '{auth:"noauth",udp:true,accounts:[]}')
 	else
 		settings=$(build_vless_settings_json "$kind" "$current")
 	fi
@@ -410,22 +469,32 @@ build_inbound_components_json() {
 	if [[ "$kind" == "hysteria2" ]]; then
 		HYSTERIA2_STREAM_AUTH=
 	fi
-	if [[ "$kind" == "hysteria2" ]]; then
-		sniffing=$(jq -nc '{enabled:false,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}')
+	if [[ "$kind" == "amneziawg" ]]; then
+		sniffing=$(jq -nc '{}')
+	elif [[ "$kind" == "hysteria2" ]]; then
+		# routeOnly keeps the client destination port (e.g. admin :9443) while still
+		# allowing sniffed SNI/Host to drive routing. destOverride without routeOnly
+		# often rewrites TLS destinations to :443 and misses admin-traefik port rules.
+		sniffing=$(jq -nc '{enabled:false,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
+	elif [[ "$kind" == "mixed" ]]; then
+		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	else
-		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}')
+		sniffing=$(jq -nc '{enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:true}')
 	fi
 	allocate=$(jq -nc '{}')
+	local listen=""
+	[[ "$kind" == "mixed" ]] && listen="0.0.0.0"
 	jq -nc \
 		--argjson port "$port" \
 		--arg remark "$remark" \
 		--arg protocol "$protocol" \
+		--arg listen "$listen" \
 		--argjson settings "$settings" \
 		--argjson stream "$stream" \
 		--argjson sniffing "$sniffing" \
 		--argjson allocate "$allocate" '{
           up:0, down:0, total:0, remark:$remark, enable:true, expiryTime:0,
-          listen:"", port:$port, protocol:$protocol, settings:$settings,
+          listen:$listen, port:$port, protocol:$protocol, settings:$settings,
           streamSettings:$stream, sniffing:$sniffing, allocate:$allocate
         }'
 }
@@ -484,8 +553,41 @@ ensure_inbound() {
 		xui_add_inbound "$(inbound_components_json "$desired_components")" || die "Failed to add $kind inbound."
 		http_success_json || die "$kind inbound add failed: $(http_body)"
 		RESTART_XRAY_REQUIRED=1
+		# shellcheck disable=SC2034 # Entrypoint reads this shared result after ensure_inbound returns.
 		ENSURE_INBOUND_ID=$(jq -r '.obj.id // empty' "$HTTP_BODY_FILE")
 	fi
+}
+
+# Удаляет управляемый inbound неактивного UDP443-бэкенда, если он найден по порту или remark.
+delete_managed_inbound_kind() {
+	local kind=$1 desired=$2 inbounds id expected_remarks remark protocol port inbound
+	inbounds=$(inbounds_json)
+	expected_remarks=$(managed_inbound_remarks_json "$kind" "$desired")
+	port=$(jq -r ".inbounds.$kind.port" <<<"$desired")
+	protocol=$(jq -r ".inbounds.$kind.protocol" <<<"$desired")
+	id=$(find_inbound_by_port "$inbounds" "$port" "$protocol")
+	if [[ -z "$id" ]]; then
+		id=$(jq -r --argjson remarks "$expected_remarks" '
+          .[] | select(.remark as $r | $remarks | index($r)) | .id' <<<"$inbounds" | head -n1)
+	fi
+	[[ -n "$id" ]] || return 0
+	inbound=$(jq -c --arg id "$id" '.[] | select((.id|tostring)==$id)' <<<"$inbounds")
+	remark=$(jq -r '.remark // empty' <<<"$inbound")
+	jq -ne --arg r "$remark" --argjson remarks "$expected_remarks" '
+      ($remarks | index($r)) != null
+    ' >/dev/null \
+		|| {
+			log WARN "skip delete id=$id remark=$remark (not managed $kind)"
+			return 0
+		}
+	if [[ "$MODE" == "plan" ]]; then
+		record_change "PLAN: delete managed $kind inbound id=$id"
+		return 0
+	fi
+	record_change "APPLY: delete managed $kind inbound id=$id"
+	xui_del_inbound "$id" || die "Failed to delete $kind inbound id=$id"
+	http_success_json || die "delete $kind failed: $(http_body)"
+	RESTART_XRAY_REQUIRED=1
 }
 
 # Читает полный inbound по ID.
@@ -505,8 +607,10 @@ update_inbound_components() {
 }
 
 # Создает либо синхронизирует одного общего клиента для всех управляемых inbound.
+# UDP443: передать активный hysteria2_id или amneziawg_id (второй пустой) — shared subId должен
+# включать все скриптовые inbound'ы (VLESS + активный UDP443 backend).
 ensure_shared_client() {
-	local vision_id=$1 xhttp_id=$2 grpc_id=$3 hysteria2_id=$4 desired=$5
+	local vision_id=$1 xhttp_id=$2 grpc_id=$3 hysteria2_id=$4 amneziawg_id=$5 desired=$6
 	local clients email sub_id flow vision_flow xhttp_flow current client_id client_password client_auth client target_ids missing_ids attach_payload changed=0 created=0
 	ENSURE_SHARED_CLIENT_ID=
 	ENSURE_SHARED_CLIENT_PASSWORD=
@@ -516,8 +620,13 @@ ensure_shared_client() {
 	flow=$(jq -r '.clients.shared.flow' <<<"$desired")
 	vision_flow=$(jq -r '.clients.shared.visionFlow' <<<"$desired")
 	xhttp_flow=$(jq -r '.clients.shared.xhttpFlow' <<<"$desired")
-	target_ids=$(jq -nc --arg vision "$vision_id" --arg xhttp "$xhttp_id" --arg grpc "$grpc_id" --arg hysteria2 "$hysteria2_id" '
-      [$vision, $xhttp, $grpc, $hysteria2] | map(select(length > 0) | tonumber)
+	target_ids=$(jq -nc \
+		--arg vision "$vision_id" \
+		--arg xhttp "$xhttp_id" \
+		--arg grpc "$grpc_id" \
+		--arg hysteria2 "$hysteria2_id" \
+		--arg amneziawg "$amneziawg_id" '
+      [$vision, $xhttp, $grpc, $hysteria2, $amneziawg] | map(select(length > 0) | tonumber)
     ')
 	clients=$(clients_json)
 	current=$(jq -c --arg email "$email" '.[]? | select(.email == $email)' <<<"$clients" | head -n1)
@@ -613,13 +722,96 @@ ensure_shared_client() {
 	ensure_vless_stream "$xhttp_id" xhttp "XHTTP"
 }
 
+# 3x-ui first-class clients.flow is a single field. updateClient(flow="") wipes
+# Vision inbound flow, and updateInbound cannot restore it while clients.flow is
+# empty. Force per-inbound flows in SQLite after API sync.
+repair_inbound_vless_client_flows_db() {
+	local vision_id=$1 xhttp_id=$2 grpc_id=$3 desired=$4
+	local email vision_flow xhttp_flow grpc_flow db=${XUI_DB_PATH:-/etc/x-ui/x-ui.db} changed
+	[[ "$MODE" == "apply" ]] || return 0
+	[[ -s "$db" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || {
+		log WARN "Inbound VLESS flow repair skipped: python3 is unavailable."
+		return 0
+	}
+	email=$(jq -r '.clients.shared.email' <<<"$desired")
+	vision_flow=$(jq -r '.clients.shared.visionFlow' <<<"$desired")
+	xhttp_flow=$(jq -r '.clients.shared.xhttpFlow' <<<"$desired")
+	grpc_flow=$(jq -r '.clients.shared.grpcFlow' <<<"$desired")
+	changed=$(
+		XUI_DB_PATH="$db" \
+			REPAIR_EMAIL="$email" \
+			REPAIR_VISION_ID="$vision_id" \
+			REPAIR_XHTTP_ID="$xhttp_id" \
+			REPAIR_GRPC_ID="$grpc_id" \
+			REPAIR_VISION_FLOW="$vision_flow" \
+			REPAIR_XHTTP_FLOW="$xhttp_flow" \
+			REPAIR_GRPC_FLOW="$grpc_flow" \
+			python3 - <<'PY'
+import json
+import os
+import sqlite3
+
+db = os.environ.get("XUI_DB_PATH", "/etc/x-ui/x-ui.db")
+email = os.environ.get("REPAIR_EMAIL", "")
+targets = []
+for key, flow_key in (
+    ("REPAIR_VISION_ID", "REPAIR_VISION_FLOW"),
+    ("REPAIR_XHTTP_ID", "REPAIR_XHTTP_FLOW"),
+    ("REPAIR_GRPC_ID", "REPAIR_GRPC_FLOW"),
+):
+    inbound_id = (os.environ.get(key) or "").strip()
+    if not inbound_id:
+        continue
+    targets.append((int(inbound_id), os.environ.get(flow_key, "")))
+
+con = sqlite3.connect(db)
+cur = con.cursor()
+changed = 0
+for inbound_id, flow in targets:
+    row = cur.execute("select settings from inbounds where id=?", (inbound_id,)).fetchone()
+    if not row or not row[0]:
+        continue
+    try:
+        obj = json.loads(row[0])
+    except Exception:
+        continue
+    dirty = False
+    for client in obj.get("clients") or []:
+        if client.get("email") != email:
+            continue
+        if (client.get("flow") or "") != flow:
+            client["flow"] = flow
+            dirty = True
+    if dirty:
+        cur.execute(
+            "update inbounds set settings=? where id=?",
+            (json.dumps(obj, separators=(",", ":")), inbound_id),
+        )
+        changed += 1
+con.commit()
+con.close()
+print(changed)
+PY
+	) || {
+		log WARN "Inbound VLESS flow repair skipped: sqlite/python update failed."
+		return 0
+	}
+	if [[ "${changed:-0}" != "0" ]]; then
+		log INFO "Repaired VLESS client flow in $changed inbound settings row(s)."
+		# shellcheck disable=SC2034 # Entrypoint restart helpers read this shared runtime flag.
+		RESTART_XRAY_REQUIRED=1
+	fi
+}
+
 repair_shared_client_after_inbound_sync() {
-	local desired=$1 email sub_id flow
+	local desired=$1 vision_id=${2:-} xhttp_id=${3:-} grpc_id=${4:-} email sub_id flow
 	[[ -n "${ENSURE_SHARED_CLIENT_ID:-}" ]] || return 0
 	email=$(jq -r '.clients.shared.email' <<<"$desired")
 	sub_id=$(jq -r '.clients.shared.subId' <<<"$desired")
 	flow=$(jq -r '.clients.shared.flow' <<<"$desired")
 	repair_shared_client_db "$email" "$ENSURE_SHARED_CLIENT_ID" "$sub_id" "$flow" "$ENSURE_SHARED_CLIENT_PASSWORD" "$ENSURE_SHARED_CLIENT_AUTH"
+	repair_inbound_vless_client_flows_db "$vision_id" "$xhttp_id" "$grpc_id" "$desired"
 }
 
 # Синхронизирует VLESS client object внутри конкретного inbound settings.
@@ -696,6 +888,95 @@ ensure_grpc_client() {
 	if plan_or_apply "gRPC stream synchronized"; then
 		update_inbound_components "$grpc_id" "$desired_components"
 	fi
+}
+
+# Синхронизирует MTU + 3.1 hygiene (equal S, RandomTrailers=on) на живом AmneziaWG inbound.
+# Ключи (private/public/headerProtection) сохраняются; clients[].keepAlive := 25 в settings.
+sync_amneziawg_profile() {
+	local amneziawg_id=$1 desired=$2 inbound settings mtu desired_settings patched current_components desired_components
+	[[ -n "$amneziawg_id" ]] || return 0
+	mtu=$(jq -r '.inbounds.amneziawg.mtu // 1280' <<<"$desired")
+	inbound=$(inbound_by_id_json "$amneziawg_id")
+	settings=$(json_field_object "$inbound" settings)
+	desired_settings=$(build_amneziawg_settings_json "$desired")
+	patched=$(jq -c --argjson desired "$desired_settings" --argjson old "$settings" --argjson mtu "$mtu" '
+      ($old.server // {}) as $os
+      | .mtu = ($desired.mtu // $mtu)
+      | .subnet = (.subnet // $desired.subnet)
+      | .subnetIp = (.subnetIp // $desired.subnetIp // $os.subnetIp)
+      | .subnetCidr = (.subnetCidr // $desired.subnetCidr // $os.subnetCidr)
+      | .dns1 = (.dns1 // $desired.dns1)
+      | .dns2 = (.dns2 // $desired.dns2)
+      | .server = (
+          $os + $desired.server
+          | .privateKey = ($os.privateKey // $os.secretKey)
+          | .publicKey = $os.publicKey
+          | .headerProtectionKey = $os.headerProtectionKey
+          | .subnetIp = ($os.subnetIp // $desired.server.subnetIp)
+          | .subnetCidr = ($os.subnetCidr // $desired.server.subnetCidr)
+          | .primaryDns = ($os.primaryDns // $desired.server.primaryDns // $desired.dns1)
+          | .secondaryDns = ($os.secondaryDns // $desired.server.secondaryDns // $desired.dns2)
+        )
+      | .clients = ((.clients // []) | map(.keepAlive = 25))
+    ' <<<"$settings")
+	if jq -e --argjson desired "$patched" '
+      (.mtu == $desired.mtu)
+      and (.server.s1 == $desired.server.s1)
+      and (.server.s2 == $desired.server.s2)
+      and (.server.s3 == $desired.server.s3)
+      and (.server.s4 == $desired.server.s4)
+      and (.server.randomTrailers == $desired.server.randomTrailers)
+      and ((.server.mtu // null) == $desired.server.mtu)
+    ' <<<"$settings" >/dev/null; then
+		log INFO "AmneziaWG profile already matches desired hygiene (mtu/S/trailers)."
+		return 0
+	fi
+	current_components=$(current_inbound_components_json "$inbound")
+	desired_components=$(jq -c --argjson settings "$patched" '.settings = $settings' <<<"$current_components")
+	if plan_or_apply "AmneziaWG profile synced id=$amneziawg_id mtu=$mtu trailers=on"; then
+		update_inbound_components "$amneziawg_id" "$desired_components"
+	fi
+}
+
+# Возвращает email управляемого клиента AmneziaWG (отдельно от shared VLESS).
+amneziawg_client_email() {
+	local desired=$1 shared_email
+	shared_email=$(jq -r '.clients.shared.email' <<<"$desired")
+	printf '%s' "${CLIENT_EMAIL_AMNEZIAWG:-${shared_email}-amneziawg}"
+}
+
+# Формирует клиентский объект AmneziaWG для POST /panel/api/clients/add.
+amneziawg_client_api_json() {
+	local email=$1 sub_id=$2
+	jq -nc --arg email "$email" --arg sid "$sub_id" '{
+      email:$email, limitIp:0, totalGB:0, expiryTime:0, enable:true, tgId:0,
+      subId:$sid, group:"", comment:"", reset:0
+    }'
+}
+
+# Создаёт клиента AmneziaWG через clients/add, если на inbound ещё нет клиентов.
+ensure_amneziawg_client() {
+	local amneziawg_id=$1 desired=$2 inbound settings clients email sub_id target_ids payload
+	[[ -n "$amneziawg_id" ]] || return 0
+	email=$(amneziawg_client_email "$desired")
+	sub_id=$(jq -r '.clients.shared.subId' <<<"$desired")
+	inbound=$(inbound_by_id_json "$amneziawg_id")
+	settings=$(json_field_object "$inbound" settings)
+	clients=$(jq -c '(.clients // .server.clients // [])' <<<"$settings")
+	if [[ "$(jq 'length' <<<"$clients")" -gt 0 ]]; then
+		log INFO "AmneziaWG inbound already has client configuration; preserving existing clients."
+		return 0
+	fi
+	target_ids=$(jq -nc --arg id "$amneziawg_id" '[($id|tonumber)]')
+	payload=$(vless_client_create_payload_json "$target_ids" "$(amneziawg_client_api_json "$email" "$sub_id")")
+	if [[ "$MODE" == "plan" ]]; then
+		record_change "PLAN: AmneziaWG client created email=$email inbound=$amneziawg_id"
+		return 0
+	fi
+	record_change "APPLY: AmneziaWG client created email=$email inbound=$amneziawg_id"
+	xui_add_client "$payload" || die "Failed to add AmneziaWG client."
+	http_success_json || die "AmneziaWG client add failed: $(api_error_summary)"
+	RESTART_XRAY_REQUIRED=1
 }
 
 # Синхронизирует Hysteria2 client auth внутри inbound settings.

@@ -462,6 +462,20 @@ install_doctor_check_state() {
 	else
 		doctor_record env WARN "installer env file not found: $INSTALL_STATE_DIR/install.env" "$next_action"
 	fi
+	if [[ -n "${WEBDOMAIN:-}" ]]; then
+		if [[ "$WEBDOMAIN" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ || "$WEBDOMAIN" == *:* ]]; then
+			doctor_issue env "WEBDOMAIN is an IP address ($WEBDOMAIN); Let's Encrypt and Telemt require a hostname" "run env (auto <ipv4>.sslip.io) or set a DNS name"
+		elif [[ "$WEBDOMAIN" == *.sslip.io ]]; then
+			doctor_ok_detail "WEBDOMAIN uses sslip.io fallback: $WEBDOMAIN"
+		else
+			doctor_ok_detail "WEBDOMAIN looks like a hostname: $WEBDOMAIN"
+		fi
+	fi
+	if [[ -n "${WEBDOMAIN:-}" && -n "${XRAY_TLS_CERT_FILE:-}" && "$XRAY_TLS_CERT_FILE" == /etc/traefik/pem/* ]]; then
+		if [[ "$XRAY_TLS_CERT_FILE" != "/etc/traefik/pem/${WEBDOMAIN}-cert.pem" ]]; then
+			doctor_issue env "XRAY_TLS_CERT_FILE ($XRAY_TLS_CERT_FILE) does not match WEBDOMAIN ($WEBDOMAIN); AfterStart will abort before Vision" "run env"
+		fi
+	fi
 	if ((configured == checked)) && [[ -n "${HT_PASS_ENCODED:-}" || -n "${PASS_WEB:-}" ]] && [[ -f "$INSTALL_STATE_DIR/install.env" ]]; then
 		doctor_record env OK "installer state: configured"
 	else
@@ -488,10 +502,11 @@ install_doctor_check_user() {
 		return 0
 	fi
 	doctor_record user OK "SSH user exists: $USER_SSH"
-	# Soft WARN only: docker group membership is optional convenience.
+	# Soft WARN: membership in /etc/group (id -nG USER). Active SSH sessions still
+	# need re-login/newgrp before docker.sock works even when this check is OK.
 	if command -v docker >/dev/null 2>&1; then
 		if id -nG "$USER_SSH" 2>/dev/null | grep -qw docker; then
-			doctor_ok_detail "user $USER_SSH is in docker group"
+			doctor_ok_detail "user $USER_SSH is in docker group (re-login if sock still denied)"
 		else
 			doctor_record user WARN "user $USER_SSH is not in docker group" "$next_action"
 		fi
@@ -517,7 +532,8 @@ install_doctor_check_firewall() {
 		doctor_issue firewall "ufw is not installed" "$next_action"
 		return 0
 	fi
-	status_out=$(ufw status 2>/dev/null || true)
+	# Prefer terse status line; full `ufw status` can be noisy under verbose doctor.
+	status_out=$(ufw status 2>/dev/null | head -n 5 || true)
 	run_cmd doctor.firewall ufw status >/dev/null || true
 	if [[ "${HOST_IP_MODE:-ipv4}" == "dual" ]]; then
 		if [[ -f "$ufw_default" ]] && grep -q '^IPV6=yes' "$ufw_default"; then
@@ -567,12 +583,13 @@ install_doctor_check_ssh() {
 
 _doctor_crowdsec_ip6_path_present() {
 	if command -v ip6tables >/dev/null 2>&1; then
-		if ip6tables -L -n 2>/dev/null | grep -qiE 'crowdsec|CROWDSEC'; then
+		# Avoid `ip6tables | grep -q` under pipefail (SIGPIPE/141).
+		if [[ -n "$(ip6tables -L -n 2>/dev/null | grep -iE 'crowdsec|CROWDSEC' || true)" ]]; then
 			return 0
 		fi
 	fi
 	if command -v ipset >/dev/null 2>&1; then
-		if ipset list -n 2>/dev/null | grep -q 'crowdsec6-blacklists'; then
+		if [[ -n "$(ipset list -n 2>/dev/null | grep 'crowdsec6-blacklists' || true)" ]]; then
 			return 0
 		fi
 	fi
@@ -632,10 +649,11 @@ install_doctor_check_network() {
 		if [[ "$ra_all" == "0" || "$ra_default" == "0" ]]; then
 			doctor_issue network "dual host accept_ra is 0 on all or default (expected 2 with forwarding)" "$next_action"
 		fi
-		if ! ip -6 -o addr show scope global 2>/dev/null | grep -q .; then
+		# Avoid `ip | grep -q` under pipefail (SIGPIPE/141 false negative).
+		if [[ -z "$(ip -6 -o addr show scope global 2>/dev/null || true)" ]]; then
 			doctor_issue network "dual host has no global IPv6 address" "$next_action"
 		fi
-		if ! ip -6 route show default 2>/dev/null | grep -q .; then
+		if [[ -z "$(ip -6 route show default 2>/dev/null || true)" ]]; then
 			doctor_issue network "dual host has no default IPv6 route" "$next_action"
 		fi
 		if ! _doctor_crowdsec_ip6_path_present; then
@@ -775,13 +793,11 @@ install_doctor_check_containers() {
 	# Optional fragments (*.yml.disable or ENABLE_*=false) must not be required.
 	local -a containers=(
 		adguard
-		arcane
 		caddy
 		crowdsec
 		crowdsec_firewall_bouncer
 		homepage
 		logrotate
-		tor-proxy
 		traefik
 		traefik-acme-exporter
 		usque
@@ -791,9 +807,15 @@ install_doctor_check_containers() {
 	if [[ -f "$INSTALL_ROOT/compose.d/01-dockcheck.yml" || -f "$INSTALL_ROOT/compose.d/01-dockcheck.yaml" ]]; then
 		containers+=(dockcheck)
 	fi
-	# Legacy dozzle: only when active 07-dozzle.yml/.yaml still exists
-	if [[ -f "$INSTALL_ROOT/compose.d/07-dozzle.yml" || -f "$INSTALL_ROOT/compose.d/07-dozzle.yaml" ]]; then
+	# Arcane (optional 07-arcane); legacy dozzle filename still supported.
+	if [[ -f "$INSTALL_ROOT/compose.d/07-arcane.yml" || -f "$INSTALL_ROOT/compose.d/07-arcane.yaml" ]]; then
+		containers+=(arcane)
+	elif [[ -f "$INSTALL_ROOT/compose.d/07-dozzle.yml" || -f "$INSTALL_ROOT/compose.d/07-dozzle.yaml" ]]; then
 		containers+=(dozzle)
+	fi
+	# tor-proxy: only when active 11-tor-proxy.yml/.yaml exists
+	if [[ -f "$INSTALL_ROOT/compose.d/11-tor-proxy.yml" || -f "$INSTALL_ROOT/compose.d/11-tor-proxy.yaml" ]]; then
+		containers+=(tor-proxy)
 	fi
 	if install_lampac_enabled && [[ -f "$INSTALL_ROOT/compose.d/14-lampac.yml" || -f "$INSTALL_ROOT/compose.d/14-lampac.yaml" ]]; then
 		containers+=(lampac)

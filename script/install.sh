@@ -56,7 +56,7 @@ usage() {
 	cat <<'USAGE'
 Usage:
   install.sh doctor [host|stack] [--verbose] [--strict]
-  install.sh wizard
+  install.sh wizard [--yes|-y]
   install.sh run <step...> [--destroy-docker-data] [--apply] [--yes]
   install.sh self-update [--branch <branch>] [--check] [--yes] [--force]
   install.sh uninstall [--plan|--apply --yes] [--purge-docker-data]

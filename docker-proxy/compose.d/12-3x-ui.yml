@@ -2,7 +2,10 @@ services:
   3x-ui:
     image: torotin/3x-ui:latest
     container_name: 3x-ui
-    hostname: ${WEBDOMAIN}
+    # Keep hostname distinct from WEBDOMAIN so extra_hosts can map WEBDOMAIN → Traefik
+    # for Hysteria2 masquerade (https://${WEBDOMAIN}:4443/). hostname=WEBDOMAIN made
+    # Docker register the name on this container and shadowed that mapping.
+    hostname: 3x-ui
     restart: always
     depends_on:
       usque:
@@ -25,10 +28,16 @@ services:
         ipv6_address: fd00:dead:beef:13::12
     dns:
       - 172.19.0.10
+    # WEBDOMAIN / traefik → Traefik websecure (:4443) for Hysteria2 masquerade fetches.
+    extra_hosts:
+      - "${WEBDOMAIN}:172.18.0.6"
+      - "traefik:172.18.0.6"
     volumes:
       - ../3x-ui/scripts/lib:/mnt/sh/lib:rw
       - ../3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
       - ../3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
+      # Mihomo client Clash routing overlay → inline subClashRules (not a public URL).
+      - ../3x-ui/client-routing:/mnt/sh/client-routing:ro
       - ../3x-ui/configs/x-ui.db:/etc/x-ui/x-ui.db:rw
       # Do not bind-mount config.json as a file: 3x-ui atomically renames
       # bin/.config-*.tmp -> bin/config.json, which fails with EBUSY on a
@@ -42,7 +51,7 @@ services:
       - ../3x-ui/3x-ui.env
     ports:
       - "443:${PORT_LOCAL_VISION:-443}/tcp"
-      - "443:${PORT_LOCAL_HYSTERIA:-443}/udp"
+      - "443:${PORT_LOCAL_UDP443:-443}/udp"
     environment:
       # - XUI_LOG_LEVEL=debug
       - XUI_LOG_FOLDER=/var/log/3x-ui
@@ -104,33 +113,41 @@ services:
 
       # ---------- Роутеры (HTTPS) ----------
 
-      # Health-чек панели
-      - traefik.http.routers.3xui-health.rule=Host(`${WEBDOMAIN}`) && Path(`/${URI_PANEL_PATH}/health`)
-      - traefik.http.routers.3xui-health.entrypoints=websecure
-      - traefik.http.routers.3xui-health.middlewares=bouncer@file,3xui-panel-chain
-      - traefik.http.routers.3xui-health.tls.certresolver=le
+      # NOTE: do NOT claim root PathPrefix(`/assets/`) on public WEBDOMAIN.
+      # Panel UI moved to private admin Host; keep panel webBasePath under URI_PANEL_PATH.
+
+      # Health-чек панели (admin plane)
+      - traefik.http.routers.3xui-health.rule=Host(`3x-ui.${WEBDOMAIN}`) && Path(`/${URI_PANEL_PATH}/health`)
+      - traefik.http.routers.3xui-health.entrypoints=admin
+      - traefik.http.routers.3xui-health.middlewares=3xui-panel-chain
+      - traefik.http.routers.3xui-health.tls=true
       - traefik.http.routers.3xui-health.service=3xui-panel-svc
       - traefik.http.routers.3xui-health.priority=9995
 
-      # NOTE: do NOT claim root PathPrefix(`/assets/`) here.
-      # Modern 3x-ui serves hashed UI assets under `/${URI_PANEL_PATH}/assets/...`
-      # (covered by 3xui-panel). A root `/assets/` router returns 404 from the
-      # subscribe port and steals the Caddy decoy site's /assets/* (404 for visitors).
+      # Root → panel path (opening https://3x-ui.${WEBDOMAIN}:9443/ otherwise 404)
+      - traefik.http.middlewares.3xui-root-redirect.redirectregex.regex=^(https?)://([^/]+)/?$$
+      - traefik.http.middlewares.3xui-root-redirect.redirectregex.replacement=$${1}://$${2}/${URI_PANEL_PATH}/
+      - traefik.http.middlewares.3xui-root-redirect.redirectregex.permanent=false
+      - traefik.http.routers.3xui-root.rule=Host(`3x-ui.${WEBDOMAIN}`) && Path(`/`)
+      - traefik.http.routers.3xui-root.entrypoints=admin
+      - traefik.http.routers.3xui-root.middlewares=3xui-root-redirect
+      - traefik.http.routers.3xui-root.tls=true
+      - traefik.http.routers.3xui-root.service=3xui-panel-svc
+      - traefik.http.routers.3xui-root.priority=9996
 
-      # Панель администратора
-      - traefik.http.routers.3xui-panel.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)
-      - traefik.http.routers.3xui-panel.entrypoints=websecure
-      - traefik.http.routers.3xui-panel.middlewares=bouncer@file,3xui-panel-chain
-      - traefik.http.routers.3xui-panel.tls.certresolver=le
+      # Панель администратора (admin plane)
+      - traefik.http.routers.3xui-panel.rule=Host(`3x-ui.${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}`)
+      - traefik.http.routers.3xui-panel.entrypoints=admin
+      - traefik.http.routers.3xui-panel.middlewares=3xui-panel-chain
+      - traefik.http.routers.3xui-panel.tls=true
       - traefik.http.routers.3xui-panel.service=3xui-panel-svc
       - traefik.http.routers.3xui-panel.priority=9997
 
-      # Bearer-token API for bots and remote 3x-ui nodes. Keep UI/session
-      # routes on the BasicAuth-protected panel router above.
-      - traefik.http.routers.3xui-api.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}/panel/api`)
-      - traefik.http.routers.3xui-api.entrypoints=websecure
-      - traefik.http.routers.3xui-api.middlewares=bouncer@file,3xui-api-chain
-      - traefik.http.routers.3xui-api.tls.certresolver=le
+      # Bearer-token API for bots and remote 3x-ui nodes (admin plane)
+      - traefik.http.routers.3xui-api.rule=Host(`3x-ui.${WEBDOMAIN}`) && PathPrefix(`/${URI_PANEL_PATH}/panel/api`)
+      - traefik.http.routers.3xui-api.entrypoints=admin
+      - traefik.http.routers.3xui-api.middlewares=3xui-api-chain
+      - traefik.http.routers.3xui-api.tls=true
       - traefik.http.routers.3xui-api.service=3xui-panel-svc
       - traefik.http.routers.3xui-api.priority=10001
 
@@ -144,16 +161,21 @@ services:
 
       # Optional HTTPS endpoint used by Traefik websecure (:4443) and by
       # non-Vision TLS traffic after the Reality -> Telemt fallback chain.
+      # Inject trust marker so Xray sockopt.trustedXForwardedFor accepts Traefik XFF.
+      - traefik.http.middlewares.xhttp3xui-xff.headers.customRequestHeaders.X-Xray-Trusted-Proxy=1
       - traefik.http.routers.xhttp3xui.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_XHTTP}`)
       - traefik.http.routers.xhttp3xui.entrypoints=websecure
+      - traefik.http.routers.xhttp3xui.middlewares=xhttp3xui-xff
       - traefik.http.routers.xhttp3xui.tls.certresolver=le
       - traefik.http.routers.xhttp3xui.service=xhttp3xui-svc
       - traefik.http.routers.xhttp3xui.priority=9999
       - traefik.http.routers.xhttp3xui.observability.accessLogs=false
 
       # VLESS gRPC backend uses TLS inside Xray; Traefik re-opens TLS upstream.
+      - traefik.http.middlewares.grpc3xui-xff.headers.customRequestHeaders.X-Xray-Trusted-Proxy=1
       - traefik.http.routers.grpc3xui.rule=Host(`${WEBDOMAIN}`) && PathPrefix(`${URI_VLESS_GRPC}`)
       - traefik.http.routers.grpc3xui.entrypoints=websecure
+      - traefik.http.routers.grpc3xui.middlewares=grpc3xui-xff
       - traefik.http.routers.grpc3xui.tls.certresolver=le
       - traefik.http.routers.grpc3xui.service=grpc3xui-svc
       - traefik.http.routers.grpc3xui.priority=9999
