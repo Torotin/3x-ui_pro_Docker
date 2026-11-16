@@ -121,7 +121,7 @@ def _value_as_compare_string(value: Any) -> str:
         return ""
     if isinstance(value, bool):
         return str(value).lower()
-    return str(value)
+    return str(value).rstrip("\n")
 
 
 def _coerce_env_on_current(key: str, current_val: Any, env_val: str) -> Any:
@@ -215,7 +215,7 @@ def panel_settings_json(current: Mapping[str, Any], env: Mapping[str, str]) -> d
 def ensure_panel_settings(
     api: PanelApi,
     env: Mapping[str, str],
-    desired: ApplyStats,
+    stats: ApplyStats,
     mode: str,
 ) -> None:
     """Compare managed panel settings and update when they diverge from env."""
@@ -232,14 +232,14 @@ def ensure_panel_settings(
         return
 
     body = panel_settings_json(current, env)
-    if not plan_or_apply(mode, desired, "panel settings updated"):
+    if not plan_or_apply(mode, stats, "panel settings updated"):
         return
 
     api.update_panel_settings(body)
     if not api.session.success_json():
         raise PanelApplyError(f"Panel settings update failed: {api.session.body()}")
 
-    desired.restart_panel_required = True
+    stats.restart_panel_required = True
 
 
 def update_admin_credentials_if_needed(

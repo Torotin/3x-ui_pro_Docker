@@ -88,6 +88,17 @@ class TestPanelJsonHelpers(unittest.TestCase):
         body = panel_settings_json(current, env)
         self.assertEqual(body["panelOutbound"], "direct")
 
+    def test_trailing_newline_does_not_force_panel_update(self) -> None:
+        current = {
+            **_panel_fixture(),
+            "subClashRules": "hosts:\n  example.test: 1.2.3.4\n",
+            "panelOutbound": "direct",
+        }
+        env = {"subClashRules": "hosts:\n  example.test: 1.2.3.4"}
+        desired = panel_desired_json(current, env)
+        projected = panel_current_managed_json(current)
+        self.assertEqual(desired["subClashRules"], projected["subClashRules"])
+
 
 class TestPlanOrApply(unittest.TestCase):
     def test_plan_records_without_allowing_apply(self) -> None:
