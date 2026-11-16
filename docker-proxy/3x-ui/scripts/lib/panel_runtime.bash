@@ -28,8 +28,9 @@ panel_settings_json() {
 	' <<<"$merged")
 	if [[ -z "${panelOutbound:-}" ]]; then
 		# Prefer direct: RU/local subscription hosts are reachable without WARP,
-		# while panelOutbound=usque breaks outbound-sub refresh to those peers.
-		merged=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "direct" else . end' <<<"$merged")
+		# while panelOutbound=usque breaks outbound-sub refresh / geofile egress bridge races.
+		# Empty env must force direct even when DB still has usque.
+		merged=$(jq -c '.panelOutbound = "direct"' <<<"$merged")
 	fi
 	printf '%s' "$merged"
 }
@@ -55,7 +56,7 @@ panel_desired_json() {
 		if ((.ldapPort|tostring|tonumber?) // 0) < 1 then .ldapPort = "389" else . end
 	' <<<"$desired")
 	if [[ -z "${panelOutbound:-}" ]]; then
-		desired=$(jq -c 'if ((.panelOutbound // "") | length) == 0 then .panelOutbound = "direct" else . end' <<<"$desired")
+		desired=$(jq -c '.panelOutbound = "direct"' <<<"$desired")
 	fi
 	if clear_sub_json_routing_rules_requested; then
 		desired=$(jq -c '.subJsonRoutingRules = ""' <<<"$desired")
@@ -117,8 +118,47 @@ update_admin_credentials_if_needed() {
 	fi
 }
 
+# Ждёт loopback panel-egress SOCKS, если он есть в running config.
+wait_panel_egress_ready() {
+	local cfg=${XRAY_RUNNING_CONFIG:-/app/bin/config.json}
+	local timeout=${GEOFILES_EGRESS_WAIT_SECONDS:-20}
+	local deadline host port
+	deadline=$((SECONDS + timeout))
+	while ((SECONDS <= deadline)); do
+		if [[ ! -f "$cfg" ]]; then
+			sleep 1
+			continue
+		fi
+		host=$(jq -r '
+			.inbounds[]?
+			| select((.tag // "") == "panel-egress")
+			| (.listen // "127.0.0.1")
+			| if . == null or . == "" then "127.0.0.1"
+			  elif type == "string" then (sub("^\""; "") | sub("\"$"; ""))
+			  else tostring end
+		' "$cfg" 2>/dev/null | head -n1 || true)
+		port=$(jq -r '
+			.inbounds[]?
+			| select((.tag // "") == "panel-egress")
+			| .port // empty
+		' "$cfg" 2>/dev/null | head -n1 || true)
+		if [[ -z "$port" ]]; then
+			# No bridge → panel falls back to direct; safe to proceed.
+			return 0
+		fi
+		host=${host:-127.0.0.1}
+		if tcp_endpoint_available "$host" "$port" 1; then
+			return 0
+		fi
+		sleep 1
+	done
+	log WARN "panel-egress not accepting connections before geofile update; continuing."
+	return 1
+}
+
 # Запускает штатное обновление встроенных geo-файлов, если оно включено.
 update_builtin_geofiles_if_enabled() {
+	local attempts attempt
 	[[ "$GEOFILES_UPDATE_ON_START" == "true" ]] || {
 		log INFO "Built-in geofile update skipped."
 		return 0
@@ -127,9 +167,19 @@ update_builtin_geofiles_if_enabled() {
 		log INFO "PLAN: built-in geofile update-all would be requested."
 		return 0
 	fi
-	if xui_update_geofiles && http_success_json; then
-		log INFO "Built-in geoip/geosite files refreshed through panel API."
-	else
-		log WARN "Built-in geofile update skipped: $(http_body)"
-	fi
+	wait_panel_egress_ready || true
+	attempts=${GEOFILES_UPDATE_ATTEMPTS:-3}
+	((attempts < 1)) && attempts=1
+	for ((attempt = 1; attempt <= attempts; attempt++)); do
+		if xui_update_geofiles && http_success_json; then
+			log INFO "Built-in geoip/geosite files refreshed through panel API."
+			return 0
+		fi
+		if ((attempt < attempts)); then
+			log WARN "Built-in geofile update attempt $attempt/$attempts failed; retrying."
+			sleep "${GEOFILES_UPDATE_RETRY_SECONDS:-5}"
+			wait_panel_egress_ready || true
+		fi
+	done
+	log WARN "Built-in geofile update skipped: $(http_body)"
 }

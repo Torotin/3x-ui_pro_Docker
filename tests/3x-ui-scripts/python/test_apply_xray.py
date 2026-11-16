@@ -109,6 +109,7 @@ class TestApplyManagedXray(unittest.TestCase):
         env = {
             "URL_BASE_RESOLVED": self.base,
             "XRAY_MANAGED_WARP": "true",
+            "XRAY_MANAGED_WARP_CONSOLE": "false",
             "XRAY_MANAGED_DNS": "false",
             "XRAY_MANAGED_TOR": "false",
             "ENABLE_MIHOMO": "true",
@@ -136,6 +137,7 @@ class TestApplyManagedXray(unittest.TestCase):
             "URL_BASE_RESOLVED": self.base,
             "XRAY_MANAGED_DNS": "false",
             "XRAY_MANAGED_WARP": "true",
+            "XRAY_MANAGED_WARP_CONSOLE": "false",
             "XRAY_MANAGED_TOR": "false",
             "ENABLE_MIHOMO": "true",
             "USQUE_HOST": "usque",

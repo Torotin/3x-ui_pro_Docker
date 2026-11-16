@@ -690,6 +690,20 @@ test_panel_settings_json_defaults_panel_outbound() {
 	assert_eq boolean "$(printf '%s' "$body" | jq -r '.tgBotEnable | type')" "boolean AllSetting fields must remain JSON booleans"
 }
 
+test_panel_settings_json_forces_direct_over_db_usque() {
+	local body desired
+	unset panelOutbound
+	body=$(panel_settings_json '{"webPort":2053,"smtpPort":587,"ldapPort":389,"tgBotEnable":false,"panelOutbound":"usque"}')
+	assert_eq direct "$(printf '%s' "$body" | jq -r '.panelOutbound')" "empty env must force panelOutbound=direct over DB usque"
+	desired=$(panel_desired_json '{"webPort":2053,"smtpPort":587,"ldapPort":389,"tgBotEnable":false,"panelOutbound":"usque"}')
+	assert_eq direct "$(printf '%s' "$desired" | jq -r '.panelOutbound')" "desired must force panelOutbound=direct over DB usque"
+	panelOutbound=usque
+	export panelOutbound
+	body=$(panel_settings_json '{"webPort":2053,"smtpPort":587,"ldapPort":389,"tgBotEnable":false,"panelOutbound":"direct"}')
+	assert_eq usque "$(printf '%s' "$body" | jq -r '.panelOutbound')" "explicit env panelOutbound=usque must be preserved"
+	unset panelOutbound
+}
+
 test_geodata_block_uses_usque_outbound() {
 	local base assets updated outbound asset_count
 	unset CUSTOM_GEO_RESOURCES

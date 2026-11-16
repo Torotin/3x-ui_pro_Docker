@@ -88,6 +88,23 @@ class TestPanelJsonHelpers(unittest.TestCase):
         body = panel_settings_json(current, env)
         self.assertEqual(body["panelOutbound"], "direct")
 
+    def test_panel_outbound_forces_direct_over_db_usque_without_env(self) -> None:
+        # Empty env means managed default direct (skill/runtime contract), not "preserve DB".
+        current = {**_panel_fixture(), "panelOutbound": "usque"}
+        env: dict[str, str] = {}
+        desired = panel_desired_json(current, env)
+        self.assertEqual(desired["panelOutbound"], "direct")
+        body = panel_settings_json(current, env)
+        self.assertEqual(body["panelOutbound"], "direct")
+
+    def test_panel_outbound_env_usque_is_preserved(self) -> None:
+        current = {**_panel_fixture(), "panelOutbound": "direct"}
+        env = {"panelOutbound": "usque"}
+        desired = panel_desired_json(current, env)
+        self.assertEqual(desired["panelOutbound"], "usque")
+        body = panel_settings_json(current, env)
+        self.assertEqual(body["panelOutbound"], "usque")
+
     def test_trailing_newline_does_not_force_panel_update(self) -> None:
         current = {
             **_panel_fixture(),

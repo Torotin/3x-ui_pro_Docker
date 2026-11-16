@@ -12,6 +12,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,13 @@ from xui_runtime.apply.sub_routing import (
     subscription_panel_env_overrides,
     subscription_url_for_sub_id,
 )
-from xui_runtime.apply.xray import ApplyXrayStats, XrayApplyProbes, apply_managed_xray
+from xui_runtime.apply.xray import (
+    ApplyXrayStats,
+    XrayApplyProbes,
+    apply_managed_xray,
+    default_tor_proxy_available,
+    default_warp_proxy_available,
+)
 from xui_runtime.common import ApplyStats
 from xui_runtime.desired import build_desired_state, country_code_to_flag
 from xui_runtime.env import check_dependencies, load_runtime_env, require_apply_mode
@@ -385,6 +392,71 @@ def restart_xray_if_needed(
         log.log("WARN", "One or more managed Xray inbounds are not listening after restart.")
 
 
+def panel_egress_endpoint(config: Mapping[str, Any]) -> tuple[str, int] | None:
+    """Return ``(host, port)`` for the panel-egress SOCKS inbound, if present."""
+    inbounds = config.get("inbounds")
+    if not isinstance(inbounds, list):
+        return None
+    for inbound in inbounds:
+        if not isinstance(inbound, Mapping):
+            continue
+        if str(inbound.get("tag") or "") != "panel-egress":
+            continue
+        port_raw = inbound.get("port")
+        try:
+            port = int(port_raw)
+        except (TypeError, ValueError):
+            return None
+        listen = inbound.get("listen", "127.0.0.1")
+        if isinstance(listen, str):
+            host = listen.strip().strip('"') or "127.0.0.1"
+        else:
+            host = "127.0.0.1"
+        return host, port
+    return None
+
+
+def wait_panel_egress_ready(
+    env: Mapping[str, str],
+    *,
+    timeout: float | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
+    tcp_probe: Callable[[str, int, float], bool] | None = None,
+) -> bool:
+    """Wait until panel-egress accepts TCP, or proceed if the bridge is absent."""
+    from xui_runtime.apply.xray import default_tcp_endpoint_available
+
+    cfg_path = Path(env.get("XRAY_RUNNING_CONFIG", "/app/bin/config.json") or "/app/bin/config.json")
+    if timeout is None:
+        try:
+            timeout = float(env.get("GEOFILES_EGRESS_WAIT_SECONDS", "20") or "20")
+        except ValueError:
+            timeout = 20.0
+    sleeper = sleep_fn or time.sleep
+    probe = tcp_probe or default_tcp_endpoint_available
+    deadline = time.monotonic() + max(timeout, 0.0)
+    while True:
+        if cfg_path.is_file():
+            try:
+                config = json.loads(cfg_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                config = None
+            if isinstance(config, dict):
+                endpoint = panel_egress_endpoint(config)
+                if endpoint is None:
+                    return True
+                host, port = endpoint
+                if probe(host, port, 1.0):
+                    return True
+        if time.monotonic() >= deadline:
+            log.log(
+                "WARN",
+                "panel-egress not accepting connections before geofile update; continuing.",
+            )
+            return False
+        sleeper(1.0)
+
+
 def update_builtin_geofiles_if_enabled(api: PanelApi, env: dict[str, str], mode: str) -> None:
     if env.get("GEOFILES_UPDATE_ON_START", "true") != "true":
         log.log("INFO", "Built-in geofile update skipped.")
@@ -394,11 +466,33 @@ def update_builtin_geofiles_if_enabled(api: PanelApi, env: dict[str, str], mode:
         return
     if mode != "apply":
         return
-    result = api.update_geofiles()
-    if result.ok and api.session.success_json():
-        log.log("INFO", "Built-in geoip/geosite files refreshed through panel API.")
-    else:
-        log.log("WARN", f"Built-in geofile update skipped: {api.session.body()}")
+
+    wait_panel_egress_ready(env)
+    try:
+        attempts = int(env.get("GEOFILES_UPDATE_ATTEMPTS", "3") or "3")
+    except ValueError:
+        attempts = 3
+    attempts = max(attempts, 1)
+    try:
+        retry_sleep = float(env.get("GEOFILES_UPDATE_RETRY_SECONDS", "5") or "5")
+    except ValueError:
+        retry_sleep = 5.0
+
+    last_body = ""
+    for attempt in range(1, attempts + 1):
+        result = api.update_geofiles()
+        if result.ok and api.session.success_json():
+            log.log("INFO", "Built-in geoip/geosite files refreshed through panel API.")
+            return
+        last_body = api.session.body()
+        if attempt < attempts:
+            log.log(
+                "WARN",
+                f"Built-in geofile update attempt {attempt}/{attempts} failed; retrying.",
+            )
+            time.sleep(retry_sleep)
+            wait_panel_egress_ready(env)
+    log.log("WARN", f"Built-in geofile update skipped: {last_body}")
 
 
 def _merge_xray_stats(stats: ApplyStats, xray_stats: ApplyXrayStats, mode: str) -> None:
@@ -410,10 +504,14 @@ def _merge_xray_stats(stats: ApplyStats, xray_stats: ApplyXrayStats, mode: str) 
         stats.change_count += 1
 
 
-def _default_xray_probes() -> XrayApplyProbes:
+def _default_xray_probes(env: dict[str, str] | None = None) -> XrayApplyProbes:
     return XrayApplyProbes(
-        warp_proxy_available=lambda _h, _p: False,
-        tor_proxy_available=lambda _h, _p: False,
+        warp_proxy_available=lambda host, port: default_warp_proxy_available(
+            host, port, env=env
+        ),
+        tor_proxy_available=lambda host, port: default_tor_proxy_available(
+            host, port, env=env
+        ),
     )
 
 
@@ -467,7 +565,9 @@ def run_managed_runtime(
         desired = build_desired_state(env)
         _rebuild_subscription_env_from_desired(desired, env, tmp_root)
 
-        probes = xray_probes if xray_probes is not None else _default_xray_probes()
+        probes = (
+            xray_probes if xray_probes is not None else _default_xray_probes(env)
+        )
         xray_stats = apply_managed_xray(api, env, desired, mode, probes=probes)
         _merge_xray_stats(stats, xray_stats, mode)
         restart_xray_if_needed(api, env, mode, stats)

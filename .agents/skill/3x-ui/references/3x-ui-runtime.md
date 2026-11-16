@@ -103,8 +103,9 @@ Peer expectations:
 
 WARP console behavior:
 
-- `XRAY_MANAGED_WARP_CONSOLE` currently defaults to `false`.
-- If console WARP is re-enabled, preserve the GUI-compatible endpoint host `engage.cloudflareclient.com:2408` instead of replacing it with a resolved IP.
+- `XRAY_MANAGED_WARP` and `XRAY_MANAGED_WARP_CONSOLE` both default to `true` (console WireGuard outbound `warp` plus SOCKS `usque` in `warp-balancer`).
+- Set `XRAY_MANAGED_WARP_CONSOLE=false` to use external SOCKS (`usque`) only.
+- Preserve the GUI-compatible endpoint host `engage.cloudflareclient.com:2408` instead of replacing it with a resolved IP.
 - Do not revive old `warp_socks_v5` references.
 
 ## Native Subscriptions

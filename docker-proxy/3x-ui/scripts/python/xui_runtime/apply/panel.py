@@ -160,9 +160,8 @@ def _normalize_update_body(body: dict[str, Any], env: Mapping[str, str]) -> dict
     _port_at_least("ldapPort", 389)
 
     if not _env_overlay_value(env, "panelOutbound"):
-        outbound = merged.get("panelOutbound")
-        if outbound is None or str(outbound).strip() == "":
-            merged["panelOutbound"] = "direct"
+        # Empty env → managed default direct (do not preserve stale DB usque).
+        merged["panelOutbound"] = "direct"
 
     return merged
 
@@ -185,8 +184,8 @@ def panel_desired_json(current: Mapping[str, Any], env: Mapping[str, str]) -> di
         desired["ldapPort"] = "389"
 
     if not _env_overlay_value(env, "panelOutbound"):
-        if not (desired.get("panelOutbound") or "").strip():
-            desired["panelOutbound"] = "direct"
+        # Empty env → managed default direct (do not preserve stale DB usque).
+        desired["panelOutbound"] = "direct"
 
     if clear_sub_json_routing_rules_requested(env):
         desired["subJsonRoutingRules"] = ""

@@ -117,6 +117,86 @@ def default_tcp_endpoint_available(host: str, port: int, timeout: float = 2.0) -
         return False
 
 
+def socks_proxy_get(
+    host: str,
+    port: int,
+    url: str,
+    *,
+    timeout: float | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
+    """Fetch ``url`` through SOCKS5h ``host:port`` (bash ``socks_proxy_get`` parity)."""
+    merged = env if env is not None else os.environ
+    if timeout is None:
+        raw = str(merged.get("EXTERNAL_PROXY_PROBE_TIMEOUT", "10") or "10")
+        try:
+            timeout = float(raw)
+        except ValueError:
+            timeout = 10.0
+    try:
+        proc = subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--silent",
+                "--max-time",
+                str(timeout),
+                "--socks5-hostname",
+                f"{host}:{int(port)}",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=max(timeout + 2.0, 12.0),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def default_warp_proxy_available(
+    host: str,
+    port: int,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """Confirm SOCKS egress is WARP (bash ``warp_proxy_available``)."""
+    merged = env if env is not None else os.environ
+    url = str(
+        merged.get("WARP_PROXY_PROBE_URL", "https://www.cloudflare.com/cdn-cgi/trace")
+        or "https://www.cloudflare.com/cdn-cgi/trace"
+    )
+    trace = socks_proxy_get(host, port, url, env=merged)
+    if trace is None:
+        return False
+    return any(line.strip() == "warp=on" for line in trace.splitlines())
+
+
+def default_tor_proxy_available(
+    host: str,
+    port: int,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """Confirm SOCKS egress is Tor (bash ``tor_proxy_available``)."""
+    merged = env if env is not None else os.environ
+    url = str(
+        merged.get("TOR_PROXY_PROBE_URL", "https://check.torproject.org/api/ip")
+        or "https://check.torproject.org/api/ip"
+    )
+    body = socks_proxy_get(host, port, url, env=merged)
+    if body is None:
+        return False
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and payload.get("IsTor") is True
+
+
 def default_available_dns_servers() -> list[dict[str, Any]]:
     if default_tcp_endpoint_available("adguard", 53, 2.0):
         return [{"address": "adguard", "port": 53, "skipFallback": False}]
@@ -256,6 +336,38 @@ def _find_xray_bin(env: Mapping[str, str]) -> str | None:
     return None
 
 
+def parse_xray_wg_output(stdout: str) -> tuple[str, str, list[int]]:
+    """Parse ``xray wg`` stdout (legacy ``PublicKey`` and Xray 26 ``Password (PublicKey)``)."""
+    private_key = ""
+    public_key = ""
+    hash32 = ""
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if ": " not in line:
+            continue
+        label, value = line.split(": ", 1)
+        label_l = label.strip().lower()
+        value = value.strip()
+        if label_l == "privatekey":
+            private_key = value
+        elif "publickey" in label_l or label_l == "password":
+            # Xray 26+: "Password (PublicKey): ..."; older: "PublicKey:" / "Password:"
+            public_key = value
+        elif label_l == "hash32":
+            hash32 = value
+    reserved = [10, 14, 188]
+    if hash32:
+        try:
+            decoded = base64.b64decode(hash32)[:3]
+            if len(decoded) == 3:
+                reserved = [int(b) for b in decoded]
+        except (ValueError, TypeError):
+            pass
+    if not private_key or not public_key:
+        raise RuntimeError("xray wg did not return WARP keys.")
+    return private_key, public_key, reserved
+
+
 def generate_wg_keys(env: Mapping[str, str]) -> tuple[str, str, list[int]]:
     xray_bin = _find_xray_bin(env)
     if not xray_bin:
@@ -268,32 +380,7 @@ def generate_wg_keys(env: Mapping[str, str]) -> tuple[str, str, list[int]]:
     )
     if proc.returncode != 0:
         raise RuntimeError("Failed to run xray wg for WARP registration.")
-    private_key = ""
-    public_key = ""
-    hash32 = ""
-    for line in proc.stdout.splitlines():
-        if ": " not in line:
-            continue
-        label, value = line.split(": ", 1)
-        if label == "PrivateKey":
-            private_key = value.strip()
-        elif label == "PublicKey":
-            public_key = value.strip()
-        elif label == "Password" and not public_key:
-            public_key = value.strip()
-        elif label == "Hash32":
-            hash32 = value.strip()
-    reserved = [10, 14, 188]
-    if hash32:
-        try:
-            decoded = base64.b64decode(hash32)[:3]
-            if len(decoded) == 3:
-                reserved = [int(b) for b in decoded]
-        except (ValueError, TypeError):
-            pass
-    if not private_key or not public_key:
-        raise RuntimeError("xray wg did not return WARP keys.")
-    return private_key, public_key, reserved
+    return parse_xray_wg_output(proc.stdout)
 
 
 def _existing_warp_console_outbound(current: dict[str, Any]) -> dict[str, Any] | None:
@@ -476,7 +563,7 @@ def apply_managed_xray(
 
     if managed_enabled:
         if _env_bool(env, "XRAY_MANAGED_WARP", False) and _env_bool(
-            env, "XRAY_MANAGED_WARP_CONSOLE", False
+            env, "XRAY_MANAGED_WARP_CONSOLE", True
         ):
             warp_console_ob = ensure_warp_console_outbound(
                 api, session, current, env=env, mode=mode
