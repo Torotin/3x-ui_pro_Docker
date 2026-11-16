@@ -66,12 +66,37 @@ class TestEnsureAutoSubBalancer(unittest.TestCase):
         api.session.success_json.return_value = success
         return api
 
-    def test_plan_mode_skips_api(self) -> None:
-        api = self._mock_api("{}")
+    def test_plan_mode_reports_create_without_mutating(self) -> None:
+        api = self._mock_api(json.dumps({"success": True, "obj": []}))
         stats = ApplyStats()
         ensure_auto_sub_balancer(api, {"WEBDOMAIN": "example.test"}, "plan", stats, "1", "2")
-        api.list_sub_balancers.assert_not_called()
+        api.list_sub_balancers.assert_called_once()
+        api.add_sub_balancer.assert_not_called()
+        api.update_sub_balancer.assert_not_called()
         self.assertEqual(stats.change_count, 1)
+
+    def test_plan_mode_noop_when_matches(self) -> None:
+        body = json.dumps(
+            {
+                "success": True,
+                "obj": [
+                    {
+                        "id": 3,
+                        "remark": "AUTO-example.test",
+                        "strategy": "leastPing",
+                        "enabled": True,
+                        "inboundIds": [1, 2],
+                    }
+                ],
+            }
+        )
+        api = self._mock_api(body)
+        stats = ApplyStats()
+        ensure_auto_sub_balancer(api, {"WEBDOMAIN": "example.test"}, "plan", stats, "1", "2")
+        api.list_sub_balancers.assert_called_once()
+        api.add_sub_balancer.assert_not_called()
+        api.update_sub_balancer.assert_not_called()
+        self.assertEqual(stats.change_count, 0)
 
     def test_create_when_missing(self) -> None:
         body = json.dumps({"success": True, "obj": []})
@@ -121,8 +146,10 @@ class TestEnsureAutoSubBalancer(unittest.TestCase):
         api = self._mock_api(body)
         stats = ApplyStats()
         ensure_auto_sub_balancer(api, {"WEBDOMAIN": "example.test"}, "apply", stats, "1", "2")
+        api.list_sub_balancers.assert_called_once()
         api.add_sub_balancer.assert_not_called()
         api.update_sub_balancer.assert_not_called()
+        self.assertEqual(stats.change_count, 0)
 
     def test_skip_when_webdomain_missing(self) -> None:
         api = self._mock_api("{}")

@@ -90,8 +90,6 @@ def ensure_auto_sub_balancer(
         return
 
     ids_csv = sub_balancer_ids_csv(ids)
-    if not plan_or_apply(mode, stats, f"{remark} sub balancer ensured inboundIds={ids_csv}"):
-        return
 
     result = api.list_sub_balancers()
     if not result.ok:
@@ -116,6 +114,8 @@ def ensure_auto_sub_balancer(
     current_auto = _pick_current_auto_row(current_rows, remark)
 
     if current_auto is None:
+        if not plan_or_apply(mode, stats, f"{remark} sub balancer created inboundIds={ids_csv}"):
+            return
         create = api.add_sub_balancer(form)
         if create.ok and api.session.success_json():
             log.log("INFO", f"{remark} sub balancer created inboundIds={ids_csv}.")
@@ -143,6 +143,9 @@ def ensure_auto_sub_balancer(
 
     if not current_id:
         log.log("WARN", f"{remark} sub balancer update skipped: existing row has no id.")
+        return
+
+    if not plan_or_apply(mode, stats, f"{remark} sub balancer updated inboundIds={ids_csv}"):
         return
 
     update = api.update_sub_balancer(current_id, form)

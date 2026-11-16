@@ -75,9 +75,6 @@ ensure_auto_sub_balancer() {
 	fi
 
 	ids_csv=$(sub_balancer_ids_csv "${ids[@]}")
-	if ! plan_or_apply "${remark} sub balancer ensured inboundIds=$ids_csv"; then
-		return 0
-	fi
 
 	if ! xui_list_sub_balancers; then
 		sub_balancer_warn_success "${remark} sub balancer skipped: list API request failed."
@@ -100,6 +97,9 @@ ensure_auto_sub_balancer() {
 	' <<<"$current")
 	mapfile -d '' -t form_args < <(sub_balancer_form_args "$remark" "${ids[@]}")
 	if [[ -z "$current_auto" ]]; then
+		if ! plan_or_apply "${remark} sub balancer created inboundIds=$ids_csv"; then
+			return 0
+		fi
 		if xui_add_sub_balancer "${form_args[@]}" && http_success_json; then
 			log INFO "${remark} sub balancer created inboundIds=$ids_csv."
 		else
@@ -119,6 +119,9 @@ ensure_auto_sub_balancer() {
 	fi
 	if [[ -z "$current_id" ]]; then
 		sub_balancer_warn_success "${remark} sub balancer update skipped: existing row has no id."
+		return 0
+	fi
+	if ! plan_or_apply "${remark} sub balancer updated inboundIds=$ids_csv"; then
 		return 0
 	fi
 	if xui_update_sub_balancer "$current_id" "${form_args[@]}" && http_success_json; then
