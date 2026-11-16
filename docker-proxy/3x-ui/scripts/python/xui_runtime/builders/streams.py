@@ -126,18 +126,32 @@ def build_vision_stream_json(
     mldsa_verify: str = "",
     target_xver: int | str = 0,
     fingerprint: str | None = None,
+    external_proxy_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     if short_ids is None:
         short_ids = [""]
     if sockopt is None:
         sockopt = {}
-    fp = select_tls_fingerprint(fingerprint)
+    # Match bash: build_external_proxy_json() and select_tls_fingerprint() are
+    # independent calls, so the two fingerprints may differ.
+    if fingerprint is None and external_proxy_fingerprint is None:
+        ext_fp = select_tls_fingerprint()
+        fp = select_tls_fingerprint()
+    else:
+        ext_fp = select_tls_fingerprint(
+            external_proxy_fingerprint
+            if external_proxy_fingerprint is not None
+            else fingerprint
+        )
+        fp = select_tls_fingerprint(fingerprint)
     if isinstance(target_xver, str):
         target_xver = int(target_xver)
     return {
         "network": "tcp",
         "security": "reality",
-        "externalProxy": build_external_proxy_json(sni, force_tls="same", fingerprint=fp),
+        "externalProxy": build_external_proxy_json(
+            sni, force_tls="same", fingerprint=ext_fp
+        ),
         "realitySettings": {
             "show": False,
             "xver": target_xver,
@@ -279,7 +293,7 @@ def build_hysteria2_stream_json(
 
 
 def extract_stream_fingerprint(bash_obj: dict[str, Any], name: str) -> str | None:
-    """Pull TLS fingerprint from bash-built JSON for parity rebuild."""
+    """Pull primary TLS fingerprint from bash-built JSON for parity rebuild."""
     if name == "vision_stream":
         path = bash_obj.get("realitySettings", {}).get("settings", {})
         return path.get("fingerprint") or None
@@ -292,4 +306,14 @@ def extract_stream_fingerprint(bash_obj: dict[str, Any], name: str) -> str | Non
         tls = bash_obj.get("tlsSettings") or {}
         settings = tls.get("settings") or {}
         return settings.get("fingerprint")
+    return None
+
+
+def extract_vision_external_proxy_fingerprint(
+    bash_obj: dict[str, Any],
+) -> str | None:
+    """Vision externalProxy fingerprint (independent of realitySettings in bash)."""
+    proxy = bash_obj.get("externalProxy") or []
+    if proxy and isinstance(proxy[0], dict):
+        return proxy[0].get("fingerprint")
     return None

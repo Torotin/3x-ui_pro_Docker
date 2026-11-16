@@ -13,6 +13,7 @@ from xui_runtime.builders.streams import (
     build_vision_stream_json,
     build_xhttp_stream_json,
     extract_stream_fingerprint,
+    extract_vision_external_proxy_fingerprint,
 )
 
 BUILDER_NAMES = frozenset(
@@ -46,4 +47,5 @@ __all__ = [
     "build_vision_stream_json",
     "build_xhttp_stream_json",
     "extract_stream_fingerprint",
+    "extract_vision_external_proxy_fingerprint",
 ]

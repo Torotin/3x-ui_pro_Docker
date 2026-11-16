@@ -10,7 +10,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from xui_runtime.builders import BUILDER_NAMES, extract_stream_fingerprint
+from xui_runtime.builders import (
+    BUILDER_NAMES,
+    extract_stream_fingerprint,
+    extract_vision_external_proxy_fingerprint,
+)
 from xui_runtime.builders.inbounds import (
     build_amneziawg_settings_json,
     build_hysteria2_settings_json,
@@ -93,8 +97,12 @@ def build_python_builder(
     """Rebuild JSON from env/args; optional bash_obj supplies nondeterministic fields."""
     if name == "vision_stream":
         fp = args.get("fingerprint")
-        if fp is None and isinstance(bash_obj, dict):
-            fp = extract_stream_fingerprint(bash_obj, name)
+        ext_fp = args.get("external_proxy_fingerprint")
+        if isinstance(bash_obj, dict):
+            if fp is None:
+                fp = extract_stream_fingerprint(bash_obj, name)
+            if ext_fp is None:
+                ext_fp = extract_vision_external_proxy_fingerprint(bash_obj)
         target = args.get(
             "target",
             f"{_env_str(env, 'REALITY_TARGET_HOST', 'telemt')}:"
@@ -119,6 +127,7 @@ def build_python_builder(
             mldsa_verify=args.get("mldsa_verify", ""),
             target_xver=xver,
             fingerprint=fp,
+            external_proxy_fingerprint=ext_fp,
         )
     if name == "xhttp_stream":
         fp = args.get("fingerprint")
