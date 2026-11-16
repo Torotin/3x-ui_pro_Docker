@@ -1,4 +1,4 @@
-"""Apply orchestration package (library-only until Task 12)."""
+"""Apply orchestration package (panel, xray, inbound, subscription builders)."""
 
 from xui_runtime.apply.panel import (
     ensure_panel_settings,

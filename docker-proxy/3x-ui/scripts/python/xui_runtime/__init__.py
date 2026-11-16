@@ -1,4 +1,4 @@
-"""3x-ui AfterStart runtime (Python); scaffold until orchestrator is ready."""
+"""3x-ui AfterStart runtime (Python orchestrator + apply libraries)."""
 
 from xui_runtime.main import PYTHON_RUNTIME_READY, cli
 
