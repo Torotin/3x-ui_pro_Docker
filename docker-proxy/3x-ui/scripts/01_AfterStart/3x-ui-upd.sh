@@ -24,24 +24,6 @@ ENSURE_SHARED_CLIENT_AUTH=
 . "$LIB_DIR/log.bash"
 # shellcheck source=../lib/env.bash
 . "$LIB_DIR/env.bash"
-# shellcheck source=../lib/http.bash
-. "$LIB_DIR/http.bash"
-# shellcheck source=../lib/3xui_api.bash
-. "$LIB_DIR/3xui_api.bash"
-# shellcheck source=../lib/json_state.bash
-. "$LIB_DIR/json_state.bash"
-# shellcheck source=../lib/desired_state.bash
-. "$LIB_DIR/desired_state.bash"
-# shellcheck source=../lib/runtime_common.bash
-. "$LIB_DIR/runtime_common.bash"
-# shellcheck source=../lib/panel_runtime.bash
-. "$LIB_DIR/panel_runtime.bash"
-# shellcheck source=../lib/inbound_runtime.bash
-. "$LIB_DIR/inbound_runtime.bash"
-# shellcheck source=../lib/xray_runtime.bash
-. "$LIB_DIR/xray_runtime.bash"
-# shellcheck source=../lib/parity_hooks.bash
-. "$LIB_DIR/parity_hooks.bash"
 
 # Удаляет временный каталог HTTP-ответов и подготовленных JSON при завершении.
 cleanup() {
@@ -49,48 +31,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Сверяет bash build_desired_state с Python (только XUI_RUNTIME_ENGINE=dual).
-assert_dual_desired_parity() {
-	local desired_json=$1 py_root bash_json_file
-	[[ "$XUI_RUNTIME_ENGINE" == "dual" ]] || return 0
-	py_root=/mnt/sh/python
-	if [[ ! -d "$py_root" ]]; then
-		py_root="$SCRIPT_DIR/../python"
-	fi
-	export PYTHONPATH="$py_root${PYTHONPATH:+:$PYTHONPATH}"
-	bash_json_file=$(mktemp "$TMP_ROOT/desired-bash.XXXXXX")
-	printf '%s' "$desired_json" >"$bash_json_file"
-	python3 -m xui_runtime.parity desired --bash-json-file "$bash_json_file" \
-		|| die "Python desired-state parity failed"
-}
-
-# Запускает полный цикл панели и Xray в выбранном режиме.
-main() {
-	local desired vision_id xhttp_id grpc_id="" hysteria2_id="" amneziawg_id="" udp_backend nodes_file remarks_file
-	TMP_ROOT=$(mktemp -d)
-	http_init "$TMP_ROOT"
-	load_runtime_env "$SCRIPT_DIR"
-	XUI_RUNTIME_ENGINE=${XUI_RUNTIME_ENGINE:-bash}
-	XUI_RUNTIME_ENGINE=${XUI_RUNTIME_ENGINE,,}
-	export XUI_RUNTIME_ENGINE
-	case "$XUI_RUNTIME_ENGINE" in
-	bash | dual | python) ;;
-	*) die "XUI_RUNTIME_ENGINE must be bash|dual|python" ;;
-	esac
-	require_apply_mode
-	check_dependencies
-	if [[ "$XUI_RUNTIME_ENGINE" == "python" ]]; then
-		local python_root=/mnt/sh/python
-		if [[ ! -d "$python_root" ]]; then
-			python_root="$SCRIPT_DIR/../python"
-		fi
-		export PYTHONPATH="$python_root${PYTHONPATH:+:$PYTHONPATH}"
-		exec python3 -m xui_runtime --mode "$MODE"
-	fi
+# Подключает bash AfterStart libs только для emergency engine=bash.
+source_bash_runtime_libs() {
+	# shellcheck source=../lib/http.bash
+	. "$LIB_DIR/http.bash"
+	# shellcheck source=../lib/3xui_api.bash
+	. "$LIB_DIR/3xui_api.bash"
+	# shellcheck source=../lib/json_state.bash
+	. "$LIB_DIR/json_state.bash"
+	# shellcheck source=../lib/desired_state.bash
+	. "$LIB_DIR/desired_state.bash"
+	# shellcheck source=../lib/runtime_common.bash
+	. "$LIB_DIR/runtime_common.bash"
+	# shellcheck source=../lib/panel_runtime.bash
+	. "$LIB_DIR/panel_runtime.bash"
+	# shellcheck source=../lib/inbound_runtime.bash
+	. "$LIB_DIR/inbound_runtime.bash"
+	# shellcheck source=../lib/xray_runtime.bash
+	. "$LIB_DIR/xray_runtime.bash"
 	# shellcheck source=../lib/sub_admin_routing.bash
 	. "$LIB_DIR/sub_admin_routing.bash"
 	# shellcheck source=../lib/sub_balancer.bash
 	. "$LIB_DIR/sub_balancer.bash"
+}
+
+# Emergency bash AfterStart pipeline (XUI_RUNTIME_ENGINE=bash).
+run_bash_managed_runtime() {
+	local desired vision_id xhttp_id grpc_id="" hysteria2_id="" amneziawg_id="" udp_backend nodes_file remarks_file
+	source_bash_runtime_libs
 	# Soft builders for MODE=check (no desired/panel). Final Clash+observatory
 	# passed into panel settings apply are rebuilt below once desired remarks exist.
 	subClashEnableRouting=true
@@ -123,9 +91,6 @@ main() {
 		# Same URL dump as apply: env + stable shared subId (no panel required).
 		desired=$(build_desired_state)
 		log_shared_autogen_subscription_urls "$desired"
-		assert_dual_desired_parity "$desired"
-		assert_dual_stream_builders_parity "$desired"
-		assert_dual_sub_builders_parity
 		return 0
 	fi
 
@@ -133,9 +98,6 @@ main() {
 	resolve_panel_base || die "Could not resolve and login to 3x-ui panel."
 	detect_country_flag || true
 	desired=$(build_desired_state)
-	assert_dual_desired_parity "$desired"
-	assert_dual_stream_builders_parity "$desired"
-	assert_dual_sub_builders_parity
 	# AUTO/PROXY groups need node names; prefer desired inbound remarks (chicken-egg
 	# vs live inbounds that may not exist yet).
 	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
@@ -171,7 +133,6 @@ main() {
 		fi
 		subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")
 	fi
-	assert_dual_sub_builders_parity "$nodes_file"
 	export subClashEnableRouting=true subClashRules
 	subJsonObservatory=$(build_admin_sub_json_observatory)
 	export subJsonObservatory
@@ -244,6 +205,36 @@ main() {
 	restart_panel_if_needed
 	log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"
 	log_shared_autogen_subscription_urls "$desired"
+}
+
+# Thin launcher: default python; bash remains emergency fallback; dual retired.
+main() {
+	TMP_ROOT=$(mktemp -d)
+	load_runtime_env "$SCRIPT_DIR"
+	XUI_RUNTIME_ENGINE=${XUI_RUNTIME_ENGINE:-python}
+	XUI_RUNTIME_ENGINE=${XUI_RUNTIME_ENGINE,,}
+	export XUI_RUNTIME_ENGINE
+	case "$XUI_RUNTIME_ENGINE" in
+	python | bash) ;;
+	dual)
+		die "XUI_RUNTIME_ENGINE=dual was retired; use python (default) or bash (emergency)"
+		;;
+	*)
+		die "XUI_RUNTIME_ENGINE must be python|bash"
+		;;
+	esac
+	require_apply_mode
+	check_dependencies
+	if [[ "$XUI_RUNTIME_ENGINE" == "python" ]]; then
+		local python_root=/mnt/sh/python
+		if [[ ! -d "$python_root" ]]; then
+			python_root="$SCRIPT_DIR/../python"
+		fi
+		export PYTHONPATH="$python_root${PYTHONPATH:+:$PYTHONPATH}"
+		exec python3 -m xui_runtime --mode "$MODE"
+	fi
+	http_init "$TMP_ROOT"
+	run_bash_managed_runtime
 }
 
 main "$@"

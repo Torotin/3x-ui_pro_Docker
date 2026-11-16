@@ -191,13 +191,13 @@ load_runtime_env() {
 # Проверяет наличие утилит, требуемых сценарию после запуска контейнера.
 check_dependencies() {
 	local missing=() cmd engine
-	engine=${XUI_RUNTIME_ENGINE:-bash}
+	engine=${XUI_RUNTIME_ENGINE:-python}
 	engine=${engine,,}
 	for cmd in bash curl jq grep mktemp sed tr sort head awk base64 od; do
 		command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 	done
 	case "$engine" in
-	python | dual)
+	python)
 		command -v python3 >/dev/null 2>&1 || missing+=("python3")
 		;;
 	esac

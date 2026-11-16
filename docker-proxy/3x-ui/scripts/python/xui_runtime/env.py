@@ -298,12 +298,12 @@ _BASH_DEPENDENCIES = (
 
 def check_dependencies(engine: str) -> None:
     """Ensure required CLI tools exist for the chosen runtime engine."""
-    engine_key = (engine or os.environ.get("XUI_RUNTIME_ENGINE", "bash")).strip().lower()
+    engine_key = (engine or os.environ.get("XUI_RUNTIME_ENGINE", "python")).strip().lower()
     missing: list[str] = []
     for cmd in _BASH_DEPENDENCIES:
         if shutil.which(cmd) is None:
             missing.append(cmd)
-    if engine_key in ("python", "dual") and shutil.which("python3") is None:
+    if engine_key == "python" and shutil.which("python3") is None:
         missing.append("python3")
     if missing:
         joined = " ".join(missing)

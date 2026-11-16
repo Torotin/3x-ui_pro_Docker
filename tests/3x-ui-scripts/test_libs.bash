@@ -1344,12 +1344,19 @@ test_apply_managed_xray_passes_mihomo_endpoint_only_when_reachable() {
 test_afterstart_entrypoint_loads_runtime_modules() {
 	local script module function
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
+	grep -Fq 'source_bash_runtime_libs' "$script" ||
+		fail "after-start entrypoint must lazy-load bash libs via source_bash_runtime_libs"
 	for module in runtime_common panel_runtime inbound_runtime xray_runtime sub_balancer; do
 		[[ -f "$SCRIPTS_DIR/lib/$module.bash" ]] ||
 			fail "after-start runtime module is missing: $module.bash"
 		grep -Fq ". \"\$LIB_DIR/$module.bash\"" "$script" ||
 			fail "after-start entrypoint must source $module.bash"
 	done
+	grep -Fq 'XUI_RUNTIME_ENGINE:-python' "$script" ||
+		fail "after-start default engine must be python"
+	if grep -Fq 'parity_hooks.bash' "$script"; then
+		fail "dual parity_hooks must stay retired from after-start entrypoint"
+	fi
 	for function in record_change ensure_panel_settings ensure_inbound apply_managed_xray restart_xray_if_needed; do
 		if grep -Eq "^${function}\\(\\)" "$script"; then
 			fail "after-start entrypoint must not retain domain function: $function"
@@ -1358,14 +1365,28 @@ test_afterstart_entrypoint_loads_runtime_modules() {
 }
 
 test_afterstart_entrypoint_preserves_pipeline_order() {
-	local script block expression line previous=0
+	local script launcher bash_block expression line previous=0
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
-	block=$(sed -n '/^main()/,/^}/p' "$script")
+	launcher=$(sed -n '/^main()/,/^}/p' "$script")
 	for expression in \
-		'http_init "$TMP_ROOT"' \
 		'load_runtime_env "$SCRIPT_DIR"' \
 		'require_apply_mode' \
 		'check_dependencies' \
+		'exec python3 -m xui_runtime --mode "$MODE"' \
+		'http_init "$TMP_ROOT"' \
+		'run_bash_managed_runtime'; do
+		line=$(
+			grep -nF "$expression" <<<"$launcher" |
+				awk -F: -v prev="$previous" '$1 > prev { print $1; exit }'
+		)
+		[[ -n "$line" && "$line" -gt "$previous" ]] ||
+			fail "after-start launcher order changed near: $expression"
+		previous=$line
+	done
+	bash_block=$(sed -n '/^run_bash_managed_runtime()/,/^}/p' "$script")
+	previous=0
+	for expression in \
+		'source_bash_runtime_libs' \
 		'resolve_panel_base || die "Could not resolve and login to 3x-ui panel."' \
 		'detect_country_flag || true' \
 		'desired=$(build_desired_state)' \
@@ -1388,22 +1409,27 @@ test_afterstart_entrypoint_preserves_pipeline_order() {
 		'restart_panel_if_needed' \
 		'log INFO "3x-ui managed runtime complete: changes=$CHANGE_COUNT panel_restart=$RESTART_PANEL_REQUIRED xray_restart=$RESTART_XRAY_REQUIRED"' \
 		'log_shared_autogen_subscription_urls "$desired"'; do
-		line=$(grep -nF "$expression" <<<"$block" | head -n1 | cut -d: -f1)
+		# Prefer the next occurrence after $previous so MODE=check early
+		# desired=/log paths do not shadow the apply pipeline sequence.
+		line=$(
+			grep -nF "$expression" <<<"$bash_block" |
+				awk -F: -v prev="$previous" '$1 > prev { print $1; exit }'
+		)
 		[[ -n "$line" && "$line" -gt "$previous" ]] ||
-			fail "after-start pipeline order changed near: $expression"
+			fail "bash emergency pipeline order changed near: $expression"
 		previous=$line
 	done
 }
 
 test_afterstart_entrypoint_initializes_optional_inbound_ids() {
-	local script main_decl
+	local script bash_decl
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
-	main_decl=$(sed -n '/^main()/,/TMP_ROOT=/p' "$script")
-	grep -Fq 'grpc_id=' <<<"$main_decl" ||
+	bash_decl=$(sed -n '/^run_bash_managed_runtime()/,/source_bash_runtime_libs/p' "$script")
+	grep -Fq 'grpc_id=' <<<"$bash_decl" ||
 		fail "gRPC inbound id must be initialized for ENABLE_VLESS_GRPC=false"
-	grep -Fq 'hysteria2_id=' <<<"$main_decl" ||
+	grep -Fq 'hysteria2_id=' <<<"$bash_decl" ||
 		fail "Hysteria2 inbound id must be initialized for ENABLE_HYSTERIA2=false"
-	grep -Fq 'amneziawg_id=' <<<"$main_decl" ||
+	grep -Fq 'amneziawg_id=' <<<"$bash_decl" ||
 		fail "AmneziaWG inbound id must be initialized before UDP443 backend orchestration"
 	grep -Fq 'ENABLE_VLESS_GRPC:-false' "$script" ||
 		fail "gRPC must default to disabled in the runtime entrypoint"
@@ -1659,8 +1685,11 @@ test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success() {
 
 test_afterstart_check_mode_bootstraps_without_apply() {
 	local output
-	output=$(MODE=check LIB_DIR="$SCRIPTS_DIR/lib" bash "$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh" 2>&1) ||
-		fail "MODE=check entrypoint startup failed"
+	# Exercise emergency bash path; default engine is python.
+	output=$(
+		MODE=check XUI_RUNTIME_ENGINE=bash LIB_DIR="$SCRIPTS_DIR/lib" \
+			bash "$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh" 2>&1
+	) || fail "MODE=check entrypoint startup failed"
 	grep -Fq 'Dependency and environment check passed.' <<<"$output" ||
 		fail "MODE=check must complete before panel or Xray mutations"
 	grep -Fq 'Shared client subscriptions' <<<"$output" ||
@@ -1855,7 +1884,7 @@ test_ensure_amneziawg_client_plan_records_add() {
 }
 
 test_afterstart_entrypoint_selects_udp443_backend() {
-	local script block script_main
+	local script block bash_pipeline
 	script="$SCRIPTS_DIR/01_AfterStart/3x-ui-upd.sh"
 	block=$(sed -n '/case "$udp_backend" in/,/^[\t ]*esac/p' "$script")
 	grep -Fq 'delete_managed_inbound_kind hysteria2' <<<"$block" ||
@@ -1864,8 +1893,8 @@ test_afterstart_entrypoint_selects_udp443_backend() {
 		fail "AfterStart must ensure amneziawg inbound for amneziawg backend"
 	grep -Fq 'delete_managed_inbound_kind amneziawg' <<<"$block" ||
 		fail "AfterStart must delete inactive UDP443 backend inbounds"
-	script_main=$(sed -n '/^main()/,/^}/p' "$script")
-	grep -Fq 'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' <<<"$script_main" ||
+	bash_pipeline=$(sed -n '/^run_bash_managed_runtime()/,/^}/p' "$script")
+	grep -Fq 'ensure_shared_client "$vision_id" "$xhttp_id" "$grpc_id" "$hysteria2_id" "$amneziawg_id" "$desired"' <<<"$bash_pipeline" ||
 		fail "shared client must attach active amneziawg inbound for subscription parity"
 }
 
