@@ -53,6 +53,23 @@ main() {
 	TMP_ROOT=$(mktemp -d)
 	http_init "$TMP_ROOT"
 	load_runtime_env "$SCRIPT_DIR"
+	XUI_RUNTIME_ENGINE=${XUI_RUNTIME_ENGINE:-bash}
+	XUI_RUNTIME_ENGINE=${XUI_RUNTIME_ENGINE,,}
+	export XUI_RUNTIME_ENGINE
+	case "$XUI_RUNTIME_ENGINE" in
+	bash | dual | python) ;;
+	*) die "XUI_RUNTIME_ENGINE must be bash|dual|python" ;;
+	esac
+	require_apply_mode
+	check_dependencies
+	if [[ "$XUI_RUNTIME_ENGINE" == "python" ]]; then
+		local python_root=/mnt/sh/python
+		if [[ ! -d "$python_root" ]]; then
+			python_root="$SCRIPT_DIR/../python"
+		fi
+		export PYTHONPATH="$python_root${PYTHONPATH:+:$PYTHONPATH}"
+		exec python3 -m xui_runtime --mode "$MODE"
+	fi
 	# shellcheck source=../lib/sub_admin_routing.bash
 	. "$LIB_DIR/sub_admin_routing.bash"
 	# shellcheck source=../lib/sub_balancer.bash
@@ -82,9 +99,7 @@ main() {
 	if [[ -z "${PUBLIC_IPV4:-}" ]]; then
 		log WARN "PUBLIC_IPV4 empty: admin Clash/JSON hosts maps omitted"
 	fi
-	require_apply_mode
-	check_dependencies
-	log INFO "3x-ui managed runtime started MODE=$MODE"
+	log INFO "3x-ui managed runtime started MODE=$MODE engine=$XUI_RUNTIME_ENGINE"
 
 	if [[ "$MODE" == "check" ]]; then
 		log INFO "Dependency and environment check passed."

@@ -1,0 +1,1 @@
+"""Desired-state builders (stub package)."""

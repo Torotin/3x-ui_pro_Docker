@@ -7,6 +7,8 @@ cd "$ROOT_DIR"
 bash tests/3x-ui-scripts/test_download.bash
 bash tests/3x-ui-scripts/test_libs.bash
 
+PYTHONPATH="$ROOT_DIR/docker-proxy/3x-ui/scripts/python" python3 -m unittest discover -s tests/3x-ui-scripts/python -v
+
 mapfile -t shell_files < <(
 	find docker-proxy/3x-ui/scripts -type f \( -name '*.sh' -o -name '*.bash' -o -name '*.mod' \) | sort
 )

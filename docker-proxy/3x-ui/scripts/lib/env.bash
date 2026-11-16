@@ -190,10 +190,17 @@ load_runtime_env() {
 
 # Проверяет наличие утилит, требуемых сценарию после запуска контейнера.
 check_dependencies() {
-	local missing=() cmd
+	local missing=() cmd engine
+	engine=${XUI_RUNTIME_ENGINE:-bash}
+	engine=${engine,,}
 	for cmd in bash curl jq grep mktemp sed tr sort head awk base64 od; do
 		command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 	done
+	case "$engine" in
+	python | dual)
+		command -v python3 >/dev/null 2>&1 || missing+=("python3")
+		;;
+	esac
 	if ((${#missing[@]} > 0)); then
 		die "Missing required utilities: ${missing[*]}. Install them in the image/setup stage."
 	fi

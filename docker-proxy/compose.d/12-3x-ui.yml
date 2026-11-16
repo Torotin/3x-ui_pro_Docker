@@ -34,6 +34,7 @@ services:
       - "traefik:172.18.0.6"
     volumes:
       - ../3x-ui/scripts/lib:/mnt/sh/lib:rw
+      - ../3x-ui/scripts/python:/mnt/sh/python:ro
       - ../3x-ui/scripts/00_BeforeStart:/mnt/sh/beforestart:rw
       - ../3x-ui/scripts/01_AfterStart:/mnt/sh/afterstart:rw
       # Mihomo client Clash routing overlay → inline subClashRules (not a public URL).

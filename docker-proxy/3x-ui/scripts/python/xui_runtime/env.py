@@ -1,0 +1,1 @@
+"""Runtime environment loading (stub)."""
