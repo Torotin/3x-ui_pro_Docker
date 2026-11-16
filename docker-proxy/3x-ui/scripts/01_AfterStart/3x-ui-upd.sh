@@ -47,6 +47,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Сверяет bash build_desired_state с Python (только XUI_RUNTIME_ENGINE=dual).
+assert_dual_desired_parity() {
+	local desired_json=$1 py_root bash_json_file
+	[[ "$XUI_RUNTIME_ENGINE" == "dual" ]] || return 0
+	py_root=/mnt/sh/python
+	if [[ ! -d "$py_root" ]]; then
+		py_root="$SCRIPT_DIR/../python"
+	fi
+	export PYTHONPATH="$py_root${PYTHONPATH:+:$PYTHONPATH}"
+	bash_json_file=$(mktemp "$TMP_ROOT/desired-bash.XXXXXX")
+	printf '%s' "$desired_json" >"$bash_json_file"
+	python3 -m xui_runtime.parity desired --bash-json-file "$bash_json_file" \
+		|| die "Python desired-state parity failed"
+}
+
 # Запускает полный цикл панели и Xray в выбранном режиме.
 main() {
 	local desired vision_id xhttp_id grpc_id="" hysteria2_id="" amneziawg_id="" udp_backend nodes_file remarks_file
@@ -104,7 +119,9 @@ main() {
 	if [[ "$MODE" == "check" ]]; then
 		log INFO "Dependency and environment check passed."
 		# Same URL dump as apply: env + stable shared subId (no panel required).
-		log_shared_autogen_subscription_urls "$(build_desired_state)"
+		desired=$(build_desired_state)
+		log_shared_autogen_subscription_urls "$desired"
+		assert_dual_desired_parity "$desired"
 		return 0
 	fi
 
@@ -112,6 +129,7 @@ main() {
 	resolve_panel_base || die "Could not resolve and login to 3x-ui panel."
 	detect_country_flag || true
 	desired=$(build_desired_state)
+	assert_dual_desired_parity "$desired"
 	# AUTO/PROXY groups need node names; prefer desired inbound remarks (chicken-egg
 	# vs live inbounds that may not exist yet).
 	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
