@@ -1,1 +1,312 @@
-"""Runtime environment loading (stub)."""
+"""Runtime environment loading and normalization for the Python xui_runtime."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import shutil
+from collections.abc import Mapping
+from pathlib import Path
+
+_PRESERVE_FROM_PROCESS = (
+    "MODE",
+    "ENABLE_VLESS_GRPC",
+    "ENABLE_HYSTERIA2",
+    "ENABLE_AMNEZIAWG",
+    "ENABLE_MIHOMO",
+    "UDP443_BACKEND",
+    "PORT_LOCAL_UDP443",
+)
+
+_BOOL_RUNTIME_VARS = (
+    "ENABLE_VLESS_GRPC",
+    "ENABLE_HYSTERIA2",
+    "ENABLE_AMNEZIAWG",
+    "ENABLE_MIHOMO",
+)
+
+_ENV_ASSIGN_RE = re.compile(
+    r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$"
+)
+_PARAM_EXPANSION_RE = re.compile(
+    r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}"
+)
+
+
+def deterministic_sub_id(webdomain: str, shared_email: str) -> str:
+    """Stable 16-char subId when CLIENT_SUB_ID is unset (matches bash sha256sum|cut)."""
+    host = webdomain if webdomain else "localhost"
+    digest = hashlib.sha256(f"{host}:{shared_email}".encode("ascii")).hexdigest()
+    return digest[:16]
+
+
+def normalize_bool_value(name: str, value: str) -> str:
+    """Return ``true`` or ``false``; raise ValueError for invalid values."""
+    token = (value or "").strip().lower()
+    if token in ("1", "true", "yes", "y", "on", "enabled"):
+        return "true"
+    if token in ("0", "false", "no", "n", "off", "disabled"):
+        return "false"
+    raise ValueError(
+        f"{name} must be boolean: true/false, yes/no, on/off, "
+        f"enabled/disabled, or 1/0"
+    )
+
+
+def normalize_base_path(raw: str | None) -> str:
+    """Normalize panel base path to ``''`` or ``/segment`` (bash parity)."""
+    value = (raw or "").strip()
+    if value.startswith("/"):
+        value = value[1:]
+    if value.endswith("/"):
+        value = value[:-1]
+    if not value:
+        return ""
+    return f"/{value}"
+
+
+def require_mode(mode: str) -> None:
+    """Reject unsupported MODE values (apply, plan, check only)."""
+    if mode not in ("apply", "plan", "check"):
+        raise ValueError(
+            f"Unsupported MODE={mode}. Use MODE=apply, MODE=plan, or MODE=check."
+        )
+
+
+def require_apply_mode() -> None:
+    """Alias reading MODE from the environment (bash ``require_apply_mode``)."""
+    require_mode(os.environ.get("MODE", "apply"))
+
+
+def _expand_param_refs(value: str, env: dict[str, str]) -> str:
+    def repl(match: re.Match[str]) -> str:
+        name = match.group(1)
+        default = match.group(2)
+        if default is not None:
+            current = env.get(name)
+            if current is None or current == "":
+                return default
+            return current
+        return env.get(name, "")
+
+    prev = None
+    out = value
+    while prev != out:
+        prev = out
+        out = _PARAM_EXPANSION_RE.sub(repl, out)
+    return out
+
+
+def _strip_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    return value
+
+
+def load_env_file(path: str | Path, env: dict[str, str]) -> None:
+    """Load ``KEY=VALUE`` lines from a file into ``env`` (subset of bash ``source``)."""
+    file_path = Path(path)
+    if not file_path.is_file():
+        return
+    for raw_line in file_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _ENV_ASSIGN_RE.match(raw_line)
+        if not match:
+            continue
+        key, raw_value = match.group(1), match.group(2).strip()
+        raw_value = _strip_quotes(raw_value)
+        env[key] = _expand_param_refs(raw_value, env)
+
+
+def _set_default(env: dict[str, str], key: str, value: str) -> None:
+    if key not in env or env[key] == "":
+        env[key] = value
+
+
+def init_defaults(env: dict[str, str]) -> None:
+    """Apply bash ``init_defaults`` ``:=`` semantics."""
+    _set_default(env, "MODE", "apply")
+    _set_default(env, "USERNAME", "admin")
+    _set_default(env, "PASSWORD", "admin")
+    _set_default(env, "NEW_ADMIN_USERNAME", "")
+    _set_default(env, "NEW_ADMIN_PASSWORD", "")
+    _set_default(env, "XUI_API_TOKEN", "")
+    _set_default(env, "TWO_FACTOR_CODE", "")
+    _set_default(env, "panelOutbound", "")
+    _set_default(env, "WEBDOMAIN", "")
+    _set_default(env, "webListen", "0.0.0.0")
+    _set_default(env, "webDomain", "")
+    _set_default(env, "webPort", env.get("PORT_LOCAL_VLESS_PANEL", "2053"))
+    _set_default(env, "webCertFile", "")
+    _set_default(env, "webKeyFile", "")
+    _set_default(env, "webBasePath", "")
+    _set_default(env, "PORT_LOCAL_VISION", "443")
+    _set_default(env, "PORT_LOCAL_XHTTP", "8443")
+    _set_default(env, "PORT_LOCAL_TRAEFIK", "4443")
+    _set_default(env, "PORT_LOCAL_TELEMT_PROXY", "9443")
+    _set_default(env, "PORT_LOCAL_XRAY_MIXED", "10808")
+    _set_default(env, "ENABLE_TELEMT", "false")
+    _set_default(env, "VISION_FALLBACK_HOST", "telemt")
+    _set_default(env, "VISION_FALLBACK_PORT", env.get("PORT_LOCAL_TELEMT_PROXY", "9443"))
+    _set_default(env, "VISION_FALLBACK_XVER", "1")
+    _set_default(env, "REALITY_TARGET_HOST", "telemt")
+    _set_default(env, "REALITY_TARGET_PORT", env.get("PORT_LOCAL_TELEMT_PROXY", "9443"))
+    _set_default(env, "REALITY_TARGET_XVER", "1")
+    _set_default(env, "URI_VLESS_XHTTP", "")
+    _set_default(env, "URI_CLASH_PATH", "")
+    webdomain = env.get("WEBDOMAIN", "")
+    prefix = f"{webdomain}-" if webdomain else ""
+    _set_default(env, "CLIENT_EMAIL_PREFIX", f"{prefix}autogen")
+    _set_default(env, "CLIENT_EMAIL_SHARED", env.get("CLIENT_EMAIL_PREFIX", "autogen"))
+    _set_default(env, "CLIENT_EMAIL_VISION", f"{env.get('CLIENT_EMAIL_PREFIX', 'autogen')}-vision")
+    _set_default(env, "CLIENT_EMAIL_XHTTP", f"{env.get('CLIENT_EMAIL_PREFIX', 'autogen')}-xhttp")
+    _set_default(env, "CLIENT_SUB_ID", "")
+    _set_default(env, "USE_VLESS_PQ", "true")
+    _set_default(env, "USE_MLDSA65", "false")
+    _set_default(env, "XRAY_LOCAL_RESTART", "true")
+    _set_default(env, "XRAY_MANAGED_DNS", "true")
+    _set_default(env, "XRAY_MANAGED_WARP", "true")
+    _set_default(env, "XRAY_MANAGED_WARP_CONSOLE", "false")
+    _set_default(env, "XRAY_MANAGED_TOR", "true")
+    _set_default(env, "ENABLE_MIHOMO", "false")
+    _set_default(env, "WARP_REUSE_PANEL_CONFIG", "false")
+    _set_default(env, "WARP_ENDPOINT_HOST", "engage.cloudflareclient.com:2408")
+    _set_default(env, "USQUE_HOST", "usque")
+    _set_default(env, "USQUE_PORT", "1080")
+    _set_default(env, "EXTERNAL_PROXY_PROBE_TIMEOUT", "10")
+    _set_default(env, "WARP_PROXY_PROBE_URL", "https://www.cloudflare.com/cdn-cgi/trace")
+
+    cert = env.get("XRAY_TLS_CERT_FILE", "")
+    if cert in ("", "/etc/x-ui/xray-managed.crt"):
+        domain = env.get("WEBDOMAIN", "localhost") or "localhost"
+        env["XRAY_TLS_CERT_FILE"] = f"/etc/traefik/pem/{domain}-cert.pem"
+    key = env.get("XRAY_TLS_KEY_FILE", "")
+    if key in ("", "/etc/x-ui/xray-managed.key"):
+        domain = env.get("WEBDOMAIN", "localhost") or "localhost"
+        env["XRAY_TLS_KEY_FILE"] = f"/etc/traefik/pem/{domain}-key.pem"
+
+    _set_default(env, "TOR_PROXY_PROBE_URL", "https://check.torproject.org/api/ip")
+    _set_default(env, "TOR_PROXY_HOST", "tor-proxy")
+    _set_default(env, "TOR_PROXY_PORT", "1080")
+    _set_default(env, "CUSTOM_GEO_RESOURCES", "")
+    _set_default(env, "GEODATA_CRON", "0 4 * * *")
+    _set_default(env, "GEOFILES_UPDATE_ON_START", "true")
+    _set_default(env, "DOWNLOAD_GEO_DIRECT", "true")
+    _set_default(env, "DOWNLOAD_TRANSPORTS", "")
+    _set_default(env, "DOWNLOAD_URL_FALLBACKS", "")
+    _set_default(env, "DOWNLOAD_CONNECT_TIMEOUT", "5")
+    _set_default(env, "DOWNLOAD_MAX_TIME", "120")
+    _set_default(env, "XRAY_RESTART_SETTLE_SECONDS", "5")
+    _set_default(env, "XRAY_RESTART_PORT_TIMEOUT", "30")
+
+
+def normalize_udp443_port_env(env: dict[str, str]) -> dict[str, str]:
+    if not env.get("PORT_LOCAL_UDP443") and env.get("PORT_LOCAL_HYSTERIA"):
+        env["PORT_LOCAL_UDP443"] = env["PORT_LOCAL_HYSTERIA"]
+    if not env.get("PORT_LOCAL_UDP443"):
+        env["PORT_LOCAL_UDP443"] = "443"
+    env["PORT_LOCAL_HYSTERIA"] = env["PORT_LOCAL_UDP443"]
+    return env
+
+
+def normalize_runtime_bool_env(env: dict[str, str]) -> dict[str, str]:
+    for name in _BOOL_RUNTIME_VARS:
+        if name not in env:
+            continue
+        env[name] = normalize_bool_value(name, env[name])
+    return env
+
+
+def normalize_udp443_backend(env: dict[str, str]) -> dict[str, str]:
+    raw = env.get("UDP443_BACKEND", "")
+    if not raw:
+        if "ENABLE_HYSTERIA2" in env:
+            env["ENABLE_HYSTERIA2"] = normalize_bool_value(
+                "ENABLE_HYSTERIA2", env["ENABLE_HYSTERIA2"]
+            )
+            if env["ENABLE_HYSTERIA2"] == "true":
+                env["UDP443_BACKEND"] = "hysteria2"
+            else:
+                env["UDP443_BACKEND"] = "amneziawg"
+        else:
+            env["UDP443_BACKEND"] = "amneziawg"
+    else:
+        env["UDP443_BACKEND"] = raw.strip().lower()
+
+    backend = env["UDP443_BACKEND"]
+    if backend not in ("amneziawg", "hysteria2", "off"):
+        raise ValueError(
+            f"UDP443_BACKEND must be amneziawg|hysteria2|off (got: {backend})"
+        )
+
+    if backend == "amneziawg":
+        env["ENABLE_AMNEZIAWG"] = "true"
+        env["ENABLE_HYSTERIA2"] = "false"
+    elif backend == "hysteria2":
+        env["ENABLE_AMNEZIAWG"] = "false"
+        env["ENABLE_HYSTERIA2"] = "true"
+    else:
+        env["ENABLE_AMNEZIAWG"] = "false"
+        env["ENABLE_HYSTERIA2"] = "false"
+    return env
+
+
+def load_runtime_env(
+    script_dir: str,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Merge cwd/.env, mounted 3x-ui.env, defaults, and normalizers."""
+    base = dict(environ if environ is not None else os.environ)
+    env = {k: str(v) for k, v in base.items()}
+
+    preserved: dict[str, str] = {}
+    for name in _PRESERVE_FROM_PROCESS:
+        if name in env:
+            preserved[name] = env[name]
+
+    load_env_file(Path.cwd() / ".env", env)
+    load_env_file(Path(script_dir).resolve().parent.parent / "3x-ui.env", env)
+
+    for name, value in preserved.items():
+        env[name] = value
+
+    init_defaults(env)
+    normalize_udp443_port_env(env)
+    normalize_runtime_bool_env(env)
+    normalize_udp443_backend(env)
+    return env
+
+
+_BASH_DEPENDENCIES = (
+    "bash",
+    "curl",
+    "jq",
+    "grep",
+    "mktemp",
+    "sed",
+    "tr",
+    "sort",
+    "head",
+    "awk",
+    "base64",
+    "od",
+)
+
+
+def check_dependencies(engine: str) -> None:
+    """Ensure required CLI tools exist for the chosen runtime engine."""
+    engine_key = (engine or os.environ.get("XUI_RUNTIME_ENGINE", "bash")).strip().lower()
+    missing: list[str] = []
+    for cmd in _BASH_DEPENDENCIES:
+        if shutil.which(cmd) is None:
+            missing.append(cmd)
+    if engine_key in ("python", "dual") and shutil.which("python3") is None:
+        missing.append("python3")
+    if missing:
+        joined = " ".join(missing)
+        raise RuntimeError(
+            f"Missing required utilities: {joined}. Install them in the image/setup stage."
+        )
