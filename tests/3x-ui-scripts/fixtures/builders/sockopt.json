@@ -1,0 +1,1 @@
+{"V6Only":false,"acceptProxyProtocol":false,"dialerProxy":"","domainStrategy":"UseIP","interface":"","mark":0,"tcpFastOpen":true,"tcpKeepAliveIdle":300,"tcpKeepAliveInterval":0,"tcpMaxSeg":1440,"tcpMptcp":false,"tcpUserTimeout":10000,"tcpWindowClamp":600,"tcpcongestion":"bbr","tproxy":"tproxy","trustedXForwardedFor":["X-Fixture-Trusted"]}

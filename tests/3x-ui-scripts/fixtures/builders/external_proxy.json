@@ -1,0 +1,1 @@
+[{"forceTls":"tls","dest":"fixture.example.test","port":443,"remark":"","sni":"fixture.example.test","fingerprint":"random","alpn":["h2"]}]

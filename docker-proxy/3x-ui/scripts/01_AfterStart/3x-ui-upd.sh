@@ -40,6 +40,8 @@ ENSURE_SHARED_CLIENT_AUTH=
 . "$LIB_DIR/inbound_runtime.bash"
 # shellcheck source=../lib/xray_runtime.bash
 . "$LIB_DIR/xray_runtime.bash"
+# shellcheck source=../lib/parity_hooks.bash
+. "$LIB_DIR/parity_hooks.bash"
 
 # Удаляет временный каталог HTTP-ответов и подготовленных JSON при завершении.
 cleanup() {
@@ -122,6 +124,7 @@ main() {
 		desired=$(build_desired_state)
 		log_shared_autogen_subscription_urls "$desired"
 		assert_dual_desired_parity "$desired"
+		assert_dual_stream_builders_parity "$desired"
 		return 0
 	fi
 
@@ -130,6 +133,7 @@ main() {
 	detect_country_flag || true
 	desired=$(build_desired_state)
 	assert_dual_desired_parity "$desired"
+	assert_dual_stream_builders_parity "$desired"
 	# AUTO/PROXY groups need node names; prefer desired inbound remarks (chicken-egg
 	# vs live inbounds that may not exist yet).
 	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
