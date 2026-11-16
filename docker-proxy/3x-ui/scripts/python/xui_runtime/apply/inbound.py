@@ -224,6 +224,101 @@ def inbound_vless_client_uuid(
     return None
 
 
+_MANAGED_VLESS_CLIENT_KEYS = (
+    "id",
+    "uuid",
+    "email",
+    "subId",
+    "flow",
+    "enable",
+    "limitIp",
+    "totalGB",
+    "expiryTime",
+    "tgId",
+)
+
+
+def _normalize_empty_default(value: Any) -> Any:
+    if value is None:
+        return ""
+    return value
+
+
+def managed_vless_client_projection(client: Mapping[str, Any]) -> dict[str, Any]:
+    """Project fields AfterStart owns; drop empty panel defaults that cause churn."""
+    out: dict[str, Any] = {}
+    for key in _MANAGED_VLESS_CLIENT_KEYS:
+        if key in client:
+            out[key] = client.get(key)
+    for key in ("password", "auth"):
+        raw = _normalize_empty_default(client.get(key))
+        if str(raw).strip() != "":
+            out[key] = raw
+    if "uuid" not in out and "id" in out:
+        out["uuid"] = out["id"]
+    if "id" not in out and "uuid" in out:
+        out["id"] = out["uuid"]
+    out["tgId"] = _normalize_tg_id(out.get("tgId", 0))
+    return out
+
+
+def _vless_settings_without_clients(settings: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in settings.items() if key != "clients"}
+
+
+def _sorted_vless_client_projections(
+    settings: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    clients = settings.get("clients") or []
+    projected = [managed_vless_client_projection(client) for client in clients]
+    return sorted(projected, key=lambda row: str(row.get("email") or ""))
+
+
+def vless_inbound_settings_match(
+    current: Mapping[str, Any],
+    desired: Mapping[str, Any],
+) -> bool:
+    if not json_equal(
+        _vless_settings_without_clients(current),
+        _vless_settings_without_clients(desired),
+    ):
+        return False
+    return json_equal(
+        _sorted_vless_client_projections(current),
+        _sorted_vless_client_projections(desired),
+    )
+
+
+def _vless_client_field_for_compare(
+    secrets: SharedClientSecrets | None,
+    inbound_client: Mapping[str, Any] | None,
+    field: str,
+) -> str:
+    if inbound_client is not None and field in inbound_client:
+        return str(inbound_client.get(field) or "")
+    if secrets:
+        value = getattr(secrets, field, "") or ""
+        if str(value).strip():
+            return str(value)
+    return ""
+
+
+def _vless_client_field_for_write(
+    secrets: SharedClientSecrets | None,
+    inbound_client: Mapping[str, Any] | None,
+    field: str,
+) -> str:
+    if secrets:
+        value = getattr(secrets, field, "") or ""
+        if str(value).strip():
+            return str(value)
+    if inbound_client is not None:
+        value = str(inbound_client.get(field) or "").strip()
+        if value:
+            return value
+    return new_client_secret()
+
+
 def vless_client_api_json(
     client_id: str,
     email: str,
@@ -1006,8 +1101,16 @@ def ensure_vless_inbound_client(
     email = desired["clients"]["shared"]["email"]
     sub_id = desired["clients"]["shared"]["subId"]
     legacy, legacy_hysteria = _legacy_emails(env)
-    password = (secrets.password if secrets else "") or new_client_secret()
-    auth = (secrets.auth if secrets else "") or new_client_secret()
+    existing_managed = next(
+        (
+            client
+            for client in current_settings.get("clients") or []
+            if client.get("email") == email
+        ),
+        None,
+    )
+    password = _vless_client_field_for_compare(secrets, existing_managed, "password")
+    auth = _vless_client_field_for_compare(secrets, existing_managed, "auth")
     desired_client = vless_client_api_json(
         client_id, email, sub_id, "", password, auth
     )
@@ -1022,9 +1125,23 @@ def ensure_vless_inbound_client(
         filtered.append(normalized)
     filtered.append(desired_client)
     desired_settings = {**current_settings, "decryption": "none", "encryption": "none", "clients": filtered}
-    if json_equal(current_settings, desired_settings):
+    if vless_inbound_settings_match(current_settings, desired_settings):
         log.log("INFO", f"{label} VLESS inbound client already matches desired state.")
         return
+    write_password = _vless_client_field_for_write(secrets, existing_managed, "password")
+    write_auth = _vless_client_field_for_write(secrets, existing_managed, "auth")
+    if write_password != password or write_auth != auth:
+        desired_client = vless_client_api_json(
+            client_id, email, sub_id, "", write_password, write_auth
+        )
+        desired_client["flow"] = flow
+        filtered[-1] = desired_client
+        desired_settings = {
+            **current_settings,
+            "decryption": "none",
+            "encryption": "none",
+            "clients": filtered,
+        }
     components = current_inbound_components_json(inbound)
     components["settings"] = desired_settings
     if plan_or_apply(mode, stats, f"{label} VLESS inbound client synchronized"):

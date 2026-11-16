@@ -16,6 +16,7 @@ from xui_runtime.apply.inbound import (  # noqa: E402
     delete_managed_inbound_kind,
     ensure_inbound,
     ensure_shared_client,
+    managed_vless_client_projection,
 )
 from xui_runtime.common import ApplyStats  # noqa: E402
 from xui_runtime.desired import build_desired_state  # noqa: E402
@@ -71,6 +72,36 @@ class TestDeleteManagedInboundPlan(unittest.TestCase):
         delete_managed_inbound_kind("amneziawg", desired, api, "plan", stats)
         api.del_inbound.assert_not_called()
         self.assertEqual(stats.change_count, 1)
+
+
+class TestManagedVlessClientProjection(unittest.TestCase):
+    def test_managed_vless_projection_ignores_empty_password_auth(self) -> None:
+        current = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "email": "a@example.test",
+            "subId": "deadbeefcafebabe",
+            "flow": "xtls-rprx-vision",
+            "password": "",
+            "auth": "",
+            "enable": True,
+            "tgId": 0,
+        }
+        desired = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "email": "a@example.test",
+            "subId": "deadbeefcafebabe",
+            "flow": "xtls-rprx-vision",
+            "password": "",
+            "auth": "",
+            "enable": True,
+            "tgId": 0,
+        }
+        self.assertEqual(
+            managed_vless_client_projection(current),
+            managed_vless_client_projection(desired),
+        )
 
 
 class TestEnsureInboundVision(unittest.TestCase):
