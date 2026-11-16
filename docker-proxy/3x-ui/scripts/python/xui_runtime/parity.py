@@ -24,6 +24,15 @@ from xui_runtime.builders.streams import (
     build_vision_stream_json,
     build_xhttp_stream_json,
 )
+from xui_runtime.apply.sub_balancer import build_admin_sub_json_observatory
+from xui_runtime.apply.sub_routing import (
+    admin_sub_clash_default_mode,
+    build_admin_sub_clash_rules,
+    build_admin_sub_json_dns,
+    build_admin_sub_json_rules,
+    build_mihomo_client_sub_clash_rules,
+    mihomo_client_routing_file,
+)
 from xui_runtime.desired import build_desired_state
 
 
@@ -205,6 +214,29 @@ def build_python_builder(
             args.get("tproxy", "off"),
             trusted_xff=trusted,
         )
+    if name == "admin_sub_json_rules":
+        webdomain = args.get("webdomain", _env_str(env, "WEBDOMAIN"))
+        return build_admin_sub_json_rules(webdomain)
+    if name == "admin_sub_json_dns":
+        webdomain = args.get("webdomain", _env_str(env, "WEBDOMAIN"))
+        public_ipv4 = args.get("public_ipv4", _env_str(env, "PUBLIC_IPV4"))
+        return build_admin_sub_json_dns(webdomain, public_ipv4)
+    if name == "admin_sub_json_observatory":
+        return build_admin_sub_json_observatory()
+    if name == "admin_sub_clash_rules":
+        webdomain = args.get("webdomain", _env_str(env, "WEBDOMAIN"))
+        public_ipv4 = args.get("public_ipv4", _env_str(env, "PUBLIC_IPV4"))
+        mode = args.get("mode", admin_sub_clash_default_mode())
+        node_names = args.get("node_names") or []
+        return build_admin_sub_clash_rules(webdomain, public_ipv4, mode, node_names)
+    if name == "mihomo_client_sub_clash_rules":
+        routing_file = args.get("routing_file")
+        if not routing_file:
+            discovered = mihomo_client_routing_file(env)
+            routing_file = str(discovered) if discovered is not None else ""
+        webdomain = args.get("webdomain", _env_str(env, "WEBDOMAIN"))
+        public_ipv4 = args.get("public_ipv4", _env_str(env, "PUBLIC_IPV4"))
+        return build_mihomo_client_sub_clash_rules(routing_file, webdomain, public_ipv4)
     raise ValueError(f"unknown builder name: {name}")
 
 

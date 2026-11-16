@@ -87,3 +87,61 @@ assert_dual_stream_builders_parity() {
 		assert_dual_builder_parity hysteria2_settings "$settings" '{}'
 	fi
 }
+
+# Compares bash subscription rule builders to Python (XUI_RUNTIME_ENGINE=dual).
+assert_dual_sub_builders_parity() {
+	local node_names_file=${1:-}
+	[[ "${XUI_RUNTIME_ENGINE:-}" == "dual" ]] || return 0
+	if ! declare -F build_admin_sub_json_rules >/dev/null 2>&1; then
+		# shellcheck source=/dev/null
+		. "${LIB_DIR:-$(dirname "${BASH_SOURCE[0]}")}/sub_admin_routing.bash"
+	fi
+	if ! declare -F build_admin_sub_json_observatory >/dev/null 2>&1; then
+		# shellcheck source=/dev/null
+		. "${LIB_DIR:-$(dirname "${BASH_SOURCE[0]}")}/sub_balancer.bash"
+	fi
+	local webdomain=${WEBDOMAIN:-} public_ipv4=${PUBLIC_IPV4:-} mode args_json bash_json clash_yaml clash_json routing_file
+	[[ -n "$webdomain" ]] || return 0
+
+	bash_json=$(build_admin_sub_json_rules "$webdomain")
+	[[ -n "$bash_json" ]] || return 0
+	args_json=$(jq -nc --arg webdomain "$webdomain" '{webdomain:$webdomain}')
+	assert_dual_builder_parity admin_sub_json_rules "$bash_json" "$args_json"
+
+	if [[ -n "$public_ipv4" ]]; then
+		bash_json=$(build_admin_sub_json_dns "$webdomain" "$public_ipv4")
+		[[ -n "$bash_json" ]] || return 0
+		args_json=$(jq -nc --arg webdomain "$webdomain" --arg public_ipv4 "$public_ipv4" \
+			'{webdomain:$webdomain,public_ipv4:$public_ipv4}')
+		assert_dual_builder_parity admin_sub_json_dns "$bash_json" "$args_json"
+	fi
+
+	bash_json=$(build_admin_sub_json_observatory)
+	assert_dual_builder_parity admin_sub_json_observatory "$bash_json" '{}'
+
+	mode=$(admin_sub_clash_default_mode)
+	clash_yaml=$(build_admin_sub_clash_rules "$webdomain" "$public_ipv4" "$mode")
+	clash_json=$(jq -Rs -- . <<<"$clash_yaml")
+	args_json=$(jq -nc --arg webdomain "$webdomain" --arg public_ipv4 "$public_ipv4" --arg mode "$mode" \
+		'{webdomain:$webdomain,public_ipv4:$public_ipv4,mode:$mode,node_names:[]}')
+	assert_dual_builder_parity admin_sub_clash_rules "$clash_json" "$args_json"
+
+	if [[ -n "$node_names_file" && -f "$node_names_file" && -s "$node_names_file" ]]; then
+		clash_yaml=$(build_admin_sub_clash_rules "$webdomain" "$public_ipv4" "$mode" "$node_names_file")
+		clash_json=$(jq -Rs -- . <<<"$clash_yaml")
+		args_json=$(jq -nc --arg webdomain "$webdomain" --arg public_ipv4 "$public_ipv4" --arg mode "$mode" \
+			--slurpfile nodes "$node_names_file" \
+			'{webdomain:$webdomain,public_ipv4:$public_ipv4,mode:$mode,node_names:($nodes[0] | split("\n") | map(select(length > 0)))}')
+		assert_dual_builder_parity admin_sub_clash_rules "$clash_json" "$args_json"
+	fi
+
+	routing_file=
+	routing_file=$(mihomo_client_routing_file) || routing_file=
+	if [[ -n "$routing_file" ]]; then
+		clash_yaml=$(build_mihomo_client_sub_clash_rules "$routing_file" "$webdomain" "$public_ipv4")
+		clash_json=$(jq -Rs -- . <<<"$clash_yaml")
+		args_json=$(jq -nc --arg routing_file "$routing_file" --arg webdomain "$webdomain" --arg public_ipv4 "$public_ipv4" \
+			'{routing_file:$routing_file,webdomain:$webdomain,public_ipv4:$public_ipv4}')
+		assert_dual_builder_parity mihomo_client_sub_clash_rules "$clash_json" "$args_json"
+	fi
+}

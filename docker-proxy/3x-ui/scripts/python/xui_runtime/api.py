@@ -522,3 +522,12 @@ class PanelApi:
 
     def get_vless_enc(self) -> HttpResult:
         return self.api_get("/panel/api/server/getNewVlessEnc")
+
+    def list_sub_balancers(self) -> HttpResult:
+        return self.api_get("/panel/api/sub-balancers")
+
+    def add_sub_balancer(self, form: list[tuple[str, str]]) -> HttpResult:
+        return self.api_post("/panel/api/sub-balancers", form=form)
+
+    def update_sub_balancer(self, balancer_id: str | int, form: list[tuple[str, str]]) -> HttpResult:
+        return self.api_post(f"/panel/api/sub-balancers/{balancer_id}", form=form)

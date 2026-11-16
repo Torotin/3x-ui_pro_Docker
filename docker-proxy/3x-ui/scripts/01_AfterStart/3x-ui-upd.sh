@@ -125,6 +125,7 @@ main() {
 		log_shared_autogen_subscription_urls "$desired"
 		assert_dual_desired_parity "$desired"
 		assert_dual_stream_builders_parity "$desired"
+		assert_dual_sub_builders_parity
 		return 0
 	fi
 
@@ -134,6 +135,7 @@ main() {
 	desired=$(build_desired_state)
 	assert_dual_desired_parity "$desired"
 	assert_dual_stream_builders_parity "$desired"
+	assert_dual_sub_builders_parity
 	# AUTO/PROXY groups need node names; prefer desired inbound remarks (chicken-egg
 	# vs live inbounds that may not exist yet).
 	nodes_file=$(mktemp "$TMP_ROOT/clash-nodes.XXXXXX")
@@ -169,6 +171,7 @@ main() {
 		fi
 		subClashRules=$(build_admin_sub_clash_rules "${WEBDOMAIN}" "${PUBLIC_IPV4:-}" "$(admin_sub_clash_default_mode)" "$nodes_file")
 	fi
+	assert_dual_sub_builders_parity "$nodes_file"
 	export subClashEnableRouting=true subClashRules
 	subJsonObservatory=$(build_admin_sub_json_observatory)
 	export subJsonObservatory

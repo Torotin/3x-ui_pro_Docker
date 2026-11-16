@@ -26,6 +26,11 @@ BUILDER_NAMES = frozenset(
         "external_proxy",
         "sockopt",
         "hysteria2_settings",
+        "admin_sub_json_rules",
+        "admin_sub_json_dns",
+        "admin_sub_json_observatory",
+        "admin_sub_clash_rules",
+        "mihomo_client_sub_clash_rules",
     }
 )
 

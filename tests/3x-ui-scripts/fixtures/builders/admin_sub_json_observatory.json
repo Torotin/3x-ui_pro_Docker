@@ -1,0 +1,8 @@
+{
+  "connectivity": "",
+  "destination": "https://www.gstatic.com/generate_204",
+  "httpMethod": "HEAD",
+  "interval": "300s",
+  "sampling": 2,
+  "timeout": "5s"
+}
