@@ -11,6 +11,7 @@ PYTHON_ROOT = ROOT / "docker-proxy" / "3x-ui" / "scripts" / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
+from xui_runtime.apply import inbound as inbound_module  # noqa: E402
 from xui_runtime.apply.inbound import (  # noqa: E402
     repair_inbound_client_tg_ids_db,
     repair_inbound_vless_client_flows_db,
@@ -115,6 +116,53 @@ class TestDbRepairModeGuards(unittest.TestCase):
         con.close()
         settings = json.loads(settings_text)
         self.assertEqual(settings["clients"][0]["tgId"], 123)
+
+    def test_repair_tg_ids_issues_wal_checkpoint_after_write(self) -> None:
+        with patch.object(
+            inbound_module,
+            "_sqlite_commit_with_checkpoint",
+            wraps=inbound_module._sqlite_commit_with_checkpoint,
+        ) as checkpoint:
+            self.assertEqual(
+                repair_inbound_client_tg_ids_db(env=self.env, mode="apply"), 1
+            )
+        checkpoint.assert_called_once()
+
+    def test_repair_shared_client_issues_wal_checkpoint_after_write(self) -> None:
+        with patch.object(
+            inbound_module,
+            "_sqlite_commit_with_checkpoint",
+            wraps=inbound_module._sqlite_commit_with_checkpoint,
+        ) as checkpoint:
+            repair_shared_client_db(
+                "autogen",
+                "new-uuid",
+                "sub",
+                "flow",
+                "p2",
+                "a2",
+                env=self.env,
+                mode="apply",
+            )
+        checkpoint.assert_called_once()
+
+    def test_repair_skips_checkpoint_when_no_write(self) -> None:
+        con = sqlite3.connect(self.db_path, timeout=10.0)
+        settings = json.dumps(
+            {"clients": [{"email": "autogen", "flow": "", "tgId": 123}]}
+        )
+        con.execute("update inbounds set settings=? where id=1", (settings,))
+        con.commit()
+        con.close()
+        with patch.object(
+            inbound_module,
+            "_sqlite_commit_with_checkpoint",
+            wraps=inbound_module._sqlite_commit_with_checkpoint,
+        ) as checkpoint:
+            self.assertEqual(
+                repair_inbound_client_tg_ids_db(env=self.env, mode="apply"), 0
+            )
+        checkpoint.assert_not_called()
 
 
 if __name__ == "__main__":

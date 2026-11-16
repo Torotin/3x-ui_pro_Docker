@@ -1402,6 +1402,11 @@ def _db_path(env: Mapping[str, str]) -> str:
     return env.get("XUI_DB_PATH") or "/etc/x-ui/x-ui.db"
 
 
+def _sqlite_commit_with_checkpoint(con: sqlite3.Connection) -> None:
+    con.commit()
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
 def repair_shared_client_db(
     email: str,
     client_id: str,
@@ -1418,20 +1423,20 @@ def repair_shared_client_db(
     db_path = _db_path(env)
     if not os.path.isfile(db_path) or os.path.getsize(db_path) == 0:
         return
-    sql = (
-        "pragma busy_timeout=5000; "
-        "update clients set uuid=?, password=?, auth=?, flow=?, sub_id=? "
-        "where email=?;"
-    )
     for _attempt in range(5):
         try:
             con = sqlite3.connect(db_path, timeout=10.0)
             try:
-                con.execute(
-                    sql,
+                con.execute("pragma busy_timeout=5000")
+                cur = con.execute(
+                    "update clients set uuid=?, password=?, auth=?, flow=?, sub_id=? "
+                    "where email=?",
                     (client_id, password, auth, flow, sub_id, email),
                 )
-                con.commit()
+                if cur.rowcount > 0:
+                    _sqlite_commit_with_checkpoint(con)
+                else:
+                    con.commit()
                 return
             finally:
                 con.close()
@@ -1477,7 +1482,10 @@ def repair_inbound_client_tg_ids_db(
                     (json.dumps(obj, separators=(",", ":")), inbound_id),
                 )
                 changed += 1
-        con.commit()
+        if changed:
+            _sqlite_commit_with_checkpoint(con)
+        else:
+            con.commit()
     finally:
         con.close()
     if changed:
@@ -1545,7 +1553,10 @@ def repair_inbound_vless_client_flows_db(
                     (json.dumps(obj, separators=(",", ":")), inbound_id),
                 )
                 changed += 1
-        con.commit()
+        if changed:
+            _sqlite_commit_with_checkpoint(con)
+        else:
+            con.commit()
     finally:
         con.close()
     if changed:
