@@ -1597,7 +1597,41 @@ test_sub_balancer_api_wrappers_use_documented_routes() {
 	assert_eq "POST:/panel/api/sub-balancers/7:--data-urlencode:strategy=leastPing" "${observed[2]}" "sub balancer update route mismatch"
 }
 
-test_ensure_auto_sub_balancer_plan_does_not_call_api() {
+test_ensure_auto_sub_balancer_plan_reports_create_without_mutating() {
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/runtime_common.bash"
+	# shellcheck source=/dev/null
+	. "$SCRIPTS_DIR/lib/sub_balancer.bash"
+	local changes=() listed=0
+	export MODE=plan WEBDOMAIN=example.test
+	CHANGE_COUNT=0
+	record_change() {
+		changes+=("$*")
+	}
+	xui_list_sub_balancers() {
+		listed=1
+		HTTP_BODY_FILE=$(mktemp)
+		printf '%s\n' '{"success":true,"obj":[]}' >"$HTTP_BODY_FILE"
+	}
+	http_success_json() {
+		return 0
+	}
+	api_obj_json() {
+		printf '%s\n' '[]'
+	}
+	xui_add_sub_balancer() {
+		fail "plan mode must not create sub balancer"
+	}
+	ensure_auto_sub_balancer 1 "" 2 || fail "plan mode must return success"
+	rm -f "${HTTP_BODY_FILE:-}"
+	unset -f record_change xui_list_sub_balancers http_success_json api_obj_json xui_add_sub_balancer
+	unset MODE WEBDOMAIN
+	[[ "$listed" -eq 1 ]] || fail "plan mode must list sub balancers before deciding"
+	grep -Fq 'PLAN: AUTO-example.test sub balancer created inboundIds=1,2' <<<"$(printf '%s\n' "${changes[@]}")" ||
+		fail "plan mode must log intended AUTO-<domain> sub balancer create"
+}
+
+test_ensure_auto_sub_balancer_plan_noop_when_matches() {
 	# shellcheck source=/dev/null
 	. "$SCRIPTS_DIR/lib/runtime_common.bash"
 	# shellcheck source=/dev/null
@@ -1609,13 +1643,26 @@ test_ensure_auto_sub_balancer_plan_does_not_call_api() {
 		changes+=("$*")
 	}
 	xui_list_sub_balancers() {
-		fail "plan mode must not call sub balancer list API"
+		HTTP_BODY_FILE=$(mktemp)
+		printf '%s\n' '{"success":true,"obj":[{"id":3,"remark":"AUTO-example.test","strategy":"leastPing","enabled":true,"inboundIds":[1,2]}]}' >"$HTTP_BODY_FILE"
 	}
-	ensure_auto_sub_balancer 1 "" 2 || fail "plan mode must return success"
-	unset -f record_change xui_list_sub_balancers
+	http_success_json() {
+		return 0
+	}
+	api_obj_json() {
+		printf '%s\n' '[{"id":3,"remark":"AUTO-example.test","strategy":"leastPing","enabled":true,"inboundIds":[1,2]}]'
+	}
+	xui_add_sub_balancer() {
+		fail "matching plan must not create"
+	}
+	xui_update_sub_balancer() {
+		fail "matching plan must not update"
+	}
+	ensure_auto_sub_balancer 1 2 || fail "plan noop must return success"
+	rm -f "${HTTP_BODY_FILE:-}"
+	unset -f record_change xui_list_sub_balancers http_success_json api_obj_json xui_add_sub_balancer xui_update_sub_balancer
 	unset MODE WEBDOMAIN
-	grep -Fq 'PLAN: AUTO-example.test sub balancer ensured inboundIds=1,2' <<<"$(printf '%s\n' "${changes[@]}")" ||
-		fail "plan mode must log intended AUTO-<domain> sub balancer ensure"
+	((${#changes[@]} == 0)) || fail "matching plan must not record a change"
 }
 
 test_ensure_auto_sub_balancer_updates_existing_auto() {
@@ -2300,7 +2347,8 @@ test_build_admin_sub_json_rules_admin_then_direct
 test_build_admin_sub_json_dns
 test_build_admin_sub_json_observatory
 test_sub_balancer_api_wrappers_use_documented_routes
-test_ensure_auto_sub_balancer_plan_does_not_call_api
+test_ensure_auto_sub_balancer_plan_reports_create_without_mutating
+test_ensure_auto_sub_balancer_plan_noop_when_matches
 test_ensure_auto_sub_balancer_updates_existing_auto
 test_ensure_auto_sub_balancer_api_failure_warns_and_returns_success
 printf 'test_libs.bash: OK\n'
