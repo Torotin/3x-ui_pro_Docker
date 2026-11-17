@@ -50,7 +50,15 @@ def canonicalize_awg_server(server: Mapping[str, Any] | None) -> dict[str, Any]:
 
 def awg_managed_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     def top(m: Mapping[str, Any]) -> dict[str, Any]:
-        return {k: _canon_scalar(m.get(k)) for k in MANAGED_AWG_TOP if m.get(k) is not None}
+        out: dict[str, Any] = {}
+        server = m.get("server") or {}
+        for key in MANAGED_AWG_TOP:
+            val = m.get(key)
+            if key == "mtu" and val is None:
+                val = server.get("mtu")
+            if val is not None:
+                out[key] = _canon_scalar(val)
+        return out
 
     return top(left) == top(right) and canonicalize_awg_server(
         left.get("server")

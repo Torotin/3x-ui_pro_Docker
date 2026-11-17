@@ -60,3 +60,14 @@ class TestAwgCanonicalize(unittest.TestCase):
             "server": {"s1": 16, "jc": 8, "randomTrailers": True},
         }
         self.assertFalse(awg_managed_equal(left, right))
+
+    def test_managed_equal_null_top_mtu_uses_server_mtu(self) -> None:
+        left = {
+            "mtu": None,
+            "server": {"mtu": 1280, "s1": 16, "randomTrailers": True},
+        }
+        right = {
+            "mtu": 1280,
+            "server": {"mtu": 1280, "s1": 16, "randomTrailers": True},
+        }
+        self.assertTrue(awg_managed_equal(left, right))
