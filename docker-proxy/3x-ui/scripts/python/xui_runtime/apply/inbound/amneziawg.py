@@ -39,14 +39,8 @@ def sync_amneziawg_profile(
     server_old = dict(settings.get("server") or {})
     patched = dict(settings)
     target_mtu = desired_settings.get("mtu", mtu)
-    patched["mtu"] = target_mtu
-    patched.setdefault("subnet", desired_settings.get("subnet"))
-    patched.setdefault("subnetIp", desired_settings.get("subnetIp") or server_old.get("subnetIp"))
-    patched.setdefault(
-        "subnetCidr", desired_settings.get("subnetCidr") or server_old.get("subnetCidr")
-    )
-    patched.setdefault("dns1", desired_settings.get("dns1"))
-    patched.setdefault("dns2", desired_settings.get("dns2"))
+    # Newer panels keep subnet/dns/mtu under settings.server and null top-level
+    # mirrors. Do not invent top-level keys on every sync (causes perpetual churn).
     server = {**server_old, **(desired_settings.get("server") or {})}
     server["privateKey"] = server_old.get("privateKey") or server_old.get("secretKey")
     server.setdefault("publicKey", server_old.get("publicKey"))

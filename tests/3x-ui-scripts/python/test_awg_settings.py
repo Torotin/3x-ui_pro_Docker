@@ -106,3 +106,40 @@ class TestAwgCanonicalize(unittest.TestCase):
             "server": {"mtu": 1280, "s1": 16, "randomTrailers": True},
         }
         self.assertTrue(awg_managed_equal(left, right))
+
+    def test_managed_equal_null_top_dns_subnet_uses_server(self) -> None:
+        left = {
+            "mtu": None,
+            "subnet": None,
+            "dns1": None,
+            "dns2": None,
+            "subnetIp": None,
+            "subnetCidr": None,
+            "server": {
+                "mtu": 1280,
+                "subnetIp": "10.8.1.0",
+                "subnetCidr": 24,
+                "primaryDns": "8.8.8.8",
+                "secondaryDns": "8.8.4.4",
+                "s1": 16,
+                "randomTrailers": True,
+            },
+        }
+        right = {
+            "mtu": 1280,
+            "subnet": "10.8.1.0/24",
+            "dns1": "8.8.8.8",
+            "dns2": "8.8.4.4",
+            "subnetIp": "10.8.1.0",
+            "subnetCidr": 24,
+            "server": {
+                "mtu": 1280,
+                "subnetIp": "10.8.1.0",
+                "subnetCidr": 24,
+                "primaryDns": "8.8.8.8",
+                "secondaryDns": "8.8.4.4",
+                "s1": 16,
+                "randomTrailers": True,
+            },
+        }
+        self.assertTrue(awg_managed_equal(left, right))

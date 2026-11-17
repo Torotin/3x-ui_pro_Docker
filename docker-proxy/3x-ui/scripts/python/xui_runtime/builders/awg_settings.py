@@ -14,6 +14,8 @@ _CPS_TAG_RE = re.compile(
 
 KEY_FIELDS = frozenset({"privateKey", "secretKey", "publicKey", "headerProtectionKey"})
 MANAGED_AWG_TOP = frozenset({"mtu", "subnet", "subnetIp", "subnetCidr", "dns1", "dns2"})
+
+
 def estimate_cps_bytes(cps: str) -> int:
     text = (cps or "").strip()
     if not text:
@@ -87,14 +89,35 @@ def canonicalize_awg_server(server: Mapping[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def _top_managed_value(settings: Mapping[str, Any], key: str) -> Any:
+    """Resolve top-level managed field with server.* fallback (panel often nulls top)."""
+    server = settings.get("server") or {}
+    val = settings.get(key)
+    if val is not None:
+        return val
+    if key == "mtu":
+        return server.get("mtu")
+    if key == "dns1":
+        return server.get("primaryDns")
+    if key == "dns2":
+        return server.get("secondaryDns")
+    if key == "subnetIp":
+        return server.get("subnetIp")
+    if key == "subnetCidr":
+        return server.get("subnetCidr")
+    if key == "subnet":
+        sip = server.get("subnetIp")
+        cidr = server.get("subnetCidr")
+        if sip is not None and cidr is not None:
+            return f"{sip}/{cidr}"
+    return None
+
+
 def awg_managed_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     def top(m: Mapping[str, Any]) -> dict[str, Any]:
         out: dict[str, Any] = {}
-        server = m.get("server") or {}
         for key in MANAGED_AWG_TOP:
-            val = m.get(key)
-            if key == "mtu" and val is None:
-                val = server.get("mtu")
+            val = _top_managed_value(m, key)
             if val is not None:
                 out[key] = _canon_scalar(val)
         return out
