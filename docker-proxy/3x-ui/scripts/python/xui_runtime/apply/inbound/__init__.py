@@ -35,6 +35,7 @@ from xui_runtime.apply.inbound.db_repair import (
     repair_shared_client_after_inbound_sync,
     repair_shared_client_db,
 )
+from xui_runtime.apply.inbound.grpc_policy import ensure_grpc_when_disabled
 from xui_runtime.apply.inbound.ensure import (
     InboundApplyError,
     build_inbound_components_json,
@@ -70,6 +71,7 @@ __all__ = [
     "delete_managed_inbound_kind",
     "ensure_amneziawg_client",
     "ensure_grpc_client",
+    "ensure_grpc_when_disabled",
     "ensure_hysteria2_client",
     "ensure_inbound",
     "ensure_shared_client",

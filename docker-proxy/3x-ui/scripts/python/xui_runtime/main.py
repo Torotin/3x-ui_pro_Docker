@@ -22,6 +22,7 @@ from xui_runtime.apply.inbound import (
     SharedClientSecrets,
     delete_managed_inbound_kind,
     ensure_grpc_client,
+    ensure_grpc_when_disabled,
     ensure_hysteria2_client,
     ensure_inbound,
     ensure_shared_client,
@@ -597,6 +598,8 @@ def run_managed_runtime(
         grpc_id = ""
         if env.get("ENABLE_VLESS_GRPC", "false") == "true":
             grpc_id = ensure_inbound("grpc", desired, api, env, mode, stats) or ""
+        else:
+            ensure_grpc_when_disabled(desired, api, env, mode, stats)
 
         udp_backend = _resolve_udp443_backend(env)
         hysteria2_id = ""

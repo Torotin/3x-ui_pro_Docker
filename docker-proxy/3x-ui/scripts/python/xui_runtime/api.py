@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from xui_runtime import log
+from xui_runtime.common import api_obj_json
 from xui_runtime.env import normalize_base_path
 from xui_runtime.http_client import HttpResult, HttpSession
 
@@ -436,6 +437,25 @@ class PanelApi:
 
     def update_inbound(self, inbound_id: int | str, body: str | dict[str, Any]) -> HttpResult:
         return self.api_post_json(f"/panel/api/inbounds/update/{inbound_id}", body)
+
+    def set_inbound_enable(self, inbound_id: int | str, enable: bool) -> HttpResult:
+        path = f"/panel/api/inbounds/setEnable/{inbound_id}"
+        result = self.api_post_json(path, {"enable": bool(enable)})
+        if result.code == "404":
+            get = self.get_inbound(inbound_id)
+            if not get.ok or not self.session.success_json():
+                return get
+            obj = api_obj_json(self.session)
+            obj["enable"] = bool(enable)
+            return self.update_inbound(inbound_id, obj)
+        if not self.session.success_json():
+            form = self.api_post(
+                path,
+                form=[("enable", "true" if enable else "false")],
+            )
+            if form.ok and self.session.success_json():
+                return form
+        return result
 
     def add_client(self, payload: str | dict[str, Any]) -> HttpResult:
         return self.api_post_json_once_long("/panel/api/clients/add", payload)
