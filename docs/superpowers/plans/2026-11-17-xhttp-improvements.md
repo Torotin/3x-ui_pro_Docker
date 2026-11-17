@@ -20,6 +20,9 @@
 - Do not push remotes; sync/mutate Streambase only when the operator asks for a live step.
 - Emergency bash parity for new XHTTP env knobs is out of scope unless a task explicitly says otherwise.
 - One live env flip → one apply → operator auto smoke → next flip.
+- `validate_xhttp_env` runs after `init_defaults` for `check` / `plan` / `apply` (fail before panel HTTP).
+- `sanitize_xhttp_stream_json` always `pop("extra")` from server `xhttpSettings` after managed merge.
+- `set_inbound_enable`: try `setEnable` (JSON, then form); on HTTP 404 fall back to full `inbounds/update/{id}`.
 
 ## File map
 
@@ -136,7 +139,7 @@ def validate_xhttp_env(env: Mapping[str, str]) -> None:
         raise ValueError(f"VLESS_GRPC_WHEN_DISABLED invalid: {policy}")
 ```
 
-Call `validate_xhttp_env(env)` from `main` apply path after `init_defaults` (Task 1 may wire a thin call in `main.py` if tests cover only the function).
+Wire note (Task 1 defines the function; Task 7 installs the call site): `validate_xhttp_env(env)` must run **immediately after `init_defaults` for every MODE** (`check`, `plan`, `apply`), before any panel HTTP. A typo in `XHTTP_MODE` / `VLESS_GRPC_WHEN_DISABLED` / UA must fail `MODE=check` the same way as `apply`.
 
 Add commented keys to `3x-ui.env` near `ENABLE_VLESS_GRPC` (values via defaults; do not force live flips).
 
@@ -370,9 +373,19 @@ def apply_managed_xhttp_settings(
     return xhttp
 ```
 
-`sanitize_xhttp_stream_json`: replace xhttpSettings with `apply_managed_xhttp_settings` merge onto existing dict **without** adding `extra`. Keep sockopt trusted XFF + externalProxy TLS sanitize as today.
+`sanitize_xhttp_stream_json`: merge managed fields onto the existing `xhttpSettings` dict, then **always** strip a stray server-side `extra`:
 
-`build_xhttp_stream_json`: build `xhttpSettings` via `apply_managed_xhttp_settings`.
+```python
+xhttp = dict(sanitized.get("xhttpSettings") or {})
+managed = apply_managed_xhttp_settings(path, host, env)
+xhttp.update(managed)
+xhttp.pop("extra", None)  # panel may have stored client extra on inbound; never send to Xray server
+sanitized["xhttpSettings"] = xhttp
+```
+
+Unit test must assert: inbound stream that arrived with `"extra": {...}` leaves sanitize **without** `extra`. Keep sockopt trusted XFF + externalProxy TLS sanitize as today.
+
+`build_xhttp_stream_json`: build `xhttpSettings` via `apply_managed_xhttp_settings` (no `extra` key).
 
 In `ensure_vless_stream`, when `kind == "xhttp"`:
 
@@ -493,8 +506,15 @@ git commit -m "feat(3x-ui): add XHTTP client extra builder"
 **Interfaces:**
 - Consumes: `PanelApi`, `desired`, `find_inbound_by_port` / `managed_inbound_remarks`, `plan_or_apply`
 - Produces:
-  - `PanelApi.set_inbound_enable(inbound_id: int | str, enable: bool) -> HttpResult` → `POST /panel/api/inbounds/setEnable/{id}` with body accepted by panel (verify live; typically `{"enable": false}` or form `enable=false` — implement against docs.sanaei / live probe in Step 3 of this task)
+  - `PanelApi.set_inbound_enable(inbound_id: int | str, enable: bool) -> HttpResult` — see fallback contract below
   - `ensure_grpc_when_disabled(desired, api, env, mode, stats) -> None`
+
+**`set_inbound_enable` contract (version-tolerant):**
+
+1. Try `POST /panel/api/inbounds/setEnable/{id}` with JSON `{"enable": bool}` first.
+2. If the panel wants form-encoded on that route, retry once as form `enable=true|false` (same path).
+3. On **HTTP 404** (route missing on this panel build), fallback like legacy settings dual-path: `GET` inbound, set `enable`, `POST /panel/api/inbounds/update/{id}` with the full inbound object (do not invent partial updates that drop clients).
+4. Unit-test the 404 → update fallback with a mock session.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -528,15 +548,27 @@ def test_delete_policy_uses_delete_managed(self) -> None:
 - [ ] **Step 3: Implement API + policy**
 
 ```python
-# api.py
+# api.py — sketch; match existing api_post / api_post_json helpers
 def set_inbound_enable(self, inbound_id: int | str, enable: bool) -> HttpResult:
-    return self.api_post_json(
-        f"/panel/api/inbounds/setEnable/{inbound_id}",
-        {"enable": bool(enable)},
-    )
+    path = f"/panel/api/inbounds/setEnable/{inbound_id}"
+    result = self.api_post_json(path, {"enable": bool(enable)})
+    if result.code == "404":
+        # Panel build without setEnable: full-row update fallback
+        get = self.get_inbound(inbound_id)
+        if not get.ok or not self.session.success_json():
+            return get
+        obj = api_obj_json(self.session)  # or equivalent
+        obj["enable"] = bool(enable)
+        return self.update_inbound(inbound_id, obj)
+    # If setEnable exists but rejects JSON, one form-encoded retry before treating as failure
+    if not self.session.success_json():
+        form = self.api_post(path, [("enable", "true" if enable else "false")])
+        if form.ok and self.session.success_json():
+            return form
+    return result
 ```
 
-If live panel expects a different body, adjust after a read-only probe on Streambase before first apply that disables.
+Add a unit test: first `setEnable` returns 404 → assert `update_inbound` called with `enable=False` and clients preserved.
 
 ```python
 def ensure_grpc_when_disabled(...):
@@ -651,18 +683,18 @@ git commit -m "feat(3x-ui): add XHTTP client extra delivery with explicit GAP"
 
 ---
 
-### Task 7: Docs touch + validate_xhttp_env in main
+### Task 7: Docs touch + validate_xhttp_env for all MODEs
 
 **Files:**
 - Modify: `docker-proxy/3x-ui/scripts/python/README.md`
-- Modify: `docker-proxy/3x-ui/scripts/python/xui_runtime/main.py` (call `validate_xhttp_env` early in apply)
+- Modify: `docker-proxy/3x-ui/scripts/python/xui_runtime/main.py` (validate after `init_defaults` for **check / plan / apply**)
 - Modify: `docs/superpowers/specs/2026-11-17-xhttp-improvements-design.md` status → `approved`
 - Optional: `.agents/skill/3x-ui/references/3x-ui-runtime.md` one short XHTTP env bullet
 - Test: re-run `test_env.py` + full python discover
 
 - [ ] **Step 1: Add README knobs table** (defaults, Step mapping 0/1/2/3/4/5/8)
 
-- [ ] **Step 2: Wire `validate_xhttp_env(env)` in `main` after defaults; on `ValueError` log ERROR and return 1**
+- [ ] **Step 2: Wire `validate_xhttp_env(env)` in `main` immediately after `init_defaults`, on the shared path used by `check`, `plan`, and `apply` (not only inside the apply branch). On `ValueError`: log ERROR and return 1 **before** panel login / HTTP.**
 
 - [ ] **Step 3: Run**
 
@@ -728,7 +760,9 @@ Do not batch env flips. Do not enable H3.
 | UA Step 8 | Task 3 headers + Task 8 Step 8 |
 | No H3 / 443/udp | Global constraints + Task 8 |
 | Per-flag rollback / auto smoke | Task 8 |
-| `validate` fail-fast | Tasks 1, 7 |
+| `validate` fail-fast on check/plan/apply | Tasks 1, 7 |
+| Strip stray server `extra` on sanitize | Task 3 |
+| `setEnable` 404 → update fallback | Task 5 |
 
 ## Placeholder scan
 
