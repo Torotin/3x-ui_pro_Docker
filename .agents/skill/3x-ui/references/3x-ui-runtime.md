@@ -71,6 +71,9 @@ Do not add runtime package installation such as `apk add` to after-start scripts
 ## Runtime Libraries
 
 Python (primary AfterStart): see `docker-proxy/3x-ui/scripts/python/README.md`.
+XHTTP rollout knobs (`XHTTP_MODE`, `sc*`, client `extra`, gRPC when disabled) live in
+`3x-ui.env` / `env.init_defaults`; `validate_xhttp_env` runs for every `check`/`plan`/`apply`
+before panel login.
 
 Emergency bash libs (kept in sync for `ENGINE=bash`):
 

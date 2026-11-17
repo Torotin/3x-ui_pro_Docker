@@ -65,6 +65,7 @@ from xui_runtime.env import (
     load_runtime_env,
     require_apply_mode,
     resolve_afterstart_dir,
+    validate_xhttp_env,
 )
 from xui_runtime.http_client import HttpSession
 
@@ -535,6 +536,11 @@ def run_managed_runtime(
     require_apply_mode()
     engine = (env.get("XUI_RUNTIME_ENGINE") or "python").strip().lower()
     check_dependencies(engine)
+    try:
+        validate_xhttp_env(env)
+    except ValueError as exc:
+        log.log("ERROR", str(exc))
+        return 1
 
     stats = ApplyStats()
     tmp_root = Path(tempfile.mkdtemp(prefix="xui-runtime-"))

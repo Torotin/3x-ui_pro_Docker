@@ -1,7 +1,7 @@
 # Design: XHTTP improvements (Streambase staged rollout)
 
 Date: 2026-11-17  
-Status: draft pending operator review of this file (brainstorming sections 1–3 approved in chat)  
+Status: approved  
 Branch: `refactor/xui-runtime-python` (baseline commit before this work: `3777fa4`)  
 Primary tree: [`docker-proxy/3x-ui/scripts/python/xui_runtime/`](../../../docker-proxy/3x-ui/scripts/python/xui_runtime/)  
 Live canary: Streambase (`WEBDOMAIN` / subscription **auto**)  
