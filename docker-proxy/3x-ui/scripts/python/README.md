@@ -58,6 +58,44 @@ Defaults are applied in `env.init_defaults`; invalid combinations fail in all mo
 Step **0** = code sync with all defaults (current live shape). Design:
 `docs/superpowers/specs/2026-11-17-xhttp-improvements-design.md`.
 
+## AmneziaWG env knobs (`AWG_*`)
+
+Defaults are applied in `env.init_defaults`; invalid combinations fail in all modes
+(`check` / `plan` / `apply`) via `validate_awg_env` before panel login. Managed
+server settings are built in `builders/awg_settings.py` (compare-first sync).
+
+Live rollout order (one knob or documented sub-flip per step; fresh client profile
+after obfuscation changes): design
+`docs/superpowers/specs/2026-11-17-awg-improvements-design.md`, operator checklist
+`docs/superpowers/plans/2026-11-17-awg-improvements.md` Task 6.
+
+| Env | Default | Rollout step |
+|-----|---------|--------------|
+| `AWG_MTU` | `1280` | 0; `auto` (Step 6) resolves via `resolve_awg_mtu` in `[1280,1420]` |
+| `AWG_MTU_OVERHEAD` | `96` | 6 (with `AWG_MTU=auto`) |
+| `AWG_HOST_MTU` | empty | 6 (preferred Path MTU when `auto`) |
+| `AWG_S1`...`AWG_S4` | `16` each | 0 (equal when `AWG_RANDOM_TRAILERS=true`) |
+| `AWG_H1`...`AWG_H4` | `1`...`4` | 0 (fixed under header protection; do not tune live) |
+| `AWG_JC` | `4` | 4 optional (`4..12`) |
+| `AWG_JMIN` / `AWG_JMAX` | `50` / `120` | 0 (`Jmin <= Jmax`) |
+| `AWG_CONTENT_PADDING` | `0-16` | 5 (`0-32` / `8-32`) |
+| `AWG_KEEPALIVE_TIMEOUT` | `9-17` | 0 |
+| `AWG_REKEY_AFTER_TIME` | empty (omit) | 3 |
+| `AWG_REKEY_TIMEOUT` | empty (omit) | 3 |
+| `AWG_REJECT_AFTER_TIME` | empty (omit) | 3 |
+| `AWG_MAX_HANDSHAKE_ATTEMPTS` | empty (omit) | 3 |
+| `AWG_RANDOM_TRAILERS` | `true` | 0 |
+| `AWG_DISABLE_COOKIES` | `false` | 5 optional (DoS trade-off) |
+| `AWG_I1`...`AWG_I5` | `I1=<r 55>`, others empty | 4 unique CPS; empty omits packet |
+| `AWG_I1_MTU_HEADROOM` | `120` | 4 (`estimate_cps_bytes(I1) + headroom <= MTU`) |
+| `AWG_DNS1` / `AWG_DNS2` | `8.8.8.8` / `8.8.4.4` | 5 optional |
+| `AWG_CLIENT_KEEPALIVE` | `25` | 0 (panel client hygiene) |
+
+Step **0** = code sync; defaults match prior managed AWG shape. Step **1** = full
+managed compare (no env flip). Step **2** = validation wired (fail-fast on bad env).
+Clash export of `I1`-`I5` is verified on live Step 4 only; do not assume a GAP until
+then.
+
 ## Tests
 
 ```bash
