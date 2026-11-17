@@ -36,6 +36,8 @@ class TestAwgBuilderFromEnv(unittest.TestCase):
 class TestEstimateCpsBytes(unittest.TestCase):
     def test_estimate_cps_r_and_t(self) -> None:
         self.assertEqual(estimate_cps_bytes("<r 55>"), 55)
+        self.assertEqual(estimate_cps_bytes("<rc 42>"), 42)
+        self.assertEqual(estimate_cps_bytes("<rd 33>"), 33)
         self.assertEqual(estimate_cps_bytes("<b 0xd100><t><r 10>"), 2 + 4 + 10)
 
 

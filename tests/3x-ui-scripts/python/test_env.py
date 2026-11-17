@@ -129,6 +129,11 @@ class TestLoadRuntimeEnv(unittest.TestCase):
 
 
 class TestAwgEnvDefaults(unittest.TestCase):
+    def test_init_defaults_then_validate_awg_env_minimal_webdomain(self) -> None:
+        env_map: dict[str, str] = {"WEBDOMAIN": "example.test"}
+        env.init_defaults(env_map)
+        env.validate_awg_env(env_map)
+
     def test_awg_defaults_match_current_shape(self) -> None:
         env_map: dict[str, str] = {"WEBDOMAIN": "example.test"}
         env.init_defaults(env_map)
