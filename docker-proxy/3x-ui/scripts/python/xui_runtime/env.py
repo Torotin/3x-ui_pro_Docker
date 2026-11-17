@@ -326,7 +326,10 @@ def validate_awg_env(env: Mapping[str, str]) -> None:
     trailers = _truthy_env("AWG_RANDOM_TRAILERS", env.get("AWG_RANDOM_TRAILERS") or "true", default=True)
     s_values: list[int] = []
     for idx in range(1, 5):
-        s_values.append(_parse_uint16(f"AWG_S{idx}", env.get(f"AWG_S{idx}") or "", default=16))
+        s_val = _parse_uint16(f"AWG_S{idx}", env.get(f"AWG_S{idx}") or "", default=16)
+        if s_val < 12:
+            raise ValueError(f"AWG_S{idx} must be >= 12 (got {s_val})")
+        s_values.append(s_val)
     if trailers and len(set(s_values)) != 1:
         raise ValueError(
             "AWG_S1..AWG_S4 must be equal when AWG_RANDOM_TRAILERS=true"

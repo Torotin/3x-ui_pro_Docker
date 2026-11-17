@@ -172,6 +172,28 @@ class TestAwgEnvDefaults(unittest.TestCase):
                 }
             )
 
+    def test_validate_awg_env_rejects_s1_below_12(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            env.validate_awg_env(
+                {
+                    "AWG_MTU": "1280",
+                    "AWG_JMIN": "50",
+                    "AWG_JMAX": "120",
+                    "AWG_S1": "8",
+                    "AWG_S2": "16",
+                    "AWG_S3": "16",
+                    "AWG_S4": "16",
+                    "AWG_H1": "1",
+                    "AWG_H2": "2",
+                    "AWG_H3": "3",
+                    "AWG_H4": "4",
+                    "AWG_RANDOM_TRAILERS": "true",
+                    "AWG_I1": "<r 55>",
+                }
+            )
+        self.assertIn("AWG_S1", str(ctx.exception))
+        self.assertIn(">= 12", str(ctx.exception))
+
     def test_validate_awg_env_rejects_jmin_gt_jmax(self) -> None:
         with self.assertRaises(ValueError):
             env.validate_awg_env(
