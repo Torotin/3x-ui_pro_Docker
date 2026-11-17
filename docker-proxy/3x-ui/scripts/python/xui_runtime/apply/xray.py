@@ -8,6 +8,7 @@ import os
 import socket
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -163,16 +164,29 @@ def default_warp_proxy_available(
     *,
     env: Mapping[str, str] | None = None,
 ) -> bool:
-    """Confirm SOCKS egress is WARP (bash ``warp_proxy_available``)."""
+    """Confirm SOCKS egress is WARP (bash ``warp_proxy_available`` + retries)."""
     merged = env if env is not None else os.environ
     url = str(
         merged.get("WARP_PROXY_PROBE_URL", "https://www.cloudflare.com/cdn-cgi/trace")
         or "https://www.cloudflare.com/cdn-cgi/trace"
     )
-    trace = socks_proxy_get(host, port, url, env=merged)
-    if trace is None:
-        return False
-    return any(line.strip() == "warp=on" for line in trace.splitlines())
+    try:
+        attempts = max(1, int(str(merged.get("USQUE_PROBE_ATTEMPTS", "3") or "3")))
+    except ValueError:
+        attempts = 3
+    try:
+        retry_sleep = float(str(merged.get("USQUE_PROBE_RETRY_SECONDS", "2") or "2"))
+    except ValueError:
+        retry_sleep = 2.0
+    for attempt in range(1, attempts + 1):
+        trace = socks_proxy_get(host, port, url, env=merged)
+        if trace is not None and any(
+            line.strip() == "warp=on" for line in trace.splitlines()
+        ):
+            return True
+        if attempt < attempts:
+            time.sleep(retry_sleep)
+    return False
 
 
 def default_tor_proxy_available(
@@ -474,6 +488,33 @@ def _parse_xray_settings_body(session: HttpSession) -> dict[str, Any]:
     return {}
 
 
+def _sorted_routing_rules(rules: Any) -> list[Any]:
+    if not isinstance(rules, list):
+        return []
+    return sorted(
+        rules,
+        key=lambda rule: json.dumps(rule, sort_keys=True, ensure_ascii=False),
+    )
+
+
+def _xray_settings_effectively_equal(
+    current: Mapping[str, Any],
+    updated: Mapping[str, Any],
+) -> bool:
+    """True when settings match, tolerating routing.rules order-only drift."""
+    if json_equal(current, updated):
+        return True
+    left = json.loads(json.dumps(current))
+    right = json.loads(json.dumps(updated))
+    left_routing = (left.get("xraySetting") or {}).setdefault("routing", {})
+    right_routing = (right.get("xraySetting") or {}).setdefault("routing", {})
+    if not isinstance(left_routing, dict) or not isinstance(right_routing, dict):
+        return False
+    left_routing["rules"] = _sorted_routing_rules(left_routing.get("rules"))
+    right_routing["rules"] = _sorted_routing_rules(right_routing.get("rules"))
+    return json_equal(left, right)
+
+
 def _xray_update_payload(updated: dict[str, Any]) -> dict[str, Any]:
     xs = updated.get("xraySetting")
     if not isinstance(xs, dict):
@@ -565,9 +606,14 @@ def apply_managed_xray(
         if _env_bool(env, "XRAY_MANAGED_WARP", False) and _env_bool(
             env, "XRAY_MANAGED_WARP_CONSOLE", True
         ):
-            warp_console_ob = ensure_warp_console_outbound(
-                api, session, current, env=env, mode=mode
-            )
+            # Bash: warp_console_ob=$(ensure_warp_console_outbound ... || true)
+            try:
+                warp_console_ob = ensure_warp_console_outbound(
+                    api, session, current, env=env, mode=mode
+                )
+            except Exception as exc:  # noqa: BLE001 — soft-fail like bash || true
+                log.log("WARN", f"Console WARP outbound skipped: {exc}")
+                warp_console_ob = None
         elif _env_bool(env, "XRAY_MANAGED_WARP", False):
             log.log(
                 "INFO",
@@ -629,7 +675,7 @@ def apply_managed_xray(
     cron = _env_str(env, "GEODATA_CRON", "0 4 * * *")
     updated = apply_geodata_block(updated, outbound_tag, assets, cron)
 
-    stats.changed = not json_equal(current, updated)
+    stats.changed = not _xray_settings_effectively_equal(current, updated)
     if not stats.changed:
         log.log("INFO", "Xray settings already match managed desired state.")
         return stats

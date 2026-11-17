@@ -34,7 +34,8 @@ This stack terminates TLS at **Traefik**, not the official Nginx/Caddy samples. 
 ## Ownership
 
 - Compose service: `docker-proxy/compose.d/12-3x-ui.yml`.
-- Runtime scripts: `docker-proxy/3x-ui/scripts/00_BeforeStart`, `docker-proxy/3x-ui/scripts/01_AfterStart`, and `docker-proxy/3x-ui/scripts/lib`.
+- Runtime scripts: BeforeStart bash under `docker-proxy/3x-ui/scripts/00_BeforeStart`; AfterStart thin launcher `01_AfterStart/3x-ui-upd.sh`; Python package `scripts/python/xui_runtime/` (primary); emergency bash libs `scripts/lib/`.
+- Engine: `XUI_RUNTIME_ENGINE=python` (default) or `bash` (emergency). Dual is retired.
 - Environment: `docker-proxy/3x-ui/3x-ui.env` plus compose `.env`.
 - Panel DB: `docker-proxy/3x-ui/configs/x-ui.db`; reset source is `docker-proxy/3x-ui/clear/x-ui.db` (SQLite; PostgreSQL is upstream-supported but not used here).
 - Tests: `tests/3x-ui-scripts/run.sh`.

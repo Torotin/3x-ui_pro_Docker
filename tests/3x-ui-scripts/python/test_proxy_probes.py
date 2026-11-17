@@ -34,12 +34,43 @@ class ProxyProbeTests(unittest.TestCase):
             "xui_runtime.apply.xray.socks_proxy_get",
             return_value="fl=1\nwarp=on\n",
         ):
-            self.assertTrue(default_warp_proxy_available("usque", 1080))
+            self.assertTrue(
+                default_warp_proxy_available(
+                    "usque", 1080, env={"USQUE_PROBE_ATTEMPTS": "1"}
+                )
+            )
         with patch(
             "xui_runtime.apply.xray.socks_proxy_get",
             return_value="fl=1\nwarp=off\n",
         ):
-            self.assertFalse(default_warp_proxy_available("usque", 1080))
+            self.assertFalse(
+                default_warp_proxy_available(
+                    "usque", 1080, env={"USQUE_PROBE_ATTEMPTS": "1"}
+                )
+            )
+
+    def test_warp_proxy_available_retries_until_warp_on(self) -> None:
+        responses = [None, "fl=1\nwarp=off\n", "fl=1\nwarp=on\n"]
+
+        def _fake(_host: str, _port: int, _url: str, env=None) -> str | None:
+            _ = env
+            return responses.pop(0)
+
+        with (
+            patch("xui_runtime.apply.xray.socks_proxy_get", side_effect=_fake),
+            patch("xui_runtime.apply.xray.time.sleep") as sleep,
+        ):
+            self.assertTrue(
+                default_warp_proxy_available(
+                    "usque",
+                    1080,
+                    env={
+                        "USQUE_PROBE_ATTEMPTS": "3",
+                        "USQUE_PROBE_RETRY_SECONDS": "0.01",
+                    },
+                )
+            )
+        self.assertEqual(sleep.call_count, 2)
 
     def test_tor_proxy_available_requires_is_tor_true(self) -> None:
         with patch(

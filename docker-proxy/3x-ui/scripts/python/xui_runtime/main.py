@@ -58,7 +58,12 @@ from xui_runtime.apply.xray import (
 )
 from xui_runtime.common import ApplyStats
 from xui_runtime.desired import build_desired_state, country_code_to_flag
-from xui_runtime.env import check_dependencies, load_runtime_env, require_apply_mode
+from xui_runtime.env import (
+    check_dependencies,
+    load_runtime_env,
+    require_apply_mode,
+    resolve_afterstart_dir,
+)
 from xui_runtime.http_client import HttpSession
 
 PYTHON_RUNTIME_READY = True
@@ -688,7 +693,7 @@ def cli(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    script_dir = Path(__file__).resolve().parents[2] / "01_AfterStart"
+    script_dir = resolve_afterstart_dir()
     env = load_runtime_env(str(script_dir))
     env["MODE"] = args.mode
     env["XUI_RUNTIME_ENGINE"] = env.get("XUI_RUNTIME_ENGINE") or "python"

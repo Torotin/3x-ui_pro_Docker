@@ -94,6 +94,42 @@ DESIRED_PANEL_KEYS: tuple[str, ...] = (
     "panelOutbound",
 )
 
+# When AllSetting returns null for these keys, still coerce env overlays to JSON bool/int.
+_PANEL_BOOL_KEYS = frozenset(
+    key
+    for key in DESIRED_PANEL_KEYS
+    if key.endswith("Enable")
+    or key
+    in {
+        "tgBotBackup",
+        "tgBotLoginNotify",
+        "subEncrypt",
+        "subShowInfo",
+        "ldapUseTLS",
+        "ldapInvertFlag",
+        "ldapAutoCreate",
+        "ldapAutoDelete",
+        "twoFactorEnable",
+        "externalTrafficInformEnable",
+    }
+)
+_PANEL_INT_KEYS = frozenset(
+    {
+        "webPort",
+        "sessionMaxAge",
+        "pageSize",
+        "expireDiff",
+        "trafficDiff",
+        "tgCpu",
+        "subPort",
+        "subUpdates",
+        "ldapPort",
+        "ldapDefaultTotalGB",
+        "ldapDefaultExpiryDays",
+        "ldapDefaultLimitIP",
+    }
+)
+
 
 class PanelApplyError(RuntimeError):
     """Panel apply could not complete."""
@@ -124,11 +160,21 @@ def _value_as_compare_string(value: Any) -> str:
     return str(value).rstrip("\n")
 
 
+def _coerce_env_bool(env_val: str) -> bool:
+    return env_val.strip().lower() in ("true", "1", "yes", "on")
+
+
 def _coerce_env_on_current(key: str, current_val: Any, env_val: str) -> Any:
-    if isinstance(current_val, bool):
-        lowered = env_val.lower()
-        return lowered in ("true", "1", "yes", "on")
-    if isinstance(current_val, int) and not isinstance(current_val, bool):
+    if isinstance(current_val, bool) or (
+        current_val is None and key in _PANEL_BOOL_KEYS
+    ):
+        return _coerce_env_bool(env_val)
+    if key in _PANEL_BOOL_KEYS and isinstance(current_val, str):
+        # Panel sometimes stores booleans as strings; keep JSON bool on write.
+        return _coerce_env_bool(env_val)
+    if (isinstance(current_val, int) and not isinstance(current_val, bool)) or (
+        current_val is None and key in _PANEL_INT_KEYS
+    ):
         try:
             return int(env_val)
         except ValueError:
@@ -169,11 +215,17 @@ def _normalize_update_body(body: dict[str, Any], env: Mapping[str, str]) -> dict
 def panel_desired_json(current: Mapping[str, Any], env: Mapping[str, str]) -> dict[str, str]:
     desired: dict[str, str] = {}
     for key in DESIRED_PANEL_KEYS:
+        current_val = current.get(key)
         env_val = _env_overlay_value(env, key)
-        if env_val is not None:
-            value = env_val
+        # Newer 3x-ui AllSetting builds omit retired keys as null (e.g. remarkModel,
+        # subShowInfo, tgBotLoginNotify). Overlaying env onto null never persists and
+        # causes perpetual panel APPLY churn — skip when the field is unexposed.
+        if env_val is not None and current_val is not None:
+            # Canonicalize like projected (rstrip trailing newlines) so Clash/YAML
+            # builders that emit a final \\n do not force perpetual panel updates.
+            value = _value_as_compare_string(env_val)
         else:
-            value = _value_as_compare_string(current.get(key))
+            value = _value_as_compare_string(current_val)
         desired[key] = value
 
     try:
@@ -203,7 +255,11 @@ def panel_settings_json(current: Mapping[str, Any], env: Mapping[str, str]) -> d
         env_val = _env_overlay_value(env, key)
         if env_val is None:
             continue
-        merged[key] = _coerce_env_on_current(key, merged.get(key), env_val)
+        current_val = merged.get(key)
+        if current_val is None:
+            # Unexposed on this panel build — leave null; do not invent fields.
+            continue
+        merged[key] = _coerce_env_on_current(key, current_val, env_val)
 
     merged = _normalize_update_body(merged, env)
     if clear_sub_json_routing_rules_requested(env):

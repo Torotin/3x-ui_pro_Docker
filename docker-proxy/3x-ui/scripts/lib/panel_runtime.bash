@@ -9,6 +9,10 @@ panel_settings_json() {
 	while IFS= read -r var; do
 		env_val=${!var-}
 		[[ -n "$env_val" ]] || continue
+		# Skip keys AllSetting exposes as null (retired on newer panels); overlay never persists.
+		if jq -e --arg key "$var" '.[$key] == null' <<<"$merged" >/dev/null; then
+			continue
+		fi
 		merged=$(jq -c --arg key "$var" --arg value "$env_val" '
           .[$key] = (
             if (.[$key] | type) == "number" then ($value | tonumber)
@@ -44,8 +48,10 @@ panel_desired_json() {
 	local current=$1 var env_val value desired='{}'
 	while IFS= read -r var; do
 		env_val=${!var-}
-		if [[ -n "$env_val" ]]; then
-			value=$env_val
+		current_null=$(jq -r --arg key "$var" 'if .[$key] == null then "1" else "0" end' <<<"$current")
+		if [[ -n "$env_val" && "$current_null" != "1" ]]; then
+			# Strip a single trailing newline so Clash/YAML builders match AllSetting.
+			value=${env_val%$'\n'}
 		else
 			value=$(jq -r --arg key "$var" 'if .[$key] == null then "" else .[$key] end' <<<"$current")
 		fi

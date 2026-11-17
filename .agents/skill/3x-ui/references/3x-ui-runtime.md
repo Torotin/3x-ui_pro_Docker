@@ -39,28 +39,40 @@ Do not add a root `/assets/` router. The panel assets are under `/${URI_PANEL_PA
 
 ## Runtime Shape
 
-The after-start runtime is bash-based and supports `MODE=check|plan|apply`.
+AfterStart primary engine is **Python** (`XUI_RUNTIME_ENGINE=python`, default). The thin
+launcher `docker-proxy/3x-ui/scripts/01_AfterStart/3x-ui-upd.sh` execs
+`python3 -m xui_runtime --mode check|plan|apply` with `PYTHONPATH` pointing at
+`/mnt/sh/python` (compose) or `scripts/python` (host). Package root:
+`docker-proxy/3x-ui/scripts/python/xui_runtime/`.
 
-`docker-proxy/3x-ui/scripts/01_AfterStart/3x-ui-upd.sh` pipeline:
+Emergency rollback: `XUI_RUNTIME_ENGINE=bash` (libs under `scripts/lib/`).
+`XUI_RUNTIME_ENGINE=dual` is retired and rejected by the launcher.
 
-1. Load libraries and runtime env.
-2. Require/normalize mode and check dependencies.
-3. Resolve panel base URL and login. The panel can move after settings are applied, so login happens again later.
-4. Detect country flag and build desired state.
-5. Apply managed Xray state, then restart Xray if needed before `panelOutbound` can reference managed tags.
-6. Ensure panel settings and admin credentials.
-7. Resolve/login again after panel settings changes.
-8. Repair inbound client `tgId` values in DB.
-9. Ensure TLS files, managed inbounds, shared clients, optional gRPC client, optional Hysteria2 client.
-10. Repair shared client after inbound sync (also force per-inbound VLESS `flow` in SQLite: Vision=`xtls-rprx-vision`, XHTTP/gRPC empty). Panel `updateClient(flow="")` wipes Vision inbound flow, and `updateInbound` cannot restore it while `clients.flow` is empty.
-11. Update geofiles if enabled.
-12. Restart panel if required.
+Modes: `MODE=check|plan|apply`. `check`/`plan` must not mutate `x-ui.db`.
+
+Pipeline order (Python `main.run_managed_runtime`, bash emergency mirrors):
+
+1. Load runtime env / require mode / check dependencies.
+2. Resolve panel base URL and login (login again after panel settings may move the base).
+3. Detect country flag and build desired state.
+4. Apply managed Xray state, then restart Xray if needed before `panelOutbound` can reference managed tags.
+5. Ensure panel settings and admin credentials.
+6. Resolve/login again after panel settings changes.
+7. Repair inbound client `tgId` values in DB.
+8. Ensure TLS files, managed inbounds, shared clients, optional gRPC client, optional Hysteria2/AWG.
+9. Repair shared client after inbound sync (also force per-inbound VLESS `flow` in SQLite: Vision=`xtls-rprx-vision`, XHTTP/gRPC empty). Panel `updateClient(flow="")` wipes Vision inbound flow, and `updateInbound` cannot restore it while `clients.flow` is empty.
+10. Ensure AUTO sub balancer; update geofiles if enabled.
+11. Restart panel if required.
 
 Shared first-class `clients.flow` must be `xtls-rprx-vision` (same as `visionFlow`). Leaving it empty breaks TCP Reality after the next shared-client update.
 
 Do not add runtime package installation such as `apk add` to after-start scripts. Missing dependencies should be reported by checks/tests.
 
 ## Runtime Libraries
+
+Python (primary AfterStart): see `docker-proxy/3x-ui/scripts/python/README.md`.
+
+Emergency bash libs (kept in sync for `ENGINE=bash`):
 
 - `log.bash`: logging and fatal errors.
 - `env.bash`: environment defaults and runtime normalization.

@@ -127,5 +127,27 @@ class TestLoadRuntimeEnv(unittest.TestCase):
         self.assertEqual(result["ENABLE_HYSTERIA2"], "false")
 
 
+
+class TestPathResolve(unittest.TestCase):
+    def test_resolve_afterstart_dir_prefers_repo_01_afterstart(self) -> None:
+        path = env.resolve_afterstart_dir()
+        self.assertTrue(path.is_dir())
+        self.assertIn(path.name, ("01_AfterStart", "afterstart"))
+
+    def test_resolve_xui_env_path_finds_repo_file(self) -> None:
+        script_dir = ROOT / "docker-proxy" / "3x-ui" / "scripts" / "01_AfterStart"
+        found = env.resolve_xui_env_path(script_dir)
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found.name, "3x-ui.env")
+        self.assertTrue(found.is_file())
+
+    def test_resolve_afterstart_dir_honors_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            resolved = env.resolve_afterstart_dir(path)
+            self.assertEqual(resolved, path.resolve())
+
+
 if __name__ == "__main__":
     unittest.main()

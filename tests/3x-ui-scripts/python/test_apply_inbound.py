@@ -104,6 +104,32 @@ class TestManagedVlessClientProjection(unittest.TestCase):
         )
 
 
+
+    def test_managed_vless_projection_omits_empty_flow(self) -> None:
+        current = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "email": "a@example.test",
+            "subId": "deadbeefcafebabe",
+            "enable": True,
+            "tgId": 0,
+        }
+        desired = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "email": "a@example.test",
+            "subId": "deadbeefcafebabe",
+            "flow": "",
+            "enable": True,
+            "tgId": 0,
+        }
+        self.assertEqual(
+            managed_vless_client_projection(current),
+            managed_vless_client_projection(desired),
+        )
+        self.assertNotIn("flow", managed_vless_client_projection(desired))
+
+
 class TestEnsureInboundVision(unittest.TestCase):
     def test_existing_vision_skips_create(self) -> None:
         env = _env_fixture()

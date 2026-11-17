@@ -13,7 +13,11 @@ PYTHON_ROOT = ROOT / "docker-proxy" / "3x-ui" / "scripts" / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from xui_runtime.apply.xray import XrayApplyProbes, apply_managed_xray  # noqa: E402
+from xui_runtime.apply.xray import (  # noqa: E402
+    XrayApplyProbes,
+    apply_managed_xray,
+    _xray_settings_effectively_equal,
+)
 from xui_runtime.api import PanelApi  # noqa: E402
 from xui_runtime.http_client import HttpSession  # noqa: E402
 
@@ -85,6 +89,28 @@ def _make_api(env: dict[str, str]) -> tuple[PanelApi, HttpSession, tempfile.Temp
     session = HttpSession(attempts=1, max_time=3, log_failures=False, sleep_fn=lambda _: None)
     session.init(tmp.name)
     return PanelApi(session, env), session, tmp
+
+
+
+class TestXraySettingsEqual(unittest.TestCase):
+    def test_routing_rules_order_only_is_noop(self) -> None:
+        rule_api = {"type": "field", "inboundTag": ["api"], "outboundTag": "api"}
+        rule_admin = {
+            "type": "field",
+            "outboundTag": "admin-traefik",
+            "domain": ["full:a.example.test"],
+        }
+        current = {
+            "xraySetting": {"routing": {"rules": [rule_api, rule_admin]}, "outbounds": []}
+        }
+        updated = {
+            "xraySetting": {"routing": {"rules": [rule_admin, rule_api]}, "outbounds": []}
+        }
+        self.assertTrue(_xray_settings_effectively_equal(current, updated))
+        updated["xraySetting"]["routing"]["rules"].append(
+            {"type": "field", "outboundTag": "blocked", "ip": ["geoip:private"]}
+        )
+        self.assertFalse(_xray_settings_effectively_equal(current, updated))
 
 
 class TestApplyManagedXray(unittest.TestCase):
@@ -180,6 +206,30 @@ class TestApplyManagedXray(unittest.TestCase):
             apply_managed_xray(api, env, None, "apply", probes=probes)
             self.assertTrue(spy.called)
             self.assertEqual([], spy.call_args.args[10])
+
+
+    def test_console_warp_registration_failure_is_soft(self) -> None:
+        env = {
+            "URL_BASE_RESOLVED": self.base,
+            "XRAY_MANAGED_DNS": "false",
+            "XRAY_MANAGED_WARP": "true",
+            "XRAY_MANAGED_WARP_CONSOLE": "true",
+            "XRAY_MANAGED_TOR": "false",
+            "ENABLE_MIHOMO": "false",
+            "USQUE_HOST": "usque",
+            "USQUE_PORT": "1080",
+            "WEBDOMAIN": "screenhub.linkpc.net",
+        }
+        api, _session, tmp = _make_api(env)
+        self.addCleanup(tmp.cleanup)
+        probes = XrayApplyProbes(warp_proxy_available=lambda _h, _p: False)
+        with mock.patch(
+            "xui_runtime.apply.xray.ensure_warp_console_outbound",
+            side_effect=RuntimeError("WARP registration API failed"),
+        ):
+            stats = apply_managed_xray(api, env, None, "apply", probes=probes)
+        self.assertTrue(stats.changed)
+        self.assertTrue(stats.applied)
 
 
 if __name__ == "__main__":

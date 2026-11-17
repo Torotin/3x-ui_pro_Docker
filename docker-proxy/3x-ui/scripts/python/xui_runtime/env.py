@@ -258,6 +258,46 @@ def normalize_udp443_backend(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
+def resolve_afterstart_dir(explicit: str | Path | None = None) -> Path:
+    """Locate AfterStart dir under repo layout or container ``/mnt/sh`` mounts."""
+    if explicit is not None:
+        path = Path(explicit)
+        if path.is_dir():
+            return path.resolve()
+    # Package lives at .../scripts/python/xui_runtime/env.py → parents[2] = scripts
+    scripts_dir = Path(__file__).resolve().parents[2]
+    candidates = (
+        Path("/mnt/sh/afterstart"),
+        scripts_dir / "01_AfterStart",
+        scripts_dir / "afterstart",
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    return (scripts_dir / "01_AfterStart").resolve()
+
+
+def resolve_xui_env_path(script_dir: str | Path) -> Path | None:
+    """Find ``3x-ui.env`` for host checkout; container usually relies on compose env_file."""
+    script = Path(script_dir).resolve()
+    classic = script.parent.parent / "3x-ui.env"
+    if classic.is_file():
+        return classic.resolve()
+    # Package-adjacent /opt fallbacks only for real AfterStart dirs — never for
+    # arbitrary temp script_dir fixtures used by unit tests.
+    if script.name in ("01_AfterStart", "afterstart") or script == Path(
+        "/mnt/sh/afterstart"
+    ):
+        scripts_dir = Path(__file__).resolve().parents[2]
+        for candidate in (
+            scripts_dir.parent / "3x-ui.env",
+            Path("/opt/docker-proxy/3x-ui/3x-ui.env"),
+        ):
+            if candidate.is_file():
+                return candidate.resolve()
+    return None
+
+
 def load_runtime_env(
     script_dir: str,
     environ: Mapping[str, str] | None = None,
@@ -272,7 +312,12 @@ def load_runtime_env(
             preserved[name] = env[name]
 
     load_env_file(Path.cwd() / ".env", env)
-    load_env_file(Path(script_dir).resolve().parent.parent / "3x-ui.env", env)
+    xui_env = resolve_xui_env_path(script_dir)
+    if xui_env is not None:
+        load_env_file(xui_env, env)
+    else:
+        # Preserve classic relative lookup (and no-op when missing).
+        load_env_file(Path(script_dir).resolve().parent.parent / "3x-ui.env", env)
 
     for name, value in preserved.items():
         env[name] = value
