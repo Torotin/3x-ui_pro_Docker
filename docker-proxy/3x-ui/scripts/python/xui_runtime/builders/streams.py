@@ -6,7 +6,85 @@ import copy
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from xui_runtime.common import json_equal
+
 _TLS_FINGERPRINTS = ("random", "firefox", "safari")
+
+
+def _env_bool(env: Mapping[str, str], key: str, default: bool = False) -> bool:
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def canonicalize_xhttp_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(settings)
+    for key in (
+        "scMaxBufferedPosts",
+        "scMaxEachPostBytes",
+        "scStreamUpServerSecs",
+        "xPaddingBytes",
+    ):
+        if key in out and out[key] is not None:
+            out[key] = str(out[key]).strip()
+    if "noSSEHeader" in out:
+        val = out["noSSEHeader"]
+        if isinstance(val, str):
+            out["noSSEHeader"] = val.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            out["noSSEHeader"] = bool(val)
+    return out
+
+
+def managed_xhttp_headers(env: Mapping[str, str]) -> dict[str, str]:
+    headers = {
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST",
+    }
+    ua = (env.get("XHTTP_HEADERS_UA") or "").strip().lower()
+    if ua:
+        headers["User-Agent"] = ua
+    return headers
+
+
+def apply_managed_xhttp_settings(
+    path: str,
+    host: str,
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    mode = (env.get("XHTTP_MODE") or "packet-up").strip() or "packet-up"
+    buffered = (env.get("XHTTP_SC_MAX_BUFFERED_POSTS") or "50").strip()
+    each_post = (env.get("XHTTP_SC_MAX_EACH_POST_BYTES") or "5000000").strip()
+    stream_secs = (env.get("XHTTP_SC_STREAM_UP_SERVER_SECS") or "5-20").strip()
+    padding = (env.get("XHTTP_X_PADDING_BYTES") or "100-1000").strip()
+    xhttp: dict[str, Any] = {
+        "path": path,
+        "mode": mode,
+        "headers": managed_xhttp_headers(env),
+        "scMaxBufferedPosts": int(buffered) if buffered.isdigit() else buffered,
+        "scMaxEachPostBytes": each_post,
+        "scStreamUpServerSecs": stream_secs,
+        "noSSEHeader": _env_bool(env, "XHTTP_NO_SSE_HEADER", True),
+        "xPaddingBytes": padding,
+    }
+    if _env_bool(env, "XHTTP_SET_HOST", True):
+        xhttp["host"] = host
+    return xhttp
+
+
+def xhttp_stream_equal(
+    left_stream: Mapping[str, Any],
+    right_stream: Mapping[str, Any],
+) -> bool:
+    left = dict(left_stream)
+    right = dict(right_stream)
+    left_xhttp = canonicalize_xhttp_settings(left.pop("xhttpSettings", {}) or {})
+    right_xhttp = canonicalize_xhttp_settings(right.pop("xhttpSettings", {}) or {})
+    left["xhttpSettings"] = left_xhttp
+    right["xhttpSettings"] = right_xhttp
+    return json_equal(left, right)
 
 
 def tls_fingerprint_allowed(value: str) -> bool:
@@ -217,31 +295,9 @@ def build_xhttp_stream_json(
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     env = env or {}
-    mode = (env.get("XHTTP_MODE") or "packet-up").strip() or "packet-up"
-    set_host = (env.get("XHTTP_SET_HOST") or "true").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
     fp = select_tls_fingerprint(fingerprint)
     trusted = build_trusted_xff_headers_json(env)
-    xhttp: dict[str, Any] = {
-        "path": path,
-        "headers": {
-            "Cache-Control": "no-store",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST",
-        },
-        "scMaxBufferedPosts": 50,
-        "scMaxEachPostBytes": "5000000",
-        "scStreamUpServerSecs": "5-20",
-        "noSSEHeader": True,
-        "xPaddingBytes": "100-1000",
-        "mode": mode,
-    }
-    if set_host:
-        xhttp["host"] = host
+    xhttp = apply_managed_xhttp_settings(path, host, env)
     return {
         "network": "xhttp",
         "security": "none",

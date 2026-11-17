@@ -19,6 +19,7 @@ from xui_runtime.builders.inbounds import (
     build_hysteria2_settings_json,
 )
 from xui_runtime.builders.streams import (
+    apply_managed_xhttp_settings,
     build_grpc_stream_json,
     build_hysteria2_stream_json,
     build_sockopt_json,
@@ -266,17 +267,15 @@ def sanitize_xhttp_stream_json(
     sanitized["network"] = "xhttp"
     sanitized["security"] = "none"
     xhttp = dict(sanitized.get("xhttpSettings") or {})
-    mode = (env.get("XHTTP_MODE") or "packet-up").strip() or "packet-up"
-    xhttp["mode"] = mode
-    xhttp["path"] = path
-    if (env.get("XHTTP_SET_HOST") or "true").strip().lower() in (
+    managed = apply_managed_xhttp_settings(path, host, env)
+    xhttp.update(managed)
+    xhttp.pop("extra", None)
+    if not (env.get("XHTTP_SET_HOST") or "true").strip().lower() in (
         "1",
         "true",
         "yes",
         "on",
     ):
-        xhttp["host"] = host
-    else:
         xhttp.pop("host", None)
     sanitized["xhttpSettings"] = xhttp
     trusted = [xray_trusted_xff_header(env)]

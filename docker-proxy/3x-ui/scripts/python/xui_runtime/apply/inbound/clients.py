@@ -15,6 +15,7 @@ from xui_runtime.builders.inbounds import (
     build_hysteria2_settings_json,
     new_client_secret,
 )
+from xui_runtime.builders.streams import xhttp_stream_equal
 from xui_runtime.common import ApplyStats, api_obj_json, json_equal, plan_or_apply
 
 from xui_runtime.apply.inbound.db_repair import repair_shared_client_db
@@ -511,7 +512,11 @@ def ensure_vless_stream(
     desired_stream = build_inbound_stream_json(kind, env, current=inbound, api=api)
     components = current_inbound_components_json(inbound)
     desired_components = {**components, "streamSettings": desired_stream}
-    if json_equal(components, desired_components):
+    if kind == "xhttp":
+        if xhttp_stream_equal(components.get("streamSettings") or {}, desired_stream):
+            log.log("INFO", f"{label} stream already matches desired state.")
+            return
+    elif json_equal(components, desired_components):
         log.log("INFO", f"{label} stream already matches desired state.")
         return
     if plan_or_apply(mode, stats, f"{label} stream synchronized"):
