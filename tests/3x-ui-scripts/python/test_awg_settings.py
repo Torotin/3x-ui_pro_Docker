@@ -1,9 +1,35 @@
+import sys
 import unittest
+from pathlib import Path
 
-from xui_runtime.builders.awg_settings import (
+ROOT = Path(__file__).resolve().parents[3]
+PYTHON_ROOT = ROOT / "docker-proxy" / "3x-ui" / "scripts" / "python"
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from xui_runtime import env  # noqa: E402
+from xui_runtime.builders.awg_settings import (  # noqa: E402
     awg_managed_equal,
     canonicalize_awg_server,
 )
+from xui_runtime.builders.inbounds import build_amneziawg_settings_json  # noqa: E402
+from xui_runtime.desired import build_desired_state  # noqa: E402
+
+
+class TestAwgBuilderFromEnv(unittest.TestCase):
+    def test_builder_reads_jc_and_padding_from_env(self) -> None:
+        env_map: dict[str, str] = {
+            "WEBDOMAIN": "example.test",
+            "ENABLE_AMNEZIAWG": "true",
+            "UDP443_BACKEND": "amneziawg",
+        }
+        env.init_defaults(env_map)
+        env_map["AWG_JC"] = "8"
+        env_map["AWG_CONTENT_PADDING"] = "0-32"
+        obj = build_amneziawg_settings_json(build_desired_state(env_map), env_map)
+        self.assertEqual(obj["server"]["jc"], 8)
+        self.assertEqual(obj["server"]["contentPaddingAddition"], "0-32")
+        self.assertEqual(obj["mtu"], 1280)
 
 
 class TestAwgCanonicalize(unittest.TestCase):

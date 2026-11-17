@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from xui_runtime.desired import build_desired_state
+from xui_runtime.env import resolve_awg_mtu
 
 
 def _parse_subnet(subnet: str) -> tuple[str, int]:
@@ -17,18 +18,62 @@ def _parse_subnet(subnet: str) -> tuple[str, int]:
     return match.group(1), int(match.group(2))
 
 
+def _env_bool(env: Mapping[str, str], key: str, default: bool = False) -> bool:
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 def build_amneziawg_settings_json(
     desired: Mapping[str, Any] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    env_map: Mapping[str, str] = env or {}
     if desired is None:
-        desired = build_desired_state(env)
+        desired = build_desired_state(env_map)
     awg = desired.get("inbounds", {}).get("amneziawg", {})
-    mtu = awg.get("mtu", 1280)
+    mtu = resolve_awg_mtu(env_map)
     subnet = awg.get("subnet", "10.8.1.0/24")
     dns1 = awg.get("dns1", "8.8.8.8")
     dns2 = awg.get("dns2", "8.8.4.4")
     subnet_ip, subnet_cidr = _parse_subnet(str(subnet))
+    server: dict[str, Any] = {
+        "mtu": mtu,
+        "subnetIp": subnet_ip,
+        "subnetCidr": subnet_cidr,
+        "primaryDns": dns1,
+        "secondaryDns": dns2,
+        "s1": int(env_map.get("AWG_S1") or 16),
+        "s2": int(env_map.get("AWG_S2") or 16),
+        "s3": int(env_map.get("AWG_S3") or 16),
+        "s4": int(env_map.get("AWG_S4") or 16),
+        "h1": (env_map.get("AWG_H1") or "1").strip(),
+        "h2": (env_map.get("AWG_H2") or "2").strip(),
+        "h3": (env_map.get("AWG_H3") or "3").strip(),
+        "h4": (env_map.get("AWG_H4") or "4").strip(),
+        "jc": int(env_map.get("AWG_JC") or 4),
+        "jmin": int(env_map.get("AWG_JMIN") or 50),
+        "jmax": int(env_map.get("AWG_JMAX") or 120),
+        "contentPaddingAddition": (env_map.get("AWG_CONTENT_PADDING") or "0-16").strip(),
+        "keepaliveTimeout": (env_map.get("AWG_KEEPALIVE_TIMEOUT") or "9-17").strip(),
+        "randomTrailers": _env_bool(env_map, "AWG_RANDOM_TRAILERS", True),
+        "disableCookies": _env_bool(env_map, "AWG_DISABLE_COOKIES", False),
+        "i1": (env_map.get("AWG_I1") or "<r 55>").strip(),
+    }
+    for idx, key in enumerate(("AWG_I2", "AWG_I3", "AWG_I4", "AWG_I5"), start=2):
+        val = (env_map.get(key) or "").strip()
+        if val:
+            server[f"i{idx}"] = val
+    for env_key, field in (
+        ("AWG_REKEY_AFTER_TIME", "rekeyAfterTime"),
+        ("AWG_REKEY_TIMEOUT", "rekeyTimeout"),
+        ("AWG_REJECT_AFTER_TIME", "rejectAfterTime"),
+        ("AWG_MAX_HANDSHAKE_ATTEMPTS", "maxHandshakeAttempts"),
+    ):
+        val = (env_map.get(env_key) or "").strip()
+        if val:
+            server[field] = val
     return {
         "mtu": mtu,
         "subnet": subnet,
@@ -36,29 +81,7 @@ def build_amneziawg_settings_json(
         "subnetCidr": subnet_cidr,
         "dns1": dns1,
         "dns2": dns2,
-        "server": {
-            "mtu": mtu,
-            "subnetIp": subnet_ip,
-            "subnetCidr": subnet_cidr,
-            "primaryDns": dns1,
-            "secondaryDns": dns2,
-            "s1": 16,
-            "s2": 16,
-            "s3": 16,
-            "s4": 16,
-            "h1": "1",
-            "h2": "2",
-            "h3": "3",
-            "h4": "4",
-            "jc": 4,
-            "jmin": 50,
-            "jmax": 120,
-            "contentPaddingAddition": "0-16",
-            "keepaliveTimeout": "9-17",
-            "randomTrailers": True,
-            "disableCookies": False,
-            "i1": "<r 55>",
-        },
+        "server": server,
     }
 
 
