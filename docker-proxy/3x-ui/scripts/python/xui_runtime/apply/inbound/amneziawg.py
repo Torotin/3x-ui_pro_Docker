@@ -7,6 +7,7 @@ from typing import Any
 
 from xui_runtime import log
 from xui_runtime.api import PanelApi
+from xui_runtime.builders.awg_settings import _canon_scalar, awg_managed_equal
 from xui_runtime.builders.inbounds import build_amneziawg_settings_json
 from xui_runtime.common import ApplyStats, api_obj_json, json_equal, plan_or_apply
 
@@ -59,18 +60,16 @@ def sync_amneziawg_profile(
     # Newer panels store MTU under server.mtu and leave top-level mtu null.
     server["mtu"] = server_old.get("mtu") if server_old.get("mtu") is not None else target_mtu
     patched["server"] = server
+    want_ka = _canon_scalar(env.get("AWG_CLIENT_KEEPALIVE") or "25")
     clients = patched.get("clients") or []
-    patched["clients"] = [dict(client, keepAlive=25) for client in clients]
-    current = settings
-    current_mtu = current.get("mtu")
-    if current_mtu is None:
-        current_mtu = (current.get("server") or {}).get("mtu")
-    if (
-        current_mtu == target_mtu
-        and (current.get("server") or {}).get("s1") == server.get("s1")
-        and (current.get("server") or {}).get("randomTrailers") == server.get("randomTrailers")
-    ):
-        log.log("INFO", "AmneziaWG profile already matches desired hygiene (mtu/S/trailers).")
+    patched["clients"] = [dict(client, keepAlive=want_ka) for client in clients]
+    clients_ok = True
+    for c in settings.get("clients") or []:
+        if "keepAlive" not in c or _canon_scalar(c.get("keepAlive")) != want_ka:
+            clients_ok = False
+            break
+    if awg_managed_equal(settings, patched) and clients_ok:
+        log.log("INFO", "AmneziaWG profile already matches desired hygiene.")
         return
     components = current_inbound_components_json(inbound)
     components["settings"] = patched
