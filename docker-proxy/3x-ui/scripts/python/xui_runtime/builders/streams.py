@@ -288,6 +288,28 @@ def build_grpc_stream_json(
     }
 
 
+def build_xhttp_client_extra_json(env: Mapping[str, str]) -> dict[str, Any]:
+    extra: dict[str, Any] = {
+        "xPaddingBytes": (env.get("XHTTP_X_PADDING_BYTES") or "100-1000").strip(),
+        "xmux": {
+            "maxConcurrency": (env.get("XHTTP_XMUX_MAX_CONCURRENCY") or "16-32").strip(),
+            "maxConnections": 0,
+            "cMaxReuseTimes": 0,
+            "hMaxRequestTimes": (
+                env.get("XHTTP_XMUX_H_MAX_REQUEST_TIMES") or "600-900"
+            ).strip(),
+            "hMaxReusableSecs": (
+                env.get("XHTTP_XMUX_H_MAX_REUSABLE_SECS") or "1800-3000"
+            ).strip(),
+            "hKeepAlivePeriod": 0,
+        },
+    }
+    ua = (env.get("XHTTP_HEADERS_UA") or "").strip().lower()
+    if ua:
+        extra["headers"] = {"User-Agent": ua}
+    return extra
+
+
 def build_xhttp_stream_json(
     path: str,
     host: str,
