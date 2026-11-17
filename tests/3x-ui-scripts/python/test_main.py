@@ -242,6 +242,25 @@ class TestMainOrchestrator(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual([], api.post_paths)
 
+    @patch("xui_runtime.main.detect_country_flag")
+    @patch("xui_runtime.main.check_dependencies")
+    @patch("xui_runtime.main.apply_managed_xray")
+    def test_apply_fails_when_xhttp_client_extra_gap(
+        self,
+        mock_apply_xray: MagicMock,
+        _deps: MagicMock,
+        _detect: MagicMock,
+    ) -> None:
+        mock_apply_xray.return_value = ApplyXrayStats()
+        env = _base_env("apply")
+        env["XHTTP_CLIENT_EXTRA_ENABLE"] = "true"
+        env["XRAY_TLS_CERT_FILE"] = self.tls_cert
+        env["XRAY_TLS_KEY_FILE"] = self.tls_key
+        env["XUI_DB_PATH"] = str(Path(self.tmp.name) / "missing.db")
+        api = _RecordingPanelApi(env)
+        code = run_managed_runtime(env, self.script_dir, api=api)
+        self.assertEqual(1, code)
+
 
 if __name__ == "__main__":
     unittest.main()

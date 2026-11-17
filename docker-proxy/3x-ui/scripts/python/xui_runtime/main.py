@@ -602,7 +602,18 @@ def run_managed_runtime(
 
         vision_id = ensure_inbound("vision", desired, api, env, mode, stats) or ""
         xhttp_id = ensure_inbound("xhttp", desired, api, env, mode, stats) or ""
-        ensure_xhttp_client_extra(api, env, mode, stats)
+        extra_outcome = ensure_xhttp_client_extra(api, env, mode, stats)
+        if extra_outcome == "gap":
+            if mode == "apply":
+                log.log(
+                    "ERROR",
+                    "Apply failed: XHTTP client extra enabled but not deliverable.",
+                )
+                return 1
+            log.log(
+                "WARN",
+                "XHTTP client extra enabled but not deliverable (plan; no mutation).",
+            )
         grpc_id = ""
         if env.get("ENABLE_VLESS_GRPC", "false") == "true":
             grpc_id = ensure_inbound("grpc", desired, api, env, mode, stats) or ""

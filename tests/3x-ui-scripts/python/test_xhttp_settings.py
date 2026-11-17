@@ -97,6 +97,27 @@ class TestXhttpSettingsFromEnv(unittest.TestCase):
         }
         self.assertTrue(xhttp_stream_equal(left, right))
 
+    def test_xhttp_stream_equal_ignores_unmanaged_panel_headers(self) -> None:
+        managed = {
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST",
+        }
+        left = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {
+                "mode": "packet-up",
+                "headers": {**managed, "X-Panel-Noise": "ignored"},
+            },
+        }
+        right = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {"mode": "packet-up", "headers": dict(managed)},
+        }
+        self.assertTrue(xhttp_stream_equal(left, right))
+
     def test_apply_managed_xhttp_settings_from_env(self) -> None:
         xhttp = apply_managed_xhttp_settings(
             "/xhttp",

@@ -9,6 +9,13 @@ from typing import Any
 from xui_runtime.common import json_equal
 
 _TLS_FINGERPRINTS = ("random", "firefox", "safari")
+_MANAGED_XHTTP_HEADER_KEYS = frozenset(
+    {
+        "Cache-Control",
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Methods",
+    }
+)
 
 
 def _env_bool(env: Mapping[str, str], key: str, default: bool = False) -> bool:
@@ -34,7 +41,28 @@ def canonicalize_xhttp_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
             out["noSSEHeader"] = val.strip().lower() in ("1", "true", "yes", "on")
         else:
             out["noSSEHeader"] = bool(val)
+    headers = out.get("headers")
+    if isinstance(headers, dict):
+        normalized = dict(headers)
+        ua = normalized.get("User-Agent")
+        if isinstance(ua, str):
+            normalized["User-Agent"] = ua.strip().lower()
+        out["headers"] = normalized
     return out
+
+
+def _xhttp_headers_for_compare(
+    left_headers: Mapping[str, Any] | None,
+    right_headers: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    left_h = left_headers if isinstance(left_headers, dict) else {}
+    right_h = right_headers if isinstance(right_headers, dict) else {}
+    keys = set(_MANAGED_XHTTP_HEADER_KEYS)
+    if "User-Agent" in left_h or "User-Agent" in right_h:
+        keys.add("User-Agent")
+    left_proj = {k: left_h[k] for k in keys if k in left_h}
+    right_proj = {k: right_h[k] for k in keys if k in right_h}
+    return left_proj, right_proj
 
 
 def managed_xhttp_headers(env: Mapping[str, str]) -> dict[str, str]:
@@ -82,6 +110,16 @@ def xhttp_stream_equal(
     right = dict(right_stream)
     left_xhttp = canonicalize_xhttp_settings(left.pop("xhttpSettings", {}) or {})
     right_xhttp = canonicalize_xhttp_settings(right.pop("xhttpSettings", {}) or {})
+    left_hdr, right_hdr = _xhttp_headers_for_compare(
+        left_xhttp.get("headers"),
+        right_xhttp.get("headers"),
+    )
+    if left_hdr or right_hdr:
+        left_xhttp["headers"] = left_hdr
+        right_xhttp["headers"] = right_hdr
+    else:
+        left_xhttp.pop("headers", None)
+        right_xhttp.pop("headers", None)
     left["xhttpSettings"] = left_xhttp
     right["xhttpSettings"] = right_xhttp
     return json_equal(left, right)
