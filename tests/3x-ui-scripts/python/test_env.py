@@ -128,6 +128,35 @@ class TestLoadRuntimeEnv(unittest.TestCase):
 
 
 
+class TestXhttpEnvDefaults(unittest.TestCase):
+    def test_xhttp_defaults_match_current_live_shape(self) -> None:
+        env_map: dict[str, str] = {"WEBDOMAIN": "example.test"}
+        env.init_defaults(env_map)
+        self.assertEqual(env_map.get("XHTTP_MODE"), "packet-up")
+        self.assertEqual(env_map.get("XHTTP_SC_MAX_BUFFERED_POSTS"), "50")
+        self.assertEqual(env_map.get("XHTTP_SC_MAX_EACH_POST_BYTES"), "5000000")
+        self.assertEqual(env_map.get("XHTTP_SC_STREAM_UP_SERVER_SECS"), "5-20")
+        self.assertEqual(env_map.get("XHTTP_X_PADDING_BYTES"), "100-1000")
+        self.assertEqual(env_map.get("XHTTP_NO_SSE_HEADER"), "true")
+        self.assertEqual(env_map.get("XHTTP_SET_HOST"), "true")
+        self.assertEqual(env_map.get("XHTTP_HEADERS_UA"), "")
+        self.assertEqual(env_map.get("XHTTP_CLIENT_EXTRA_ENABLE"), "false")
+        self.assertEqual(env_map.get("VLESS_GRPC_WHEN_DISABLED"), "disable")
+
+    def test_validate_xhttp_env_rejects_bad_mode(self) -> None:
+        with self.assertRaises(ValueError):
+            env.validate_xhttp_env({"XHTTP_MODE": "nope"})
+
+    def test_validate_xhttp_env_accepts_auto(self) -> None:
+        env.validate_xhttp_env(
+            {
+                "XHTTP_MODE": "auto",
+                "XHTTP_HEADERS_UA": "",
+                "VLESS_GRPC_WHEN_DISABLED": "disable",
+            }
+        )
+
+
 class TestPathResolve(unittest.TestCase):
     def test_resolve_afterstart_dir_prefers_repo_01_afterstart(self) -> None:
         path = env.resolve_afterstart_dir()

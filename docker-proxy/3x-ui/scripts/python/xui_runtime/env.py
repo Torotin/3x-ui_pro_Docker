@@ -205,6 +205,36 @@ def init_defaults(env: dict[str, str]) -> None:
     _set_default(env, "DOWNLOAD_MAX_TIME", "120")
     _set_default(env, "XRAY_RESTART_SETTLE_SECONDS", "5")
     _set_default(env, "XRAY_RESTART_PORT_TIMEOUT", "30")
+    _set_default(env, "XHTTP_MODE", "packet-up")
+    _set_default(env, "XHTTP_SC_MAX_BUFFERED_POSTS", "50")
+    _set_default(env, "XHTTP_SC_MAX_EACH_POST_BYTES", "5000000")
+    _set_default(env, "XHTTP_SC_STREAM_UP_SERVER_SECS", "5-20")
+    _set_default(env, "XHTTP_X_PADDING_BYTES", "100-1000")
+    _set_default(env, "XHTTP_NO_SSE_HEADER", "true")
+    _set_default(env, "XHTTP_SET_HOST", "true")
+    _set_default(env, "XHTTP_HEADERS_UA", "")
+    _set_default(env, "XHTTP_CLIENT_EXTRA_ENABLE", "false")
+    _set_default(env, "XHTTP_XMUX_MAX_CONCURRENCY", "16-32")
+    _set_default(env, "XHTTP_XMUX_H_MAX_REQUEST_TIMES", "600-900")
+    _set_default(env, "XHTTP_XMUX_H_MAX_REUSABLE_SECS", "1800-3000")
+    _set_default(env, "VLESS_GRPC_WHEN_DISABLED", "disable")
+
+
+_XHTTP_MODES = frozenset({"auto", "packet-up", "stream-up", "stream-one"})
+_XHTTP_UAS = frozenset({"", "firefox", "edge", "golang"})
+_GRPC_WHEN_DISABLED = frozenset({"disable", "leave", "delete"})
+
+
+def validate_xhttp_env(env: Mapping[str, str]) -> None:
+    mode = (env.get("XHTTP_MODE") or "packet-up").strip()
+    if mode not in _XHTTP_MODES:
+        raise ValueError(f"XHTTP_MODE invalid: {mode}")
+    ua = (env.get("XHTTP_HEADERS_UA") or "").strip().lower()
+    if ua not in _XHTTP_UAS:
+        raise ValueError(f"XHTTP_HEADERS_UA invalid: {ua}")
+    policy = (env.get("VLESS_GRPC_WHEN_DISABLED") or "disable").strip()
+    if policy not in _GRPC_WHEN_DISABLED:
+        raise ValueError(f"VLESS_GRPC_WHEN_DISABLED invalid: {policy}")
 
 
 def normalize_udp443_port_env(env: dict[str, str]) -> dict[str, str]:
