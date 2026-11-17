@@ -65,6 +65,7 @@ from xui_runtime.env import (
     load_runtime_env,
     require_apply_mode,
     resolve_afterstart_dir,
+    validate_awg_env,
     validate_xhttp_env,
 )
 from xui_runtime.http_client import HttpSession
@@ -538,6 +539,7 @@ def run_managed_runtime(
     check_dependencies(engine)
     try:
         validate_xhttp_env(env)
+        validate_awg_env(env)
     except ValueError as exc:
         log.log("ERROR", str(exc))
         return 1

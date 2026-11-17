@@ -219,6 +219,144 @@ def init_defaults(env: dict[str, str]) -> None:
     _set_default(env, "XHTTP_XMUX_H_MAX_REUSABLE_SECS", "1800-3000")
     _set_default(env, "VLESS_GRPC_WHEN_DISABLED", "disable")
 
+    _set_default(env, "AWG_MTU", "1280")
+    _set_default(env, "AWG_MTU_OVERHEAD", "96")
+    _set_default(env, "AWG_HOST_MTU", "")
+    for idx in range(1, 5):
+        _set_default(env, f"AWG_S{idx}", "16")
+        _set_default(env, f"AWG_H{idx}", str(idx))
+    _set_default(env, "AWG_JC", "4")
+    _set_default(env, "AWG_JMIN", "50")
+    _set_default(env, "AWG_JMAX", "120")
+    _set_default(env, "AWG_CONTENT_PADDING", "0-16")
+    _set_default(env, "AWG_KEEPALIVE_TIMEOUT", "9-17")
+    _set_default(env, "AWG_REKEY_AFTER_TIME", "")
+    _set_default(env, "AWG_REKEY_TIMEOUT", "")
+    _set_default(env, "AWG_REJECT_AFTER_TIME", "")
+    _set_default(env, "AWG_MAX_HANDSHAKE_ATTEMPTS", "")
+    _set_default(env, "AWG_RANDOM_TRAILERS", "true")
+    _set_default(env, "AWG_DISABLE_COOKIES", "false")
+    _set_default(env, "AWG_I1", "<r 55>")
+    for idx in range(2, 6):
+        _set_default(env, f"AWG_I{idx}", "")
+    _set_default(env, "AWG_DNS1", "8.8.8.8")
+    _set_default(env, "AWG_DNS2", "8.8.4.4")
+    _set_default(env, "AWG_CLIENT_KEEPALIVE", "25")
+
+
+_AWG_MTU_MIN = 1280
+_AWG_MTU_MAX = 1420
+_CPS_TAG_RE = re.compile(
+    r"(?:<t>"
+    r"|<r\s+\d+>"
+    r"|<rd\s+\d+>"
+    r"|<rc\s+\d+>"
+    r"|<b\s+0x[0-9a-fA-F]+>)"
+)
+
+
+def _parse_uint16(name: str, raw: str, *, default: int | None = None) -> int:
+    token = (raw or "").strip()
+    if not token:
+        if default is None:
+            raise ValueError(f"{name} required")
+        return default
+    if not token.isdigit():
+        raise ValueError(f"{name} invalid: {raw!r}")
+    value = int(token)
+    if value < 0 or value > 65535:
+        raise ValueError(f"{name} out of uint16 range: {value}")
+    return value
+
+
+def _truthy_env(name: str, value: str, *, default: bool = False) -> bool:
+    token = (value or "").strip()
+    if not token:
+        return default
+    try:
+        return normalize_bool_value(name, token) == "true"
+    except ValueError as exc:
+        raise ValueError(f"{name} invalid: {value!r}") from exc
+
+
+def _validate_awg_cps(field: str, value: str) -> None:
+    text = (value or "").strip()
+    if not text:
+        return
+    pos = 0
+    while pos < len(text):
+        match = _CPS_TAG_RE.match(text, pos)
+        if not match:
+            raise ValueError(f"{field} invalid CPS tag near: {text[pos:]!r}")
+        tag = match.group(0)
+        if tag.startswith("<b "):
+            hex_part = tag[4:-1].strip()
+            if not hex_part.lower().startswith("0x"):
+                raise ValueError(f"{field} invalid CPS byte tag: {tag!r}")
+            digits = hex_part[2:]
+            if not digits or len(digits) % 2:
+                raise ValueError(f"{field} invalid CPS hex length: {tag!r}")
+        pos = match.end()
+    if pos != len(text):
+        raise ValueError(f"{field} invalid CPS trailing text: {text[pos:]!r}")
+
+
+def resolve_awg_mtu(env: Mapping[str, str]) -> int:
+    raw = (env.get("AWG_MTU") or "1280").strip().lower()
+    if raw == "auto":
+        host = (env.get("AWG_HOST_MTU") or "").strip()
+        if not host.isdigit():
+            return _AWG_MTU_MIN
+        overhead = int((env.get("AWG_MTU_OVERHEAD") or "96").strip() or "96")
+        return max(_AWG_MTU_MIN, min(_AWG_MTU_MAX, int(host) - overhead))
+    if not raw.isdigit():
+        raise ValueError(f"AWG_MTU invalid: {raw}")
+    mtu = int(raw)
+    if mtu < _AWG_MTU_MIN or mtu > _AWG_MTU_MAX:
+        raise ValueError(f"AWG_MTU out of range: {mtu}")
+    return mtu
+
+
+def validate_awg_env(env: Mapping[str, str]) -> None:
+    raw_mtu = (env.get("AWG_MTU") or "1280").strip().lower()
+    if raw_mtu == "auto":
+        overhead = (env.get("AWG_MTU_OVERHEAD") or "96").strip()
+        if not overhead.isdigit() or int(overhead) <= 0:
+            raise ValueError(f"AWG_MTU_OVERHEAD invalid for auto: {overhead!r}")
+    elif raw_mtu.isdigit():
+        mtu = int(raw_mtu)
+        if mtu < _AWG_MTU_MIN or mtu > _AWG_MTU_MAX:
+            raise ValueError(f"AWG_MTU out of range: {mtu}")
+    else:
+        raise ValueError(f"AWG_MTU invalid: {raw_mtu}")
+
+    jmin = _parse_uint16("AWG_JMIN", env.get("AWG_JMIN") or "", default=50)
+    jmax = _parse_uint16("AWG_JMAX", env.get("AWG_JMAX") or "", default=120)
+    if jmin > jmax:
+        raise ValueError(f"AWG_JMIN ({jmin}) must be <= AWG_JMAX ({jmax})")
+
+    trailers = _truthy_env("AWG_RANDOM_TRAILERS", env.get("AWG_RANDOM_TRAILERS") or "true", default=True)
+    s_values: list[int] = []
+    for idx in range(1, 5):
+        s_values.append(_parse_uint16(f"AWG_S{idx}", env.get(f"AWG_S{idx}") or "", default=16))
+    if trailers and len(set(s_values)) != 1:
+        raise ValueError(
+            "AWG_S1..AWG_S4 must be equal when AWG_RANDOM_TRAILERS=true"
+        )
+
+    for idx in range(1, 5):
+        expected = str(idx)
+        actual = (env.get(f"AWG_H{idx}") or expected).strip()
+        if actual != expected:
+            raise ValueError(
+                f"AWG_H{idx} must be {expected} in HP-compatible mode (got {actual!r})"
+            )
+
+    for idx in range(1, 6):
+        _validate_awg_cps(f"AWG_I{idx}", env.get(f"AWG_I{idx}") or "")
+
+    _truthy_env("AWG_DISABLE_COOKIES", env.get("AWG_DISABLE_COOKIES") or "false", default=False)
+
 
 _XHTTP_MODES = frozenset({"auto", "packet-up", "stream-up", "stream-one"})
 _XHTTP_UAS = frozenset({"", "firefox", "edge", "golang"})

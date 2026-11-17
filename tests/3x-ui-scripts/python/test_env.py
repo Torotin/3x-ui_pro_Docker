@@ -128,6 +128,68 @@ class TestLoadRuntimeEnv(unittest.TestCase):
 
 
 
+class TestAwgEnvDefaults(unittest.TestCase):
+    def test_awg_defaults_match_current_shape(self) -> None:
+        env_map: dict[str, str] = {"WEBDOMAIN": "example.test"}
+        env.init_defaults(env_map)
+        self.assertEqual(env_map.get("AWG_MTU"), "1280")
+        self.assertEqual(env_map.get("AWG_MTU_OVERHEAD"), "96")
+        self.assertEqual(env_map.get("AWG_S1"), "16")
+        self.assertEqual(env_map.get("AWG_JC"), "4")
+        self.assertEqual(env_map.get("AWG_JMIN"), "50")
+        self.assertEqual(env_map.get("AWG_JMAX"), "120")
+        self.assertEqual(env_map.get("AWG_CONTENT_PADDING"), "0-16")
+        self.assertEqual(env_map.get("AWG_KEEPALIVE_TIMEOUT"), "9-17")
+        self.assertEqual(env_map.get("AWG_RANDOM_TRAILERS"), "true")
+        self.assertEqual(env_map.get("AWG_DISABLE_COOKIES"), "false")
+        self.assertEqual(env_map.get("AWG_I1"), "<r 55>")
+        self.assertEqual(env_map.get("AWG_I2"), "")
+        self.assertEqual(env_map.get("AWG_CLIENT_KEEPALIVE"), "25")
+
+    def test_validate_awg_env_rejects_jmin_gt_jmax(self) -> None:
+        with self.assertRaises(ValueError):
+            env.validate_awg_env(
+                {
+                    "AWG_MTU": "1280",
+                    "AWG_JMIN": "200",
+                    "AWG_JMAX": "100",
+                    "AWG_S1": "16",
+                    "AWG_S2": "16",
+                    "AWG_S3": "16",
+                    "AWG_S4": "16",
+                    "AWG_H1": "1",
+                    "AWG_H2": "2",
+                    "AWG_H3": "3",
+                    "AWG_H4": "4",
+                    "AWG_RANDOM_TRAILERS": "true",
+                    "AWG_I1": "<r 55>",
+                }
+            )
+
+    def test_resolve_awg_mtu_auto_from_host(self) -> None:
+        self.assertEqual(
+            env.resolve_awg_mtu(
+                {
+                    "AWG_MTU": "auto",
+                    "AWG_HOST_MTU": "1500",
+                    "AWG_MTU_OVERHEAD": "96",
+                }
+            ),
+            1404,
+        )
+        self.assertEqual(
+            env.resolve_awg_mtu(
+                {
+                    "AWG_MTU": "auto",
+                    "AWG_HOST_MTU": "1476",
+                    "AWG_MTU_OVERHEAD": "96",
+                }
+            ),
+            1380,
+        )
+        self.assertEqual(env.resolve_awg_mtu({"AWG_MTU": "1280"}), 1280)
+
+
 class TestXhttpEnvDefaults(unittest.TestCase):
     def test_xhttp_defaults_match_current_live_shape(self) -> None:
         env_map: dict[str, str] = {"WEBDOMAIN": "example.test"}
