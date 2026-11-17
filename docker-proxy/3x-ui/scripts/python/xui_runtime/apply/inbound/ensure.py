@@ -266,8 +266,18 @@ def sanitize_xhttp_stream_json(
     sanitized["network"] = "xhttp"
     sanitized["security"] = "none"
     xhttp = dict(sanitized.get("xhttpSettings") or {})
+    mode = (env.get("XHTTP_MODE") or "packet-up").strip() or "packet-up"
+    xhttp["mode"] = mode
     xhttp["path"] = path
-    xhttp["host"] = host
+    if (env.get("XHTTP_SET_HOST") or "true").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        xhttp["host"] = host
+    else:
+        xhttp.pop("host", None)
     sanitized["xhttpSettings"] = xhttp
     trusted = [xray_trusted_xff_header(env)]
     sockopt = dict(sanitized.get("sockopt") or {})

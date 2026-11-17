@@ -216,8 +216,32 @@ def build_xhttp_stream_json(
     fingerprint: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    env = env or {}
+    mode = (env.get("XHTTP_MODE") or "packet-up").strip() or "packet-up"
+    set_host = (env.get("XHTTP_SET_HOST") or "true").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     fp = select_tls_fingerprint(fingerprint)
     trusted = build_trusted_xff_headers_json(env)
+    xhttp: dict[str, Any] = {
+        "path": path,
+        "headers": {
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST",
+        },
+        "scMaxBufferedPosts": 50,
+        "scMaxEachPostBytes": "5000000",
+        "scStreamUpServerSecs": "5-20",
+        "noSSEHeader": True,
+        "xPaddingBytes": "100-1000",
+        "mode": mode,
+    }
+    if set_host:
+        xhttp["host"] = host
     return {
         "network": "xhttp",
         "security": "none",
@@ -230,21 +254,7 @@ def build_xhttp_stream_json(
         "sockopt": build_sockopt_json(
             False, "UseIP", "tproxy", trusted_xff=trusted
         ),
-        "xhttpSettings": {
-            "path": path,
-            "host": host,
-            "headers": {
-                "Cache-Control": "no-store",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST",
-            },
-            "scMaxBufferedPosts": 50,
-            "scMaxEachPostBytes": "5000000",
-            "scStreamUpServerSecs": "5-20",
-            "noSSEHeader": True,
-            "xPaddingBytes": "100-1000",
-            "mode": "packet-up",
-        },
+        "xhttpSettings": xhttp,
     }
 
 
