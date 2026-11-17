@@ -38,6 +38,7 @@ from xui_runtime.apply.panel import (
     update_admin_credentials_if_needed,
 )
 from xui_runtime.apply.sub_balancer import ensure_auto_sub_balancer
+from xui_runtime.apply.xhttp_extra import ensure_xhttp_client_extra
 from xui_runtime.apply.sub_routing import (
     admin_sub_clash_default_mode,
     build_admin_sub_clash_rules,
@@ -595,6 +596,7 @@ def run_managed_runtime(
 
         vision_id = ensure_inbound("vision", desired, api, env, mode, stats) or ""
         xhttp_id = ensure_inbound("xhttp", desired, api, env, mode, stats) or ""
+        ensure_xhttp_client_extra(api, env, mode, stats)
         grpc_id = ""
         if env.get("ENABLE_VLESS_GRPC", "false") == "true":
             grpc_id = ensure_inbound("grpc", desired, api, env, mode, stats) or ""
