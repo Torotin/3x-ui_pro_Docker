@@ -237,6 +237,7 @@ def init_defaults(env: dict[str, str]) -> None:
     _set_default(env, "AWG_RANDOM_TRAILERS", "true")
     _set_default(env, "AWG_DISABLE_COOKIES", "false")
     _set_default(env, "AWG_I1", "<r 55>")
+    _set_default(env, "AWG_I1_MTU_HEADROOM", "120")
     for idx in range(2, 6):
         _set_default(env, f"AWG_I{idx}", "")
     _set_default(env, "AWG_DNS1", "8.8.8.8")
@@ -246,13 +247,6 @@ def init_defaults(env: dict[str, str]) -> None:
 
 _AWG_MTU_MIN = 1280
 _AWG_MTU_MAX = 1420
-_CPS_TAG_RE = re.compile(
-    r"(?:<t>"
-    r"|<r\s+\d+>"
-    r"|<rd\s+\d+>"
-    r"|<rc\s+\d+>"
-    r"|<b\s+0x[0-9a-fA-F]+>)"
-)
 
 
 def _parse_uint16(name: str, raw: str, *, default: int | None = None) -> int:
@@ -279,26 +273,20 @@ def _truthy_env(name: str, value: str, *, default: bool = False) -> bool:
         raise ValueError(f"{name} invalid: {value!r}") from exc
 
 
+def _estimate_cps_bytes(cps: str) -> int:
+    from xui_runtime.builders.awg_settings import estimate_cps_bytes
+
+    return estimate_cps_bytes(cps)
+
+
 def _validate_awg_cps(field: str, value: str) -> None:
     text = (value or "").strip()
     if not text:
         return
-    pos = 0
-    while pos < len(text):
-        match = _CPS_TAG_RE.match(text, pos)
-        if not match:
-            raise ValueError(f"{field} invalid CPS tag near: {text[pos:]!r}")
-        tag = match.group(0)
-        if tag.startswith("<b "):
-            hex_part = tag[4:-1].strip()
-            if not hex_part.lower().startswith("0x"):
-                raise ValueError(f"{field} invalid CPS byte tag: {tag!r}")
-            digits = hex_part[2:]
-            if not digits or len(digits) % 2:
-                raise ValueError(f"{field} invalid CPS hex length: {tag!r}")
-        pos = match.end()
-    if pos != len(text):
-        raise ValueError(f"{field} invalid CPS trailing text: {text[pos:]!r}")
+    try:
+        _estimate_cps_bytes(text)
+    except ValueError as exc:
+        raise ValueError(f"{field} {exc}") from exc
 
 
 def resolve_awg_mtu(env: Mapping[str, str]) -> int:
@@ -354,6 +342,20 @@ def validate_awg_env(env: Mapping[str, str]) -> None:
 
     for idx in range(1, 6):
         _validate_awg_cps(f"AWG_I{idx}", env.get(f"AWG_I{idx}") or "")
+
+    i1 = (env.get("AWG_I1") or "").strip()
+    if i1:
+        headroom = _parse_uint16(
+            "AWG_I1_MTU_HEADROOM",
+            env.get("AWG_I1_MTU_HEADROOM") or "",
+            default=120,
+        )
+        mtu = resolve_awg_mtu(env)
+        i1_bytes = _estimate_cps_bytes(i1)
+        if i1_bytes + headroom > mtu:
+            raise ValueError(
+                f"AWG_I1 CPS size {i1_bytes} + headroom {headroom} exceeds AWG MTU {mtu}"
+            )
 
     _truthy_env("AWG_DISABLE_COOKIES", env.get("AWG_DISABLE_COOKIES") or "false", default=False)
 

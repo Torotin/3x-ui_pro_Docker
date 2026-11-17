@@ -1,10 +1,49 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
+_CPS_TAG_RE = re.compile(
+    r"(?:<t>"
+    r"|<r\s+\d+>"
+    r"|<rd\s+\d+>"
+    r"|<rc\s+\d+>"
+    r"|<b\s+0x[0-9a-fA-F]+>)"
+)
+
 KEY_FIELDS = frozenset({"privateKey", "secretKey", "publicKey", "headerProtectionKey"})
 MANAGED_AWG_TOP = frozenset({"mtu", "subnet", "subnetIp", "subnetCidr", "dns1", "dns2"})
+def estimate_cps_bytes(cps: str) -> int:
+    text = (cps or "").strip()
+    if not text:
+        return 0
+    total = 0
+    pos = 0
+    while pos < len(text):
+        match = _CPS_TAG_RE.match(text, pos)
+        if not match:
+            raise ValueError(f"invalid CPS tag near: {text[pos:]!r}")
+        tag = match.group(0)
+        if tag == "<t>":
+            total += 4
+        elif tag.startswith("<b "):
+            hex_part = tag[3:-1].strip()
+            if not hex_part.lower().startswith("0x"):
+                raise ValueError(f"invalid CPS byte tag: {tag!r}")
+            digits = hex_part[2:]
+            if not digits or len(digits) % 2:
+                raise ValueError(f"invalid CPS hex length: {tag!r}")
+            total += len(digits) // 2
+        else:
+            num = int(tag[3:-1].strip())
+            total += num
+        pos = match.end()
+    if pos != len(text):
+        raise ValueError(f"invalid CPS trailing text: {text[pos:]!r}")
+    return total
+
+
 MANAGED_AWG_SERVER_KEYS = frozenset({
     "mtu", "subnetIp", "subnetCidr", "primaryDns", "secondaryDns",
     "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",

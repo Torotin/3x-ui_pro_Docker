@@ -11,6 +11,7 @@ from xui_runtime import env  # noqa: E402
 from xui_runtime.builders.awg_settings import (  # noqa: E402
     awg_managed_equal,
     canonicalize_awg_server,
+    estimate_cps_bytes,
 )
 from xui_runtime.builders.inbounds import build_amneziawg_settings_json  # noqa: E402
 from xui_runtime.desired import build_desired_state  # noqa: E402
@@ -30,6 +31,12 @@ class TestAwgBuilderFromEnv(unittest.TestCase):
         self.assertEqual(obj["server"]["jc"], 8)
         self.assertEqual(obj["server"]["contentPaddingAddition"], "0-32")
         self.assertEqual(obj["mtu"], 1280)
+
+
+class TestEstimateCpsBytes(unittest.TestCase):
+    def test_estimate_cps_r_and_t(self) -> None:
+        self.assertEqual(estimate_cps_bytes("<r 55>"), 55)
+        self.assertEqual(estimate_cps_bytes("<b 0xd100><t><r 10>"), 2 + 4 + 10)
 
 
 class TestAwgCanonicalize(unittest.TestCase):

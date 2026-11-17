@@ -145,6 +145,27 @@ class TestAwgEnvDefaults(unittest.TestCase):
         self.assertEqual(env_map.get("AWG_I1"), "<r 55>")
         self.assertEqual(env_map.get("AWG_I2"), "")
         self.assertEqual(env_map.get("AWG_CLIENT_KEEPALIVE"), "25")
+        self.assertEqual(env_map.get("AWG_I1_MTU_HEADROOM"), "120")
+
+    def test_validate_rejects_oversized_i1(self) -> None:
+        with self.assertRaises(ValueError):
+            env.validate_awg_env(
+                {
+                    "AWG_MTU": "1280",
+                    "AWG_JMIN": "50",
+                    "AWG_JMAX": "120",
+                    "AWG_S1": "16",
+                    "AWG_S2": "16",
+                    "AWG_S3": "16",
+                    "AWG_S4": "16",
+                    "AWG_H1": "1",
+                    "AWG_H2": "2",
+                    "AWG_H3": "3",
+                    "AWG_H4": "4",
+                    "AWG_RANDOM_TRAILERS": "true",
+                    "AWG_I1": "<r 2000>",
+                }
+            )
 
     def test_validate_awg_env_rejects_jmin_gt_jmax(self) -> None:
         with self.assertRaises(ValueError):
