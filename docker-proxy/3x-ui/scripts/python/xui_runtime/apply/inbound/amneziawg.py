@@ -10,6 +10,7 @@ from xui_runtime.api import PanelApi
 from xui_runtime.builders.awg_settings import _canon_scalar, awg_managed_equal
 from xui_runtime.builders.inbounds import build_amneziawg_settings_json
 from xui_runtime.common import ApplyStats, api_obj_json, json_equal, plan_or_apply
+from xui_runtime.env import resolve_awg_mtu
 
 from xui_runtime.apply.inbound.clients import (
     current_inbound_components_json,
@@ -27,7 +28,7 @@ def sync_amneziawg_profile(
 ) -> None:
     if not amneziawg_id:
         return
-    mtu = int(desired.get("inbounds", {}).get("amneziawg", {}).get("mtu", 1280))
+    mtu = resolve_awg_mtu(env)
     api.get_inbound(amneziawg_id)
     if not api.session.success_json():
         raise InboundApplyError(
@@ -45,14 +46,16 @@ def sync_amneziawg_profile(
     server["privateKey"] = server_old.get("privateKey") or server_old.get("secretKey")
     server.setdefault("publicKey", server_old.get("publicKey"))
     server.setdefault("headerProtectionKey", server_old.get("headerProtectionKey"))
+    # Preserve panel subnet assignment; always project env/desired DNS + MTU
+    # so AWG_DNS* / AWG_MTU flips are not frozen on prior panel values.
     server["subnetIp"] = server_old.get("subnetIp") or desired_settings["server"]["subnetIp"]
     server["subnetCidr"] = server_old.get("subnetCidr") or desired_settings["server"]["subnetCidr"]
-    server["primaryDns"] = server_old.get("primaryDns") or desired_settings["server"]["primaryDns"]
-    server["secondaryDns"] = (
-        server_old.get("secondaryDns") or desired_settings["server"]["secondaryDns"]
-    )
+    server["primaryDns"] = desired_settings["server"]["primaryDns"]
+    server["secondaryDns"] = desired_settings["server"]["secondaryDns"]
     # Newer panels store MTU under server.mtu and leave top-level mtu null.
-    server["mtu"] = server_old.get("mtu") if server_old.get("mtu") is not None else target_mtu
+    # Always project env-resolved MTU (including AWG_MTU=auto); do not freeze
+    # the previous server.mtu or Step 6 / MTU flips can never apply.
+    server["mtu"] = target_mtu
     patched["server"] = server
     want_ka = _canon_scalar(env.get("AWG_CLIENT_KEEPALIVE") or "25")
     clients = patched.get("clients") or []
@@ -67,12 +70,17 @@ def sync_amneziawg_profile(
         return
     components = current_inbound_components_json(inbound)
     components["settings"] = patched
-    if plan_or_apply(mode, stats, f"AmneziaWG profile synced id={amneziawg_id} mtu={mtu} trailers=on"):
+    if plan_or_apply(
+        mode,
+        stats,
+        f"AmneziaWG profile update id={amneziawg_id} mtu={mtu} trailers=on",
+    ):
         api.update_inbound(amneziawg_id, components)
         if not api.session.success_json():
             raise InboundApplyError(
                 f"Inbound update failed id={amneziawg_id}: {api.session.body()}"
             )
+        log.log("INFO", f"AmneziaWG profile synced id={amneziawg_id} mtu={mtu} trailers=on")
         stats.restart_xray_required = True
 
 

@@ -80,10 +80,10 @@ after obfuscation changes): design
 | `AWG_JMIN` / `AWG_JMAX` | `50` / `120` | 0 (`Jmin <= Jmax`) |
 | `AWG_CONTENT_PADDING` | `0-16` | 5 (`0-32` / `8-32`) |
 | `AWG_KEEPALIVE_TIMEOUT` | `9-17` | 0 |
-| `AWG_REKEY_AFTER_TIME` | empty (omit) | 3 |
-| `AWG_REKEY_TIMEOUT` | empty (omit) | 3 |
-| `AWG_REJECT_AFTER_TIME` | empty (omit) | 3 |
-| `AWG_MAX_HANDSHAKE_ATTEMPTS` | empty (omit) | 3 |
+| `AWG_REKEY_AFTER_TIME` | empty (omit) | 3 (e.g. `120-170`; max must be `<` reject min) |
+| `AWG_REKEY_TIMEOUT` | empty (omit) | 3 (e.g. `5-15`) |
+| `AWG_REJECT_AFTER_TIME` | empty (omit) | 3 (e.g. `180-240`) |
+| `AWG_MAX_HANDSHAKE_ATTEMPTS` | empty (omit) | 3 (e.g. `3-6`) |
 | `AWG_RANDOM_TRAILERS` | `true` | 0 |
 | `AWG_DISABLE_COOKIES` | `false` | 5 optional (DoS trade-off) |
 | `AWG_I1`...`AWG_I5` | `I1=<r 55>`, others empty | 4 unique CPS; empty omits packet |

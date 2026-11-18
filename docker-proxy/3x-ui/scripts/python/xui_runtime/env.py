@@ -263,6 +263,28 @@ def _parse_uint16(name: str, raw: str, *, default: int | None = None) -> int:
     return value
 
 
+def _parse_awg_range(name: str, raw: str) -> tuple[int, int] | None:
+    """Parse ``min-max`` (or single int) AWG timer/padding ranges. Empty -> None."""
+    token = (raw or "").strip()
+    if not token:
+        return None
+    if token.isdigit():
+        value = int(token)
+        if value < 0 or value > 65535:
+            raise ValueError(f"{name} out of uint16 range: {value}")
+        return value, value
+    if "-" not in token:
+        raise ValueError(f"{name} invalid range: {raw!r}")
+    left, right = token.split("-", 1)
+    if not left.strip().isdigit() or not right.strip().isdigit():
+        raise ValueError(f"{name} invalid range: {raw!r}")
+    lo = int(left.strip())
+    hi = int(right.strip())
+    if lo < 0 or hi > 65535 or lo > hi:
+        raise ValueError(f"{name} invalid range: {raw!r}")
+    return lo, hi
+
+
 def _truthy_env(name: str, value: str, *, default: bool = False) -> bool:
     token = (value or "").strip()
     if not token:
@@ -359,6 +381,29 @@ def validate_awg_env(env: Mapping[str, str]) -> None:
             raise ValueError(
                 f"AWG_I1 CPS size {i1_bytes} + headroom {headroom} exceeds AWG MTU {mtu}"
             )
+
+    # Panel enforces max(rekeyAfterTime) < min(rejectAfterTime).
+    rekey_range = _parse_awg_range(
+        "AWG_REKEY_AFTER_TIME", env.get("AWG_REKEY_AFTER_TIME") or ""
+    )
+    reject_range = _parse_awg_range(
+        "AWG_REJECT_AFTER_TIME", env.get("AWG_REJECT_AFTER_TIME") or ""
+    )
+    if rekey_range is not None and reject_range is not None:
+        rekey_max = rekey_range[1]
+        reject_min = reject_range[0]
+        if rekey_max >= reject_min:
+            raise ValueError(
+                "AWG_REKEY_AFTER_TIME max must be < AWG_REJECT_AFTER_TIME min "
+                f"(got rekey max {rekey_max}, reject min {reject_min})"
+            )
+    for name in (
+        "AWG_REKEY_TIMEOUT",
+        "AWG_MAX_HANDSHAKE_ATTEMPTS",
+        "AWG_CONTENT_PADDING",
+        "AWG_KEEPALIVE_TIMEOUT",
+    ):
+        _parse_awg_range(name, env.get(name) or "")
 
     _truthy_env("AWG_DISABLE_COOKIES", env.get("AWG_DISABLE_COOKIES") or "false", default=False)
 

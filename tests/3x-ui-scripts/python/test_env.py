@@ -214,6 +214,53 @@ class TestAwgEnvDefaults(unittest.TestCase):
                 }
             )
 
+    def test_validate_awg_env_rejects_rekey_max_ge_reject_min(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            env.validate_awg_env(
+                {
+                    "AWG_MTU": "1280",
+                    "AWG_JMIN": "50",
+                    "AWG_JMAX": "120",
+                    "AWG_S1": "16",
+                    "AWG_S2": "16",
+                    "AWG_S3": "16",
+                    "AWG_S4": "16",
+                    "AWG_H1": "1",
+                    "AWG_H2": "2",
+                    "AWG_H3": "3",
+                    "AWG_H4": "4",
+                    "AWG_RANDOM_TRAILERS": "true",
+                    "AWG_I1": "<r 55>",
+                    "AWG_REKEY_AFTER_TIME": "120-180",
+                    "AWG_REJECT_AFTER_TIME": "180-240",
+                }
+            )
+        self.assertIn("AWG_REKEY_AFTER_TIME", str(ctx.exception))
+        self.assertIn("AWG_REJECT_AFTER_TIME", str(ctx.exception))
+
+    def test_validate_awg_env_accepts_rekey_below_reject(self) -> None:
+        env.validate_awg_env(
+            {
+                "AWG_MTU": "1280",
+                "AWG_JMIN": "50",
+                "AWG_JMAX": "120",
+                "AWG_S1": "16",
+                "AWG_S2": "16",
+                "AWG_S3": "16",
+                "AWG_S4": "16",
+                "AWG_H1": "1",
+                "AWG_H2": "2",
+                "AWG_H3": "3",
+                "AWG_H4": "4",
+                "AWG_RANDOM_TRAILERS": "true",
+                "AWG_I1": "<r 55>",
+                "AWG_REKEY_AFTER_TIME": "120-170",
+                "AWG_REJECT_AFTER_TIME": "180-240",
+                "AWG_REKEY_TIMEOUT": "5-15",
+                "AWG_MAX_HANDSHAKE_ATTEMPTS": "3-6",
+            }
+        )
+
     def test_resolve_awg_mtu_auto_from_host(self) -> None:
         self.assertEqual(
             env.resolve_awg_mtu(

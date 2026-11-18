@@ -35,8 +35,15 @@ def build_amneziawg_settings_json(
     awg = desired.get("inbounds", {}).get("amneziawg", {})
     mtu = resolve_awg_mtu(env_map)
     subnet = awg.get("subnet", "10.8.1.0/24")
-    dns1 = awg.get("dns1", "8.8.8.8")
-    dns2 = awg.get("dns2", "8.8.4.4")
+    # Prefer AWG_DNS* env (Step 5c); fall back to desired then Google defaults.
+    dns1 = (
+        (env_map.get("AWG_DNS1") or "").strip()
+        or str(awg.get("dns1") or "8.8.8.8").strip()
+    )
+    dns2 = (
+        (env_map.get("AWG_DNS2") or "").strip()
+        or str(awg.get("dns2") or "8.8.4.4").strip()
+    )
     subnet_ip, subnet_cidr = _parse_subnet(str(subnet))
     server: dict[str, Any] = {
         "mtu": mtu,

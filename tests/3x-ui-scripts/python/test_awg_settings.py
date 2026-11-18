@@ -32,6 +32,21 @@ class TestAwgBuilderFromEnv(unittest.TestCase):
         self.assertEqual(obj["server"]["contentPaddingAddition"], "0-32")
         self.assertEqual(obj["mtu"], 1280)
 
+    def test_builder_prefers_awg_dns_env_over_desired_defaults(self) -> None:
+        env_map: dict[str, str] = {
+            "WEBDOMAIN": "example.test",
+            "ENABLE_AMNEZIAWG": "true",
+            "UDP443_BACKEND": "amneziawg",
+        }
+        env.init_defaults(env_map)
+        env_map["AWG_DNS1"] = "1.1.1.1"
+        env_map["AWG_DNS2"] = "1.0.0.1"
+        obj = build_amneziawg_settings_json(build_desired_state(env_map), env_map)
+        self.assertEqual(obj["dns1"], "1.1.1.1")
+        self.assertEqual(obj["dns2"], "1.0.0.1")
+        self.assertEqual(obj["server"]["primaryDns"], "1.1.1.1")
+        self.assertEqual(obj["server"]["secondaryDns"], "1.0.0.1")
+
 
 class TestEstimateCpsBytes(unittest.TestCase):
     def test_estimate_cps_r_and_t(self) -> None:
