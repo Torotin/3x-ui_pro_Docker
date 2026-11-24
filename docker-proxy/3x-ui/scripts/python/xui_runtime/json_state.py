@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import json
+import socket
 from typing import Any
 
 _MANAGED_OBSERVATORY_SELECTORS = frozenset(
     {"tor-proxy", "torproxy", "warp", "usque"}
 )
+
+_MANAGED_DNS_PEER_DIRECT_REMARK = "managed-dns-peer-direct"
+
+# Cloudflare WARP anycast IPv4 used to bootstrap WireGuard endpoint DNS when
+# app/dns cannot reach a docker-private resolver (geoip:private -> blocked).
+_WARP_ENDPOINT_BOOTSTRAP_HOST = "engage.cloudflareclient.com"
+_WARP_ENDPOINT_BOOTSTRAP_IP = "162.159.192.1"
 
 _MANAGED_OUTBOUND_TAGS = frozenset(
     {"tor-proxy", "torproxy", "warp", "usque", "warp-retired", "mihomo"}
@@ -198,6 +207,17 @@ def remove_managed_subject_selectors(current: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def pin_warp_endpoint_dns_hosts(current: dict[str, Any]) -> dict[str, Any]:
+    """Pin Cloudflare WARP endpoint A record for WireGuard bootstrap."""
+    out = copy.deepcopy(current)
+    xs = out.setdefault("xraySetting", {})
+    dns = xs.setdefault("dns", {})
+    hosts = dict(dns.get("hosts") or {})
+    hosts[_WARP_ENDPOINT_BOOTSTRAP_HOST] = _WARP_ENDPOINT_BOOTSTRAP_IP
+    dns["hosts"] = hosts
+    return out
+
+
 def replace_dns_servers(
     current: dict[str, Any],
     servers: list[dict[str, Any]],
@@ -208,6 +228,134 @@ def replace_dns_servers(
     dns.setdefault("disableCache", False)
     dns.setdefault("queryStrategy", "UseIP")
     dns["servers"] = copy.deepcopy(servers)
+    return pin_warp_endpoint_dns_hosts(out)
+
+
+def _is_literal_ip(address: str) -> bool:
+    try:
+        ipaddress.ip_address(address)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_doh_or_special_dns_address(address: str) -> bool:
+    lowered = address.strip().lower()
+    return (
+        not lowered
+        or lowered.startswith("https://")
+        or lowered.startswith("h2c://")
+        or lowered.startswith("quic://")
+        or lowered.startswith("localhost")
+        or lowered in {"localhost", "fakedns", "fakedns+local"}
+    )
+
+
+def resolve_ipv4_addresses(host: str) -> list[str]:
+    """Resolve A records for a DNS peer hostname; empty on failure."""
+    if not host or _is_doh_or_special_dns_address(host):
+        return []
+    if _is_literal_ip(host):
+        try:
+            parsed = ipaddress.ip_address(host)
+        except ValueError:
+            return []
+        return [host] if parsed.version == 4 else []
+    ips: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(host, None, socket.AF_INET):
+            ip = info[4][0]
+            if ":" not in ip:
+                ips.add(ip)
+    except OSError:
+        return []
+    return sorted(ips)
+
+
+def ensure_dns_peer_direct_rules(
+    current: dict[str, Any],
+    servers: list[dict[str, Any]],
+    peer_ipv4: list[str] | None = None,
+) -> dict[str, Any]:
+    """Route docker/private DNS peers via direct before geoip:private -> blocked.
+
+    Xray app/dns queries follow routing. With a panel rule that blackholes
+    geoip:private, UDP/TCP to AdGuard on the compose network never returns
+    answers, so WireGuard ForceIP fails with ``record not found``.
+    """
+    out = copy.deepcopy(current)
+    xs = out.setdefault("xraySetting", {})
+    routing = xs.setdefault("routing", {})
+    rules: list[dict[str, Any]] = list(routing.get("rules") or [])
+    rules = [
+        r
+        for r in rules
+        if str(r.get("remark") or "") != _MANAGED_DNS_PEER_DIRECT_REMARK
+    ]
+
+    hostnames: list[str] = []
+    literal_ips: list[str] = []
+    for server in servers:
+        address = str((server or {}).get("address") or "").strip()
+        if not address or _is_doh_or_special_dns_address(address):
+            continue
+        if _is_literal_ip(address):
+            if ipaddress.ip_address(address).version == 4:
+                literal_ips.append(address)
+            continue
+        hostnames.append(address)
+
+    resolved = list(peer_ipv4) if peer_ipv4 is not None else []
+    if peer_ipv4 is None:
+        for host in hostnames:
+            resolved.extend(resolve_ipv4_addresses(host))
+    peer_ips = sorted(set(literal_ips + resolved))
+
+    managed: list[dict[str, Any]] = []
+    for host in sorted(set(hostnames)):
+        managed.append(
+            {
+                "type": "field",
+                "outboundTag": "direct",
+                "remark": _MANAGED_DNS_PEER_DIRECT_REMARK,
+                "domain": [f"full:{host}"],
+            }
+        )
+    if peer_ips:
+        managed.append(
+            {
+                "type": "field",
+                "outboundTag": "direct",
+                "remark": _MANAGED_DNS_PEER_DIRECT_REMARK,
+                "ip": peer_ips,
+                "port": "53",
+                "network": "udp,tcp",
+            }
+        )
+    if not managed:
+        routing["rules"] = rules
+        return out
+
+    insert_at = len(rules)
+    for index, rule in enumerate(rules):
+        ips = rule.get("ip") or []
+        if (rule.get("outboundTag") or "") == "blocked" and any(
+            "geoip:private" in str(item) for item in ips
+        ):
+            insert_at = index
+            break
+    else:
+        for index, rule in enumerate(rules):
+            if (
+                (rule.get("outboundTag") or "") == "mihomo"
+                and rule.get("network") == "tcp,udp"
+                and not rule.get("domain")
+                and not rule.get("ip")
+            ):
+                insert_at = index
+                break
+
+    routing["rules"] = rules[:insert_at] + managed + rules[insert_at:]
     return out
 
 
@@ -318,6 +466,10 @@ def apply_managed_xray_state(
 
     if _truthy(dns_enabled):
         updated = replace_dns_servers(updated, dns_servers)
+        updated = ensure_dns_peer_direct_rules(updated, dns_servers)
+    elif _truthy(warp_enabled) and isinstance(warp_console_ob, dict) and warp_console_ob:
+        # WARP console still needs endpoint bootstrap hosts even if managed DNS is off.
+        updated = pin_warp_endpoint_dns_hosts(updated)
 
     if _truthy(tor_enabled):
         tor_selectors: list[str] = []
@@ -481,6 +633,7 @@ def remove_managed_xray_artifacts(current: dict[str, Any]) -> dict[str, Any]:
         for r in (routing.get("rules") or [])
         if (r.get("outboundTag") or "") not in ("tor-proxy", "mihomo")
         and (r.get("balancerTag") or "") not in ("tor-balancer", "warp-balancer")
+        and str(r.get("remark") or "") != _MANAGED_DNS_PEER_DIRECT_REMARK
     ]
     routing["rules"] = rules
 

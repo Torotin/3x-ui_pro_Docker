@@ -8,7 +8,9 @@ services:
         condition: service_healthy
     mem_limit: 512m
     cpus: "0.5"
-    hostname: ${WEBDOMAIN}
+    # Keep hostname distinct from WEBDOMAIN so Docker DNS does not map WEBDOMAIN to caddy
+    # (Telemt TLS-front fetch would otherwise hit caddy:443 and fail).
+    hostname: caddy
     networks:
       traefik-proxy:
         ipv4_address: 172.18.0.5

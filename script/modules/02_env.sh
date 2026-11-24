@@ -494,14 +494,151 @@ escape_env_double_quoted_value() {
 	printf '%s' "$value"
 }
 
+# Distinct backup names: both live files are basename config.toml and would
+# collide in INSTALL_STATE_DIR/backups within the same second (panel overwrites telemt).
+backup_telemt_configs() {
+	local telemt_config=$1 telemt_panel_config=$2
+	local backup_dir=${INSTALL_STATE_DIR}/backups
+	local ts telemt_bak=""
+	ts=$(date +%Y%m%d%H%M%S)
+	if ! mkdir -p "$backup_dir"; then
+		die "backup directory is not writable: $backup_dir"
+	fi
+	if [[ -e "$telemt_config" ]]; then
+		telemt_bak="$backup_dir/telemt.config.toml.bak.$ts"
+		cp -a -- "$telemt_config" "$telemt_bak" || die "could not backup $telemt_config"
+	fi
+	if [[ -e "$telemt_panel_config" ]]; then
+		cp -a -- "$telemt_panel_config" "$backup_dir/telemt-panel.config.toml.bak.$ts" ||
+			die "could not backup $telemt_panel_config"
+	fi
+	printf '%s\n' "$telemt_bak"
+}
+
+# After template render, re-apply panel/live [access.users] + extra WEB profiles from backup.
+merge_telemt_config_preserve_users() {
+	local rendered=$1 backup=$2
+	[[ -f "$rendered" && -f "$backup" ]] || return 0
+	python3 - "$rendered" "$backup" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+rendered_path = Path(sys.argv[1])
+backup_path = Path(sys.argv[2])
+rendered = rendered_path.read_text(encoding="utf-8")
+backup = backup_path.read_text(encoding="utf-8")
+
+
+def extract_users(text: str) -> dict[str, str]:
+    m = re.search(r"(?ms)^\[access\.users\]\s*\n(.*?)(?=^\[|\Z)", text)
+    if not m:
+        return {}
+    users: dict[str, str] = {}
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        mm = re.match(r'^"?([^"=]+?)"?\s*=\s*"([0-9a-fA-F]+)"\s*$', line)
+        if not mm:
+            continue
+        users[mm.group(1).strip().strip('"')] = mm.group(2)
+    return users
+
+
+def extract_non_web_profiles(text: str) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for m in re.finditer(r"(?ms)^\[\[web\.vhosts\.profiles\]\]\s*\n(.*?)(?=^\[|\Z)", text):
+        body = m.group(1)
+        um = re.search(r'(?m)^\s*user\s*=\s*"([^"]+)"\s*$', body)
+        if not um:
+            continue
+        user = um.group(1).strip()
+        if user == "web":
+            continue
+        fields: dict[str, str] = {}
+        for line in body.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            km = re.match(r"^([A-Za-z0-9_]+)\s*=\s*(.*)$", s)
+            if km:
+                fields[km.group(1)] = km.group(2)
+        block = "[[web.vhosts.profiles]]\n"
+        block += f'user = "{user}"\n'
+        block += f'secret_mode = {fields.get("secret_mode", "\"plain\"")}\n'
+        for key in ("max_sessions", "max_streams", "max_streams_per_session"):
+            if key in fields:
+                block += f"{key} = {fields[key]}\n"
+        out.append((user, block))
+    return out
+
+
+users = extract_users(backup)
+# Keep freshly rendered bootstrap/web secrets when present (env-driven seeds).
+rendered_users = extract_users(rendered)
+for seed in ("bootstrap", "web"):
+    if seed in rendered_users:
+        users[seed] = rendered_users[seed]
+if not users:
+    sys.exit(0)
+
+order = []
+for seed in ("bootstrap", "web"):
+    if seed in users:
+        order.append(seed)
+order.extend(sorted(u for u in users if u not in ("bootstrap", "web")))
+lines = [
+    "# Installer seeds bootstrap + WEB user only; merge live [access.users] before overwrite on existing installs.",
+    "[access.users]",
+]
+for name in order:
+    lines.append(f'"{name}" = "{users[name]}"')
+users_block = "\n".join(lines) + "\n\n"
+
+merged, n = re.subn(
+    r"(?ms)^(?:# Installer seeds bootstrap[^\n]*\n)?\[access\.users\]\s*\n.*?(?=^\[\[|^\[(?!\[)|\Z)",
+    users_block,
+    rendered,
+    count=1,
+)
+if n != 1:
+    raise SystemExit(f"telemt merge: failed to replace [access.users] (n={n})")
+
+# Drop non-web profiles from rendered template, then restore backup extras.
+parts: list[str] = []
+pos = 0
+for m in re.finditer(r"(?ms)^\[\[web\.vhosts\.profiles\]\]\s*\n(.*?)(?=^\[|\Z)", merged):
+    body = m.group(1)
+    um = re.search(r'(?m)^\s*user\s*=\s*"([^"]+)"\s*$', body)
+    user = um.group(1) if um else ""
+    parts.append(merged[pos : m.start()])
+    if user == "web":
+        block = m.group(0)
+        parts.append(block if block.endswith("\n") else block + "\n")
+    pos = m.end()
+parts.append(merged[pos:])
+merged = "".join(parts)
+
+extras = extract_non_web_profiles(backup)
+if extras:
+    if "[censorship]" not in merged:
+        raise SystemExit("telemt merge: missing [censorship] section")
+    insert = "\n" + "".join(block for _, block in extras) + "\n"
+    merged = merged.replace("[censorship]", insert + "[censorship]", 1)
+
+rendered_path.write_text(merged, encoding="utf-8")
+print(f"telemt merge: preserved {len(users)} access users, {len(extras)} extra WEB profiles")
+PY
+}
+
 render_telemt_configs() {
-	local templates telemt_config telemt_panel_config
+	local templates telemt_config telemt_panel_config telemt_backup
 	install_telemt_enabled || return 0
 	templates=$(template_dir)
 	telemt_config="$INSTALL_ROOT/telemt/config/config.toml"
 	telemt_panel_config="$INSTALL_ROOT/telemt-panel/config/config.toml"
-	backup_file "$telemt_config"
-	backup_file "$telemt_panel_config"
+	telemt_backup=$(backup_telemt_configs "$telemt_config" "$telemt_panel_config")
 	TELEMT_PANEL_PASSWORD_HASH_RAW=${TELEMT_PANEL_PASSWORD_HASH//\$\$/\$}
 	export TELEMT_PANEL_PASSWORD_HASH_RAW
 	if [[ -z "${TELEMT_WEB_DECOY_UPSTREAM:-}" ]]; then
@@ -525,6 +662,9 @@ render_telemt_configs() {
 	assert_uri_telemt_sub_unique
 	render_env_template "$templates/telemt.config.toml.template" "$telemt_config"
 	render_env_template "$templates/telemt-panel.config.toml.template" "$telemt_panel_config"
+	if [[ -n "$telemt_backup" ]]; then
+		merge_telemt_config_preserve_users "$telemt_config" "$telemt_backup"
+	fi
 	chmod 0600 "$telemt_config" "$telemt_panel_config" 2>/dev/null || true
 }
 

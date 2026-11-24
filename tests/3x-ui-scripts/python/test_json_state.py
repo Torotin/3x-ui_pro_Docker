@@ -44,9 +44,56 @@ class TestJsonState(unittest.TestCase):
             [{"address": "adguard", "port": 53, "skipFallback": False}],
         )
         host = updated["xraySetting"]["dns"]["hosts"]["example.local"]
+        warp_host = updated["xraySetting"]["dns"]["hosts"]["engage.cloudflareclient.com"]
         server_count = len(updated["xraySetting"]["dns"]["servers"])
         self.assertEqual("127.0.0.1", host)
+        self.assertEqual("162.159.192.1", warp_host)
         self.assertEqual(1, server_count)
+
+    def test_dns_peer_direct_rules_precede_geoip_private_block(self) -> None:
+        from xui_runtime.json_state import ensure_dns_peer_direct_rules  # noqa: E402
+
+        base = {
+            "xraySetting": {
+                "routing": {
+                    "rules": [
+                        {"type": "field", "inboundTag": ["api"], "outboundTag": "api"},
+                        {
+                            "type": "field",
+                            "ip": ["geoip:private"],
+                            "outboundTag": "blocked",
+                        },
+                        {
+                            "type": "field",
+                            "network": "tcp,udp",
+                            "outboundTag": "mihomo",
+                        },
+                    ]
+                }
+            }
+        }
+        updated = ensure_dns_peer_direct_rules(
+            base,
+            [{"address": "adguard", "port": 53, "skipFallback": False}],
+            peer_ipv4=["172.19.0.10"],
+        )
+        rules = updated["xraySetting"]["routing"]["rules"]
+        remarks = [r.get("remark") for r in rules]
+        self.assertIn("managed-dns-peer-direct", remarks)
+        private_idx = next(
+            i
+            for i, r in enumerate(rules)
+            if r.get("outboundTag") == "blocked"
+            and "geoip:private" in str(r.get("ip"))
+        )
+        peer_idxs = [
+            i for i, r in enumerate(rules) if r.get("remark") == "managed-dns-peer-direct"
+        ]
+        self.assertTrue(peer_idxs)
+        self.assertTrue(all(i < private_idx for i in peer_idxs))
+        ip_rule = next(r for r in rules if r.get("ip") == ["172.19.0.10"])
+        self.assertEqual("53", ip_rule["port"])
+        self.assertEqual("direct", ip_rule["outboundTag"])
 
     def test_remove_managed_xray_artifacts_only_removes_our_tags(self) -> None:
         payload = {
@@ -150,13 +197,22 @@ class TestJsonState(unittest.TestCase):
             if ob["tag"] == "tor-proxy"
         )
         dns_first = xs["dns"]["servers"][0]["address"]
+        warp_bootstrap = xs["dns"]["hosts"]["engage.cloudflareclient.com"]
         burst_destination = xs["burstObservatory"]["pingConfig"]["destination"]
         self.assertEqual(1, len(usque_refs))
         self.assertEqual(1080, tor_port)
         self.assertEqual("adguard", dns_first)
+        self.assertEqual("162.159.192.1", warp_bootstrap)
         self.assertEqual(
             "https://connectivitycheck.gstatic.com/generate_204",
             burst_destination,
+        )
+        self.assertTrue(
+            any(
+                r.get("remark") == "managed-dns-peer-direct"
+                and r.get("domain") == ["full:adguard"]
+                for r in xs["routing"]["rules"]
+            )
         )
 
 

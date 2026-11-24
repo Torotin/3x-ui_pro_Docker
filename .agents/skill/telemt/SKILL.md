@@ -102,7 +102,10 @@ Where `HOST` is `${WEBDOMAIN}`, `base_path` is `${URI_TELEMT_WEB}` (no leading s
 - `use_middle_proxy = false`
 - `decoy_fasttrack_mode = "off"` on `[web]`
 - Socks upstream → `3x-ui:${PORT_LOCAL_XRAY_MIXED}` enabled; **direct** upstream `enabled = false`
-- `[censorship]`: `mask_host = "traefik"`, `mask_port = 4443`, `mask_proxy_protocol = 1`
+- `[censorship]`: `mask_host = "traefik"`, `mask_port = 4443`, `mask_proxy_protocol = 1`, `tls_fetch_scope = "fetch"` with a dedicated `[[upstreams]] type=direct scopes=fetch` (socks must not fetch TLS-front)
+- Never set Caddy `hostname` to `${WEBDOMAIN}` — Docker DNS would map the public name to caddy and break Telemt TLS-front fetch
+- `15-telemt.yml` must set `ulimits.nofile` soft/hard `1048576` — Docker default soft `1024` causes EMFILE (`Too many open files`) under `max_connections=10000`
+- Installer `render_telemt_configs` must backup as `telemt.config.toml.bak.*` / `telemt-panel.config.toml.bak.*` (not bare `config.toml.bak.*`) and merge `[access.users]` + extra `[[web.vhosts.profiles]]` after template render — blind overwrite drops panel users
 - `public_addr = "${PUBLIC_IPV4}:443"` on WEB vhost
 
 ### Live apply: preserve `[access.users]`

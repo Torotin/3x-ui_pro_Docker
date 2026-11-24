@@ -1016,6 +1016,54 @@ test_env_can_disable_telemt_rendering() {
 	assert_not_contains "$INSTALL_ROOT/telemt/config/config.toml" "$tmpdir/stdout" "disabled Telemt must not report Telemt config path"
 }
 
+test_env_telemt_rerender_preserves_access_users() {
+	make_fixture
+	export ENABLE_TELEMT=true
+	run_installer run env
+	local cfg="$INSTALL_ROOT/telemt/config/config.toml"
+	[[ -f "$cfg" ]] || fail "Telemt config must exist after first env render"
+	# Simulate panel-created users + WEB profiles before a second env render.
+	python3 - "$cfg" <<'PY'
+from pathlib import Path
+import re
+import sys
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+users = '''[access.users]
+"bootstrap" = "b8c8045c3c9189dba1c61297474d2ab8"
+"web" = "8410767dde66c8f9efc8f912a7856e04"
+"k0ttini" = "1e5ed0a481e0dba7ac05012d991ec78c"
+"Lada" = "5233909c4158d7839ccff1fde4f0809d"
+'''
+text, n = re.subn(
+    r"(?ms)^(?:# Installer seeds bootstrap[^\n]*\n)?\[access\.users\]\s*\n.*?(?=^\[\[|^\[(?!\[)|\Z)",
+    users + "\n",
+    text,
+    count=1,
+)
+if n != 1:
+    raise SystemExit(f"inject users failed n={n}")
+profile = '''[[web.vhosts.profiles]]
+user = "k0ttini"
+secret_mode = "plain"
+
+'''
+if 'user = "k0ttini"' not in text:
+    text = text.replace("[censorship]", profile + "[censorship]", 1)
+path.write_text(text, encoding="utf-8")
+PY
+	run_installer run env
+	assert_contains '"k0ttini" = "1e5ed0a481e0dba7ac05012d991ec78c"' "$cfg" "second env render must preserve panel Telemt user k0ttini"
+	assert_contains '"Lada" = "5233909c4158d7839ccff1fde4f0809d"' "$cfg" "second env render must preserve panel Telemt user Lada"
+	assert_contains 'user = "k0ttini"' "$cfg" "second env render must preserve extra WEB profile for k0ttini"
+	local telemt_bak panel_bak
+	telemt_bak=$(ls -1 "$INSTALL_STATE_DIR"/backups/telemt.config.toml.bak.* 2>/dev/null | tail -n1 || true)
+	panel_bak=$(ls -1 "$INSTALL_STATE_DIR"/backups/telemt-panel.config.toml.bak.* 2>/dev/null | tail -n1 || true)
+	[[ -n "$telemt_bak" ]] || fail "env render must create distinct telemt.config.toml.bak.*"
+	[[ -n "$panel_bak" ]] || fail "env render must create distinct telemt-panel.config.toml.bak.*"
+	[[ "$(basename "$telemt_bak")" != "$(basename "$panel_bak")" ]] || fail "telemt and panel backups must not share the same filename"
+}
+
 test_env_regenerates_stale_htpasswd_when_password_changes() {
 	make_fixture
 	mkdir -p "$tmpdir/bin"
@@ -2502,6 +2550,7 @@ test_env_writes_escaped_htpasswd_to_compose_env_for_labels
 test_env_renders_telemt_network_lists_as_toml_arrays_from_legacy_state
 test_final_summary_includes_telemt_admin_when_enabled
 test_env_can_disable_telemt_rendering
+test_env_telemt_rerender_preserves_access_users
 test_env_regenerates_stale_htpasswd_when_password_changes
 test_env_regenerates_existing_hash_when_verify_is_unsupported
 test_adguard_update_pass_uses_precomputed_hash

@@ -310,7 +310,7 @@ warp_outbound_from_config() {
             address:([$v4,$v6] | map(select(. != "")) | map(if contains(":") then . + "/128" else . + "/32" end)),
             numWorkers:2,
             workers:2,
-            domainStrategy:"ForceIP",
+            domainStrategy:"ForceIPv4",
             reserved:$reserved,
             peers:[{
               publicKey:$pub,

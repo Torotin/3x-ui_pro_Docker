@@ -1,5 +1,5 @@
 # Telemt stack template (target binary: telemt 3.5.16+).
-# Invariants: use_middle_proxy=false; socks egress via 3x-ui mixed inbound; direct upstream disabled;
+# Invariants: use_middle_proxy=false; socks egress via 3x-ui mixed inbound; direct only for tls_fetch_scope;
 # WEB vhost path + secret_mode=dd; censorship mask -> traefik:4443 (PPv1).
 # On live upgrades, merge [access.users] and panel-added [[web.vhosts.profiles]] from backup
 # (see .tmp/task3-merge-procedure.md). Fresh installs only get bootstrap + web placeholders below.
@@ -134,6 +134,8 @@ mask_host = "traefik"
 mask_port = 4443
 mask_proxy_protocol = 1
 tls_emulation = true
+# Fetch mask certs directly (traefik:4443); socks would hairpin via Xray and fail TLS-front.
+tls_fetch_scope = "fetch"
 tls_front_dir = "/var/lib/telemt/tlsfront"
 mask_shape_hardening = ${TELEMT_MASK_SHAPE_HARDENING}
 mask_shape_hardening_aggressive_mode = ${TELEMT_MASK_SHAPE_HARDENING_AGGRESSIVE_MODE}
@@ -154,6 +156,13 @@ mask_relay_idle_timeout_ms = ${TELEMT_MASK_RELAY_IDLE_TIMEOUT_MS}
 type = "socks5"
 address = "3x-ui:${PORT_LOCAL_XRAY_MIXED}"
 weight = 100
+enabled = true
+
+# TLS-front cert fetch must bypass socks (mask traefik:4443 is local Docker).
+[[upstreams]]
+type = "direct"
+scopes = "fetch"
+weight = 10
 enabled = true
 
 # Keep disabled when the host cannot reach Telegram DC IPs directly (health checks

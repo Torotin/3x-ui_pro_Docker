@@ -302,7 +302,7 @@ def warp_outbound_from_config(
             "address": address_list,
             "numWorkers": 2,
             "workers": 2,
-            "domainStrategy": "ForceIP",
+            "domainStrategy": "ForceIPv4",
             "reserved": reserved,
             "peers": [
                 {

@@ -122,14 +122,79 @@ json_remove_managed_subject_selectors() {
 }
 
 # Заменяет управляемые DNS-серверы, не сбрасывая остальные параметры DNS.
+# Также пинит A-запись WARP endpoint в dns.hosts (bootstrap при geoip:private).
 json_replace_dns_servers() {
 	local current=$1 servers=$2
 	jq -c --argjson servers "$servers" '
       .xraySetting.dns = (.xraySetting.dns // {}) |
       .xraySetting.dns.disableCache = (.xraySetting.dns.disableCache // false) |
       .xraySetting.dns.queryStrategy = (.xraySetting.dns.queryStrategy // "UseIP") |
-      .xraySetting.dns.servers = $servers
+      .xraySetting.dns.servers = $servers |
+      .xraySetting.dns.hosts = ((.xraySetting.dns.hosts // {}) + {"engage.cloudflareclient.com":"162.159.192.1"})
 	' <<<"$current"
+}
+
+# Перед geoip:private -> blocked пускает docker DNS peer (adguard и т.п.) в direct.
+json_ensure_dns_peer_direct_rules() {
+	local current=$1 servers=$2
+	local host hosts_json ips_json host_ips
+	hosts_json=$(jq -c '
+      [.[] | .address // empty
+        | select(type == "string" and length > 0)
+        | select((startswith("https://") or startswith("h2c://") or startswith("quic://")
+                  or startswith("localhost") or . == "fakedns" or . == "fakedns+local") | not)
+        | select(test("^[0-9.]+$") | not)
+        | select(test(":") | not)
+      ] | unique
+    ' <<<"$servers")
+	ips_json='[]'
+	while IFS= read -r host; do
+		[[ -n "$host" ]] || continue
+		host_ips=$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u || true)
+		while IFS= read -r ip; do
+			[[ -n "$ip" ]] || continue
+			ips_json=$(jq -c --arg ip "$ip" '. + [$ip] | unique' <<<"$ips_json")
+		done <<<"$host_ips"
+	done < <(jq -r '.[]' <<<"$hosts_json")
+	# Literal IPv4 peers from servers list.
+	ips_json=$(jq -c --argjson servers "$servers" --argjson ips "$ips_json" '
+      ($servers
+        | map(.address // empty)
+        | map(select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")))
+      ) as $lit |
+      ($ips + $lit | unique)
+    ')
+	jq -c --argjson hosts "$hosts_json" --argjson ips "$ips_json" '
+      def is_private_block:
+        ((.outboundTag // "") == "blocked")
+        and ((.ip // []) | map(tostring) | any(contains("geoip:private")));
+      def is_mihomo_catchall:
+        ((.outboundTag // "") == "mihomo")
+        and ((.network // "") == "tcp,udp")
+        and ((.domain // null) == null)
+        and ((.ip // null) == null);
+      def managed_rules:
+        (
+          [ $hosts[] | {type:"field", outboundTag:"direct", remark:"managed-dns-peer-direct", domain:["full:" + .]} ]
+        )
+        + (
+          if ($ips | length) > 0 then
+            [{type:"field", outboundTag:"direct", remark:"managed-dns-peer-direct", ip:$ips, port:"53", network:"udp,tcp"}]
+          else [] end
+        );
+      .xraySetting.routing = (.xraySetting.routing // {}) |
+      .xraySetting.routing.rules = (
+        ((.xraySetting.routing.rules // [])
+          | map(select((.remark // "") != "managed-dns-peer-direct"))) as $rules |
+        if (managed_rules | length) == 0 then $rules
+        else
+          ($rules | map(is_private_block) | index(true)) as $priv |
+          ($rules | map(is_mihomo_catchall) | index(true)) as $mihomo |
+          (if $priv != null then $priv elif $mihomo != null then $mihomo else ($rules | length) end) as $at |
+          $rules[0:$at] + managed_rules + $rules[$at:]
+        end
+      )
+    ' <<<"$current"
 }
 
 # Возвращает набор доменов, который должен направляться через WARP.
@@ -246,6 +311,7 @@ json_apply_managed_xray_state() {
 	local updated=$current tor_ob tor_rule tor_balancer tor_selectors warp_ob warp_rule warp_balancer selectors warp_domains endpoint_count index tag host port observatory_selectors='[]' burst_observatory mihomo_ob mihomo_rule
 	if [[ "$dns_enabled" == "true" ]]; then
 		updated=$(json_replace_dns_servers "$updated" "$dns_servers")
+		updated=$(json_ensure_dns_peer_direct_rules "$updated" "$dns_servers")
 	fi
 	if [[ "$tor_enabled" == "true" ]]; then
 		tor_selectors='[]'
@@ -358,7 +424,7 @@ json_remove_managed_xray_artifacts() {
 	jq -c '
       .xraySetting.outbounds = ((.xraySetting.outbounds // []) | map(select((.tag // "") as $tag | (["tor-proxy","torproxy","warp","usque","warp-retired","mihomo"] | index($tag)) == null))) |
       .xraySetting.routing = (.xraySetting.routing // {}) |
-      .xraySetting.routing.rules = ((.xraySetting.routing.rules // []) | map(select((.outboundTag // "") != "tor-proxy" and (.outboundTag // "") != "mihomo" and (.balancerTag // "") != "tor-balancer" and (.balancerTag // "") != "warp-balancer"))) |
+      .xraySetting.routing.rules = ((.xraySetting.routing.rules // []) | map(select((.outboundTag // "") != "tor-proxy" and (.outboundTag // "") != "mihomo" and (.balancerTag // "") != "tor-balancer" and (.balancerTag // "") != "warp-balancer" and (.remark // "") != "managed-dns-peer-direct"))) |
       .xraySetting.routing.balancers = ((.xraySetting.routing.balancers // []) | map(select((.tag // "") != "tor-balancer" and (.tag // "") != "warp-balancer")))
     ' <<<"$current"
 }

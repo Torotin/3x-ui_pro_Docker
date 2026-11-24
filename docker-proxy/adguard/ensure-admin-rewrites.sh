@@ -43,20 +43,28 @@ while i < len(lines):
         domain = stripped.split(":", 1)[1].strip()
         if domain in host_set:
             i += 1
-            while i < len(lines) and lines[i].lstrip().startswith("answer:"):
+            # Skip existing answer/enabled lines for this domain block.
+            while i < len(lines) and lines[i].lstrip().startswith(("answer:", "enabled:")):
                 i += 1
             continue
     out.append(line)
     i += 1
 
-block = "".join(f"    - domain: {h}\n      answer: {answer}\n" for h in hosts)
+block = "".join(
+    f"    - domain: {h}\n      answer: {answer}\n      enabled: true\n" for h in hosts
+)
 text = "".join(out)
 needle = "  safe_fs_patterns:"
 if needle not in text:
     raise SystemExit("safe_fs_patterns marker not found")
-# Avoid duplicating if already present with correct answer
+# Avoid duplicating if already present with correct answer + enabled
 already = all(
-    (f"- domain: {h}" in text and f"answer: {answer}" in text) for h in hosts
+    (
+        f"- domain: {h}" in text
+        and f"answer: {answer}" in text
+        and "enabled: true" in text
+    )
+    for h in hosts
 )
 if already:
     # still ensure answers match by rewrite pass above + reinsert

@@ -121,6 +121,7 @@ WARP console behavior:
 - `XRAY_MANAGED_WARP` and `XRAY_MANAGED_WARP_CONSOLE` both default to `true` (console WireGuard outbound `warp` plus SOCKS `usque` in `warp-balancer`).
 - Set `XRAY_MANAGED_WARP_CONSOLE=false` to use external SOCKS (`usque`) only.
 - Preserve the GUI-compatible endpoint host `engage.cloudflareclient.com:2408` instead of replacing it with a resolved IP.
+- WireGuard console outbound uses `domainStrategy: ForceIPv4`. Managed DNS also pins `dns.hosts["engage.cloudflareclient.com"]=162.159.192.1` and inserts `managed-dns-peer-direct` routing rules before `geoip:private -> blocked`, so app/dns can reach docker AdGuard and WARP endpoint bootstrap does not depend on that path.
 - Do not revive old `warp_socks_v5` references.
 
 ## Native Subscriptions
